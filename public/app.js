@@ -22,6 +22,7 @@ const DEFAULT_CHIPS = ["미니멀 인테리어", "빈티지 포스터", "레트�
 const WHY = {
   timeout: "응답이 너무 늦어서 포기했어요 (시간 초과)",
   limit: "요청 한도를 넘었어요. 잠시 뒤 다시 시도해 보세요",
+  gone: "소스가 이 주소를 더 이상 제공하지 않거나, 이 서버의 접속을 막았어요",
   denied: "소스가 접속을 거절했어요 (키가 필요하거나, 이 서버 주소가 막혔을 수 있어요)",
   server: "소스 서버에 문제가 있어요",
   badjson: "올바른 응답이 아니에요 (차단 화면일 수 있어요)",
@@ -647,6 +648,8 @@ async function boot() {
   try { cfg = await (await api("/api/config")).json(); }
   catch (e) { if (e.message !== "auth") showLogin("서버에 연결하지 못했어요. 잠시 후 다시 시도해 주세요."); return; }
   $("#login").hidden = true;
+  // 미국 의회도서관은 분당 20회 제한을 넘기면 1시간 차단되므로 처음에는 꺼 둡니다 (설정에서 켤 수 있음)
+  if (!LS.get("locInit", false)) { S.off.add("loc"); LS.set("off", [...S.off]); LS.set("locInit", true); }
   await DB.open(); S.bmIds = new Set((await DB.all()).map((x) => x.id)); updateCount();
   markFilters(); setView("feed"); renderHome();
   // AI 검사 모델은 접속 직후에 내려받지 않고, 첫 이미지를 검사할 때 준비합니다 (첫 화면이 굳는 문제 완화)

@@ -56,6 +56,7 @@ async function getJson(url, headers = {}, ttl = 600) {
 }
 function reasonOfStatus(s) {
   if (s === 429) return "limit";
+  if (s === 410) return "gone";
   if (s === 401 || s === 403) return "denied";
   if (s >= 500) return "server";
   return "error";
@@ -197,7 +198,9 @@ const SOURCES = [
       const per = 12, base = "https://collectionapi.metmuseum.org/public/collection/v1";
       // 검색 결과 ID 목록이 수천~수만 개라 통째로 JSON 파싱하면 서버 CPU 한도(무료 10ms)를 넘길 수 있어,
       // 필요한 앞부분만 잘라서 숫자를 뽑습니다.
-      const txt = await (await getRaw(`${base}/search?hasImages=true&q=${enc(q)}`, {}, 3600)).text();
+      let txt;
+      try { txt = await (await getRaw(`${base}/search?hasImages=true&q=${enc(q)}`, {}, 3600)).text(); }
+      catch (e) { e.message += " · 검색 단계"; throw e; } // 어느 단계에서 막혔는지 ⚠ 에 표시
       const a = txt.indexOf("[");
       if (a < 0) return [];
       const want = page * per, lim = a + 1 + want * 9 + 20;
@@ -208,7 +211,7 @@ const SOURCES = [
       const errs = [];
       const objs = await Promise.all(ids.map((id) => getJson(`${base}/objects/${id}`, {}, 86400).catch((e) => { errs.push(e); return null; })));
       const good = objs.filter((o) => o && o.primaryImageSmall);
-      if (!good.length && errs.length === ids.length) throw errs[0];
+      if (!good.length && errs.length === ids.length) { errs[0].message += " · 작품 조회 단계"; throw errs[0]; }
       return good.map((o) => ({
         title: clean(o.title || o.objectName || ""), thumb: o.primaryImageSmall, full: o.primaryImage || o.primaryImageSmall,
         page: o.objectURL, w: 0, h: 0, tags: (o.tags || []).map((t) => t.term).filter(Boolean),
@@ -285,7 +288,7 @@ const SOURCES = [
     },
   },
   {
-    id: "loc", name: "미국 의회도서관", w: 0.5, en: true, desc: "미국 · 역사 사진·판화 (불안정할 수 있음)",
+    id: "loc", name: "미국 의회도서관", w: 0.5, en: true, desc: "미국 · 역사 사진·판화 (분당 20회 제한이 엄격해서 기본은 꺼짐)",
     ok: () => true,
     async run(q, page) {
       let d;
