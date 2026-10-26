@@ -36,12 +36,12 @@ function authed(req, env) {
 
 // 실패 이유를 화면에 알려주기 위해 오류에 code/status 를 붙입니다.
 const fail = (code, msg, status) => Object.assign(new Error(msg || code), { code, status });
-async function getRaw(url, headers = {}, ttl = 600) {
+async function getRaw(url, headers = {}, ttl = 600, ms = 6500) {
   let r;
   try {
     r = await fetch(url, {
       headers: { "user-agent": UA, accept: "application/json", ...headers },
-      signal: AbortSignal.timeout(6500),
+      signal: AbortSignal.timeout(ms),
       cf: { cacheEverything: true, cacheTtlByStatus: { "200-299": ttl, "300-599": 0 } },
     });
   } catch (e) {
@@ -50,8 +50,8 @@ async function getRaw(url, headers = {}, ttl = 600) {
   if (!r.ok) throw fail(reasonOfStatus(r.status), `HTTP ${r.status}`, r.status);
   return r;
 }
-async function getJson(url, headers = {}, ttl = 600) {
-  const r = await getRaw(url, headers, ttl);
+async function getJson(url, headers = {}, ttl = 600, ms = 6500) {
+  const r = await getRaw(url, headers, ttl, ms);
   try { return await r.json(); } catch { throw fail("badjson", "응답이 JSON이 아님"); }
 }
 function reasonOfStatus(s) {
@@ -155,7 +155,7 @@ const SOURCES = [
       // 익명 요청은 한 번에 20개까지만 허용되는 것으로 알려져 있어 20으로 맞춥니다 (2차 후기 7번 원인 후보).
       const d = await getJson(
         `https://api.openverse.org/v1/images/?q=${enc(q)}&page=${page}&page_size=20&mature=${safe ? "false" : "true"}`,
-        {}, 1800);
+        {}, 1800, 13000); // Openverse 는 가끔 느려서 대기 시간을 넉넉히 (화면 쪽 한도는 16초)
       return (d.results || []).map((it) => ({
         title: clean(it.title || ""), thumb: it.thumbnail || it.url, full: it.url,
         page: it.foreign_landing_url || it.url, w: num(it.width), h: num(it.height),

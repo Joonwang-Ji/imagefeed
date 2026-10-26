@@ -97,9 +97,13 @@ async function api(path, opt = {}) {
 const limiter = (n) => { let a = 0; const q = []; const next = () => { if (a < n && q.length) { a++; const { f, ok, no } = q.shift(); f().then(ok, no).finally(() => { a--; next(); }); } }; return (f) => new Promise((ok, no) => { q.push({ f, ok, no }); next(); }); };
 const limit = limiter(8);
 // hi=true: 지금 화면에 필요한 큰 이미지는 썸네일 대기열을 기다리지 않고 바로 받습니다.
-const fetchBlob = (path, hi) => hi
+// 한꺼번에 많이 요청하면 막거나 느려지는 소스(시카고 이미지 서버)는 동시에 3개까지만 받습니다.
+const SLOW_LIM = { artic: limiter(3) };
+const fetchBlob = (path, hi, src) => hi
   ? api(path, { signal: AbortSignal.timeout(25000) }).then((r) => r.blob())
-  : limit(async () => (await api(path, { signal: AbortSignal.timeout(20000) })).blob());
+  : (SLOW_LIM[src] || limit)(async () => (await api(path, { signal: AbortSignal.timeout(20000) })).blob());
+// 실패 이유를 사람이 읽을 말로 (⚠ 를 눌렀을 때 보여 줌)
+const whyOf = (e) => "중계 " + (e?.detail || (e?.name === "TimeoutError" || e?.name === "AbortError" ? "시간 초과" : e?.message || "실패"));
 
 // ---------- 로그인 ----------
 function showLogin(msg) { $("#login").hidden = false; $("#lmsg").textContent = msg || ""; $("#lpass").focus(); }
@@ -220,7 +224,9 @@ function failCard(el) {
   io.unobserve(el); el._m?.drop(el);
   if (!el._feed || !it?.src) return;
   const h = (IMGH[it.src] ||= { ok: 0, bad: 0 }); h.bad++;
-  if (!h.ok && h.bad >= 4 && !DEAD[it.src]) markDead(it.src, it._why || "");
+  // 이유: 서버 중계가 실패했으면 그 사유 + 브라우저 직접 로딩도 실패, 중계로 받은 이미지를 못 열었으면 그 사실
+  h.why = it._why ? it._why + " → 직접 로딩도 실패" : it.blob ? "중계로 받은 이미지를 표시하지 못함" : "브라우저 직접 로딩 실패";
+  if (!h.ok && h.bad >= 4 && !DEAD[it.src]) markDead(it.src, h.why);
 }
 function markDead(src, why) {
   DEAD[src] = { why };
@@ -231,7 +237,7 @@ function markDead(src, why) {
 
 async function loadCard(el) {
   const it = el._it, img = el.querySelector("img");
-  const needML = S.blur && S.ml && !it.adult && !it.fromBm;
+  const needML = S.blur && S.ml && !it.adult && !it.fromBm && it.src !== "nasa"; // NASA(우주·과학 사진)는 검사 생략
   const inMain = !!el.closest("#grid");
   const simLevel = el.closest(".simlevel") ? V.stack.find((l) => l.wrap.contains(el)) : null;
   const wantColor = !!S.color && inMain && !it.sc && !it.cols;
@@ -240,13 +246,17 @@ async function loadCard(el) {
   const colorFromAlt = wantColor && !!it.alt && !it.blob && !needML;
   el.dataset.st = it.adult ? "flag" : needML ? "pending" : "ok";
   // 큰 썸네일 주소가 안 열리는 소스(예: V&A)는 작은 주소(alt)로 한 번 더 시도
-  img.onload = () => { if (!el._ok) { el._ok = true; (IMGH[it.src] ||= { ok: 0, bad: 0 }).ok++; } };
+  img.onload = () => {
+    if (el._ok) return; el._ok = true;
+    const h = (IMGH[it.src] ||= { ok: 0, bad: 0 });
+    if (!h.ok++) el._feed?.o.reobserve?.(); // 이 소스의 첫 이미지가 열렸으니 멈춰 두었던 다음 페이지 불러오기를 이어감
+  };
   img.onerror = () => { if (it.alt && img.dataset.alt !== "1") { img.dataset.alt = "1"; img.referrerPolicy = "no-referrer"; img.src = it.alt; } else failCard(el); };
   try {
     let altInfo = null;
-    if (colorFromAlt) { try { altInfo = await blobInfo(await fetchBlob(`/api/img?u=${enc(it.alt)}`)); } catch (e) { if (e.message === "auth") throw e; } }
+    if (colorFromAlt) { try { altInfo = await blobInfo(await fetchBlob(`/api/img?u=${enc(it.alt)}`, false, it.src)); } catch (e) { if (e.message === "auth") throw e; } }
     if (it.blob) img.src = URL.createObjectURL(it.blob);
-    else if (needML || (wantColor && !colorFromAlt)) { const b = await fetchBlob(`/api/img?u=${enc(it.thumb)}`); it.blob = b; img.src = URL.createObjectURL(b); }
+    else if (needML || (wantColor && !colorFromAlt)) { const b = await fetchBlob(`/api/img?u=${enc(it.thumb)}`, false, it.src); it.blob = b; img.src = URL.createObjectURL(b); }
     else { img.referrerPolicy = "no-referrer"; img.src = it.thumb; }
     await img.decode().catch(() => {});
     el.classList.add("loaded");
@@ -261,7 +271,7 @@ async function loadCard(el) {
     if (needML && it.blob) enqueueClassify(el, img, it);
   } catch (e) {
     if (e.message === "auth") return;
-    if (e.detail) it._why = e.detail; // 서버 중계가 실패한 이유 (예: upstream 403)
+    it._why = whyOf(e); // 서버 중계가 실패한 이유 (예: 중계 upstream 403, 중계 시간 초과)
     el.dataset.st = it.adult ? "flag" : "ok";
     img.referrerPolicy = "no-referrer"; img.src = it.thumb; el.classList.add("loaded");
   }
@@ -287,6 +297,8 @@ async function pump() {
   try {
     const m = await getModel();
     while (cq.length) {
+      // 지금 화면 가운데에 가까운 카드부터 검사해서, 보고 있는 이미지의 블러가 먼저 풀리게 합니다.
+      if (cq.length > 1) { const mid = innerHeight / 2, d = (x) => (x.el.isConnected ? Math.abs(x.el.getBoundingClientRect().top - mid) : 1e9); cq.sort((a, b) => d(a) - d(b)); }
       const { el, img, it } = cq.shift();
       if (!el.isConnected) continue;
       try {
@@ -337,10 +349,18 @@ class Feed {
     if (!st.n) { st.err = r.err || "error"; st.detail = r.detail || ""; } // 이미 결과를 받은 소스가 중간에 막힌 경우는 조용히 끝냄
     this.srcEnded.add(s.id);
   }
+  holding(s) {
+    if (!this.stat[s.id]?.n || IMGH[s.id]?.ok) return false;
+    return this.m.all.some((c) => c._it?.src === s.id && !c._ok && !c.classList.contains("broken"));
+  }
   async next() {
     if (this.loading || this.ended || !this.q) return;
-    const srcs = this.sources().filter((s) => !this.srcEnded.has(s.id));
-    if (!srcs.length) { this.ended = true; this.o.onAfter?.(); return; }
+    const open = this.sources().filter((s) => !this.srcEnded.has(s.id));
+    if (!open.length) { this.ended = true; this.o.onAfter?.(); return; }
+    // 이미 받은 이미지가 한 장도 안 열린 소스는, 첫 이미지가 열릴 때까지 다음 페이지를 더 불러오지 않습니다.
+    // (안 열리는 소스에서 페이지만 끝없이 쌓여 조회 수가 계속 늘던 문제 방지. 첫 이미지가 열리면 onload 가 이어서 불러옴)
+    const srcs = open.filter((s) => !this.holding(s));
+    if (!srcs.length) return;
     this.loading = true;
     const gen = this.gen, page = ++this.page, safe = S.blur ? 1 : 0;
     const color = this.o.filters ? S.color : "", orient = this.o.filters ? S.orient : "";

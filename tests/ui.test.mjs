@@ -166,7 +166,7 @@ $("#vclose").click(); await tick(60);
   const n = searchCalls.length; await run("M.next()"); await tick(50);
   ok(searchCalls.length === n, "no more pages are requested for the rested source (no endless loading)");
   ok($$("#stat .sc.bad").length === 1 && !!$("#stat .warn"), "stat shows ⚠ on the rested source");
-  $("#stat .warn").click(); ok(/upstream 403/.test($("#toast").textContent) && /쉬고/.test($("#toast").textContent), "⚠ shows the reason with proxy detail: " + $("#toast").textContent);
+  $("#stat .warn").click(); ok(/upstream 403/.test($("#toast").textContent) && /중계 upstream 403 → 직접 로딩도 실패/.test($("#toast").textContent), "⚠ shows the reason for both paths: " + $("#toast").textContent);
   ok(!$("#msg").hidden && /쉬고 있는/.test($("#msg").textContent), "empty-feed message explains the rested source");
   // 소스 이름을 누르면 다시 시도
   imgFail = false; run("S.ml = false");
@@ -178,7 +178,21 @@ $("#vclose").click(); await tick(60);
   for (const c of cs.slice(1)) { await lc(c); await tick(5); fire(img(c), "error"); }
   await tick(30);
   ok(!run("Object.keys(DEAD).length") && ov().length === 1, "a source that opened at least one image is never rested; only the broken cards go");
+  // 한 장도 안 열린 소스는 다음 페이지를 더 불러오지 않고, 첫 이미지가 열리면 이어서 불러옴
+  run('S.only = new Set(["openverse"]); S.ml = false'); imgFail = false; searchCalls.length = 0;
+  run('delete IMGH.openverse; delete DEAD.openverse; startSearch("holdtest")'); await tick(900);
+  ok(searchCalls.length === 1 && ov().length === 6, "hold test: first page loaded");
+  await run("M.next()"); await tick(50);
+  ok(searchCalls.length === 1, "page 2 is NOT requested while no image of the source has opened");
+  const first = ov()[0]; await lc(first); await tick(10); fire(img(first), "load");
+  await run("M.next()"); await tick(50);
+  ok(searchCalls.length === 2, "page 2 is requested once the first image opened");
   run('S.only = new Set(); S.ml = true'); imgFail = false;
+}
+{ // 중계 실패 사유 문구
+  const e1 = Object.assign(new Error("HTTP 502"), { detail: "upstream 429" }), e2 = Object.assign(new Error("t"), { name: "TimeoutError" });
+  ok(run(`whyOf(${JSON.stringify({ detail: "upstream 429" })})`) === "중계 upstream 429", "whyOf uses proxy detail");
+  ok(run(`whyOf({ name: "TimeoutError" })`) === "중계 시간 초과", "whyOf reports timeouts");
 }
 
 // ---- 트렌드: 이미지 그리드 ----
