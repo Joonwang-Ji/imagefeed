@@ -34,15 +34,34 @@ function authed(req, env) {
   return d === 0;
 }
 
-async function getJson(url, headers = {}, ttl = 600) {
-  const r = await fetch(url, {
-    headers: { "user-agent": UA, accept: "application/json", ...headers },
-    signal: AbortSignal.timeout(6500),
-    cf: { cacheEverything: true, cacheTtlByStatus: { "200-299": ttl, "300-599": 0 } },
-  });
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  return r.json();
+// 실패 이유를 화면에 알려주기 위해 오류에 code/status 를 붙입니다.
+const fail = (code, msg, status) => Object.assign(new Error(msg || code), { code, status });
+async function getRaw(url, headers = {}, ttl = 600) {
+  let r;
+  try {
+    r = await fetch(url, {
+      headers: { "user-agent": UA, accept: "application/json", ...headers },
+      signal: AbortSignal.timeout(6500),
+      cf: { cacheEverything: true, cacheTtlByStatus: { "200-299": ttl, "300-599": 0 } },
+    });
+  } catch (e) {
+    throw fail(e?.name === "TimeoutError" || e?.name === "AbortError" ? "timeout" : "network", String(e?.message || e));
+  }
+  if (!r.ok) throw fail(reasonOfStatus(r.status), `HTTP ${r.status}`, r.status);
+  return r;
 }
+async function getJson(url, headers = {}, ttl = 600) {
+  const r = await getRaw(url, headers, ttl);
+  try { return await r.json(); } catch { throw fail("badjson", "응답이 JSON이 아님"); }
+}
+function reasonOfStatus(s) {
+  if (s === 429) return "limit";
+  if (s === 401 || s === 403) return "denied";
+  if (s >= 500) return "server";
+  return "error";
+}
+const reasonOf = (e) => e?.code || "error";
+const https = (u = "") => String(u).replace(/^http:\/\//i, "https://");
 
 // 화면의 색상/방향 값을 소스별 값으로 바꿉니다. 지원 안 하는 값이면 null.
 const COLOR = {
@@ -61,7 +80,7 @@ const ORIENT = {
 // en:true 인 소스는 영어 검색어(번역본)를 사용합니다. w 는 순위 합산 가중치(인기/한국 이미지 우선).
 const SOURCES = [
   {
-    id: "naver", name: "네이버", w: 1.25, en: false,
+    id: "naver", name: "네이버", w: 1.25, en: false, desc: "한국 이미지", need: ["NAVER_ID", "NAVER_SECRET"],
     ok: (e) => e.NAVER_ID && e.NAVER_SECRET,
     async run(q, page, safe, e) {
       const base = e.NAVER_BASE || "https://naverapihub.apigw.ntruss.com/search/v1/image";
@@ -79,7 +98,7 @@ const SOURCES = [
     },
   },
   {
-    id: "kakao", name: "카카오(다음)", w: 1.1, en: false,
+    id: "kakao", name: "카카오(다음)", w: 1.1, en: false, desc: "한국 이미지", need: ["KAKAO_KEY"],
     ok: (e) => e.KAKAO_KEY,
     async run(q, page, safe, e) {
       if (page > 50) return [];
@@ -93,7 +112,7 @@ const SOURCES = [
     },
   },
   {
-    id: "pixabay", name: "Pixabay", w: 1.1, en: false, colors: true,
+    id: "pixabay", name: "Pixabay", w: 1.1, en: false, colors: true, desc: "일반 사진·일러스트 (색상 필터)", need: ["PIXABAY_KEY"],
     ok: (e) => e.PIXABAY_KEY,
     async run(q, page, safe, e, o = {}) {
       const lang = HANGUL.test(q) ? "ko" : "en";
@@ -108,7 +127,7 @@ const SOURCES = [
     },
   },
   {
-    id: "unsplash", name: "Unsplash", w: 1.0, en: true, colors: true,
+    id: "unsplash", name: "Unsplash", w: 1.0, en: true, colors: true, desc: "감성 사진 (색상 필터)", need: ["UNSPLASH_KEY"],
     ok: (e) => e.UNSPLASH_KEY,
     async run(q, page, safe, e, o = {}) {
       const d = await getJson(
@@ -122,7 +141,7 @@ const SOURCES = [
     },
   },
   {
-    id: "pexels", name: "Pexels", w: 0.9, en: true, colors: true,
+    id: "pexels", name: "Pexels", w: 0.9, en: true, colors: true, desc: "일반 사진 (색상 필터)", need: ["PEXELS_KEY"],
     ok: (e) => e.PEXELS_KEY,
     async run(q, page, safe, e, o = {}) {
       const d = await getJson(
@@ -135,11 +154,12 @@ const SOURCES = [
     },
   },
   {
-    id: "openverse", name: "Openverse", w: 0.6, en: true,
+    id: "openverse", name: "Openverse", w: 0.6, en: true, desc: "일반 사진 (키 없이, 익명 한도 있음)",
     ok: () => true,
     async run(q, page, safe) {
+      // 익명 요청은 한 번에 20개까지만 허용되는 것으로 알려져 있어 20으로 맞춥니다 (2차 후기 7번 원인 후보).
       const d = await getJson(
-        `https://api.openverse.org/v1/images/?q=${enc(q)}&page=${page}&page_size=30&mature=${safe ? "false" : "true"}`,
+        `https://api.openverse.org/v1/images/?q=${enc(q)}&page=${page}&page_size=20&mature=${safe ? "false" : "true"}`,
         {}, 1800);
       return (d.results || []).map((it) => ({
         title: clean(it.title || ""), thumb: it.thumbnail || it.url, full: it.url,
@@ -149,7 +169,7 @@ const SOURCES = [
     },
   },
   {
-    id: "wikimedia", name: "Wikimedia", w: 0.5, en: true,
+    id: "wikimedia", name: "Wikimedia", w: 0.5, en: true, desc: "위키백과 이미지 저장소 (장소·인물·역사)",
     ok: () => true,
     async run(q, page) {
       const off = (page - 1) * 30;
@@ -163,6 +183,123 @@ const SOURCES = [
         return {
           title: clean(p.title.replace(/^File:/, "").replace(/\.\w+$/, "").replace(/_/g, " ")),
           thumb: ii.thumburl, full: ii.url, page: ii.descriptionurl, w: num(ii.width), h: num(ii.height), tags: [],
+        };
+      }).filter(Boolean);
+    },
+  },
+
+  // ---------- 키 없이 쓰는 기관 소스 (미술관·박물관·우주·역사 사진) ----------
+  // 응답 구조는 각 기관의 공개 문서를 기준으로 작성했고, 실제 호출은 배포 후 처음 확인하게 됩니다.
+  {
+    id: "met", name: "Met 미술관", w: 0.7, en: true, desc: "미국 · 미술·유물 (공개 이미지)",
+    ok: () => true,
+    async run(q, page) {
+      const per = 12, base = "https://collectionapi.metmuseum.org/public/collection/v1";
+      // 검색 결과 ID 목록이 수천~수만 개라 통째로 JSON 파싱하면 서버 CPU 한도(무료 10ms)를 넘길 수 있어,
+      // 필요한 앞부분만 잘라서 숫자를 뽑습니다.
+      const txt = await (await getRaw(`${base}/search?hasImages=true&q=${enc(q)}`, {}, 3600)).text();
+      const a = txt.indexOf("[");
+      if (a < 0) return [];
+      const want = page * per, lim = a + 1 + want * 9 + 20;
+      let ids = (txt.slice(a + 1, lim).match(/\d+/g) || []).map(Number);
+      if (lim < txt.length) ids.pop(); // 잘린 마지막 숫자 버림
+      ids = ids.slice((page - 1) * per, want);
+      if (!ids.length) return [];
+      const errs = [];
+      const objs = await Promise.all(ids.map((id) => getJson(`${base}/objects/${id}`, {}, 86400).catch((e) => { errs.push(e); return null; })));
+      const good = objs.filter((o) => o && o.primaryImageSmall);
+      if (!good.length && errs.length === ids.length) throw errs[0];
+      return good.map((o) => ({
+        title: clean(o.title || o.objectName || ""), thumb: o.primaryImageSmall, full: o.primaryImage || o.primaryImageSmall,
+        page: o.objectURL, w: 0, h: 0, tags: (o.tags || []).map((t) => t.term).filter(Boolean),
+      }));
+    },
+  },
+  {
+    id: "artic", name: "시카고 미술관", w: 0.7, en: true, desc: "미국 · 미술 (공개 이미지)",
+    ok: () => true,
+    async run(q, page) {
+      const f = "id,title,image_id,thumbnail,term_titles,subject_titles,style_titles";
+      const d = await getJson(
+        `https://api.artic.edu/api/v1/artworks/search?q=${enc(q)}&query[term][is_public_domain]=true&limit=20&page=${page}&fields=${f}`,
+        { "AIC-User-Agent": "ImageFeed (personal use)" }, 3600);
+      const base = d.config?.iiif_url || "https://www.artic.edu/iiif/2";
+      return (d.data || []).filter((it) => it.image_id).map((it) => ({
+        title: clean(it.title || ""), thumb: `${base}/${it.image_id}/full/400,/0/default.jpg`, full: `${base}/${it.image_id}/full/843,/0/default.jpg`,
+        page: `https://www.artic.edu/artworks/${it.id}`, w: num(it.thumbnail?.width), h: num(it.thumbnail?.height),
+        tags: [...(it.subject_titles || []), ...(it.style_titles || []), ...(it.term_titles || [])].filter(Boolean).slice(0, 12),
+      }));
+    },
+  },
+  {
+    id: "cleveland", name: "클리블랜드 미술관", w: 0.7, en: true, desc: "미국 · 미술 (CC0 고해상도)",
+    ok: () => true,
+    async run(q, page) {
+      const per = 24;
+      const d = await getJson(
+        `https://openaccess-api.clevelandart.org/api/artworks/?q=${enc(q)}&has_image=1&cc0=1&limit=${per}&skip=${(page - 1) * per}`, {}, 3600);
+      return (d.data || []).map((it) => {
+        const im = it.images || {}, web = im.web || im.print || im.full, big = im.print || im.full || web;
+        if (!web?.url) return null;
+        return {
+          title: clean(it.title || ""), thumb: web.url, full: big.url, page: it.url || web.url,
+          w: num(web.width), h: num(web.height), tags: [it.type].filter(Boolean),
+        };
+      }).filter(Boolean);
+    },
+  },
+  {
+    id: "vam", name: "V&A 박물관", w: 0.7, en: true, desc: "영국 · 디자인·패션·공예·가구",
+    ok: () => true,
+    async run(q, page) {
+      const d = await getJson(`https://api.vam.ac.uk/v2/objects/search?q=${enc(q)}&images_exist=1&page=${page}&page_size=24`, {}, 3600);
+      return (d.records || []).map((r) => {
+        const im = r._images || {}, b = im._iiif_image_base_url, th = im._primary_thumbnail;
+        if ((!b && !th) || (r._warningTypes || []).length) return null; // 민감 이미지 경고가 붙은 것은 제외
+        return {
+          title: clean(r._primaryTitle || r.objectType || ""),
+          thumb: b ? `${b}full/!500,500/0/default.jpg` : th, alt: th, full: b ? `${b}full/!1400,1400/0/default.jpg` : th,
+          page: `https://collections.vam.ac.uk/item/${r.systemNumber}/`, w: 0, h: 0,
+          tags: [r.objectType, r._primaryPlace].filter(Boolean),
+        };
+      }).filter(Boolean);
+    },
+  },
+  {
+    id: "nasa", name: "NASA", w: 0.7, en: true, desc: "우주·과학 사진",
+    ok: () => true,
+    async run(q, page) {
+      let d;
+      try { d = await getJson(`https://images-api.nasa.gov/search?q=${enc(q)}&media_type=image&page=${page}&page_size=30`, {}, 3600); }
+      catch (e) { if (e.status === 400 || e.status === 404) return []; throw e; } // 끝 페이지 너머는 오류로 오므로 "끝"으로 처리
+      return (d.collection?.items || []).map((it) => {
+        const m = it.data?.[0] || {};
+        const th = (it.links || []).find((l) => /\.(jpe?g|png)$/i.test(l.href || ""))?.href;
+        if (!th) return null;
+        return {
+          title: clean(m.title || ""), thumb: th, full: th.replace(/~(thumb|small|medium)\.(\w+)$/i, "~large.$2"),
+          page: `https://images.nasa.gov/details/${enc(m.nasa_id || "")}`, w: 0, h: 0,
+          tags: (m.keywords || []).map(String).slice(0, 12),
+        };
+      }).filter(Boolean);
+    },
+  },
+  {
+    id: "loc", name: "미국 의회도서관", w: 0.5, en: true, desc: "미국 · 역사 사진·판화 (불안정할 수 있음)",
+    ok: () => true,
+    async run(q, page) {
+      let d;
+      try { d = await getJson(`https://www.loc.gov/photos/?q=${enc(q)}&fo=json&c=24&sp=${page}`, {}, 3600); }
+      catch (e) { if (e.status === 404) return []; throw e; } // 결과 없음이 404로 옴
+      const px = (u) => Number((String(u).match(/(\d{2,4})px/) || [])[1]) || 0;
+      return (d.results || []).map((r) => {
+        const iu = (Array.isArray(r.image_url) ? r.image_url : []).filter((u) => u && !/grp\.gif$/.test(u));
+        const sorted = [...iu].sort((a, b) => px(a) - px(b));
+        const thumb = sorted.find((u) => px(u) >= 300) || r.item?.service_medium || sorted[sorted.length - 1];
+        if (!thumb) return null;
+        return {
+          title: clean(String(r.title || r.item?.title || "").replace(/^\[|\]$/g, "")), thumb, full: sorted[sorted.length - 1] || thumb,
+          page: r.url || r.item?.link || r.id || thumb, w: 0, h: 0, tags: (r.subject || []).map(String).slice(0, 12),
         };
       }).filter(Boolean);
     },
@@ -252,7 +389,9 @@ export default {
 
     if (u.pathname === "/api/config") {
       return json({
-        sources: SOURCES.filter((s) => s.ok(env)).map(({ id, name, w, en, colors }) => ({ id, name, w, en, colors: !!colors })),
+        sources: SOURCES.filter((s) => s.ok(env)).map(({ id, name, w, en, colors, desc, need }) => ({ id, name, w, en, colors: !!colors, desc: desc || "", keyless: !need })),
+        // 키를 등록하면 쓸 수 있게 되는 소스 (설정 화면 안내용)
+        locked: SOURCES.filter((s) => !s.ok(env)).map(({ id, name, desc, need, colors }) => ({ id, name, desc: desc || "", need: need || [], colors: !!colors })),
         ai: !!env.AI,
       });
     }
@@ -282,11 +421,12 @@ export default {
       try {
         items = await src.run(src.en ? qe : q, page, safe ? 1 : 0, env, { color, orient });
       } catch (e) {
-        return json({ error: String(e.message || e), items: [] }, 502);
+        // 502 대신 200 으로 사유를 함께 보내서 화면의 ⚠ 를 눌렀을 때 이유를 보여줄 수 있게 합니다.
+        return json({ items: [], err: reasonOf(e), detail: String(e.message || e).slice(0, 120) });
       }
       items = items
         .filter((it) => it.thumb && it.full && !hardBlocked(`${it.title} ${it.tags.join(" ")}`))
-        .map((it) => ({ ...it, src: src.id, adult: isAdult(`${it.title} ${it.tags.join(" ")}`) }));
+        .map((it) => ({ ...it, thumb: https(it.thumb), full: https(it.full), alt: it.alt ? https(it.alt) : "", page: https(it.page || it.full), src: src.id, adult: isAdult(`${it.title} ${it.tags.join(" ")}`) }));
       return json({ items });
     }
 

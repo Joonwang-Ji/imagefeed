@@ -17,29 +17,46 @@
 </head>
 <body>
 <header>
-  <form id="sf" autocomplete="off">
-    <input id="q" type="search" placeholder="이미지 검색 (예: 따뜻한 카페 인테리어)" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="search" name="nq">
-    <button type="submit" class="pri">검색</button>
-  </form>
-  <nav>
-    <button id="tabFeed" class="on">피드</button>
-    <button id="tabTr">트렌드</button>
-    <button id="tabBm">북마크 <span id="bmc"></span></button>
-    <button id="gear" aria-label="설정">설정</button>
-  </nav>
-  <div id="filters">
-    <div id="orient"><button data-o="" class="on">전체</button><button data-o="v">세로</button><button data-o="h">가로</button><button data-o="s">정사각</button></div>
-    <div id="colors"></div>
+  <div class="hrow">
+    <button id="homeBtn" class="ico" aria-label="처음으로" title="처음 화면으로">⌂</button>
+    <form id="sf" autocomplete="off">
+      <input id="q" type="search" placeholder="이미지 검색 (예: 따뜻한 카페 인테리어)" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="search" name="nq">
+      <button type="submit" class="pri">검색</button>
+    </form>
   </div>
-  <div id="chips"></div>
+  <div class="hrow tabs">
+    <nav>
+      <button id="tabFeed" class="on">피드</button>
+      <button id="tabTr">트렌드</button>
+      <button id="tabBm">북마크 <span id="bmc"></span></button>
+    </nav>
+    <span class="grow"></span>
+    <button id="filterBtn" class="sm">필터 <span id="filterBadge"></span></button>
+    <button id="gear" class="sm" aria-label="설정">설정</button>
+  </div>
+  <div id="filters" hidden>
+    <div class="frow"><span class="lbl">방향</span>
+      <div id="orient"><button data-o="" class="on">전체</button><button data-o="v">세로</button><button data-o="h">가로</button><button data-o="s">정사각</button></div>
+    </div>
+    <div class="frow"><span class="lbl">색상</span><div id="colors"></div></div>
+    <p id="colorNote" class="note"></p>
+    <button id="filterReset" class="sm">필터 초기화</button>
+  </div>
+  <div id="chipsWrap" hidden><span class="lbl" id="chipsLbl">관련 주제</span><div id="chips"></div></div>
   <div id="stat"></div>
 </header>
 
 <main>
   <div id="home" hidden>
-    <p class="hint">주제를 고르거나 위에서 검색해 보세요.</p>
+    <h2 class="hh">무엇을 찾아볼까요?</h2>
+    <p class="hint">위에서 검색하거나, 아래 주제를 눌러 보세요.</p>
     <div id="homeChips" class="chips"></div>
-    <button id="rand" class="pri">영감 뽑기</button>
+    <h3 class="hsub">둘러보기</h3>
+    <div class="explore">
+      <button id="exRand" class="xbtn"><b>🎲 랜덤 주제</b><small>추천 주제 중 하나를 골라 바로 검색해요</small></button>
+      <button id="exTrend" class="xbtn"><b>🔥 요즘 화제</b><small>위키백과에서 많이 본 주제로 찾아요 (사람·사건 위주)</small></button>
+      <button id="exBm" class="xbtn"><b>⭐ 내 취향</b><small>북마크한 이미지의 태그로 찾아요</small></button>
+    </div>
   </div>
   <div id="trends" hidden>
     <select id="trLang">
@@ -88,18 +105,31 @@
     <button id="vboard">보드</button>
     <button id="vdl">다운로드</button>
     <button id="vopen">원본 페이지</button>
-    <button id="vsim" class="pri">비슷한 이미지</button>
+    <button id="vsim" class="pri">비슷한 이미지 ↓</button>
   </div>
+  <section id="vsimbox">
+    <div class="simhead">
+      <b>비슷한 이미지</b><span id="vsimq"></span>
+      <span class="grow"></span>
+      <button id="vsimgo" class="sm">피드로 보기</button>
+    </div>
+    <div id="vsimlevels"></div>
+  </section>
 </div>
 
 <div id="settings" class="overlay" hidden>
   <div class="sheet">
     <h2>설정</h2>
     <label class="row"><input type="checkbox" id="sBlur"> 선정적일 수 있는 이미지 블러 (권장)</label>
-    <label class="row"><input type="checkbox" id="sMl"> 브라우저 AI로 이미지 직접 검사 <small>(켜면 더 안전, 처음 로딩이 조금 느림)</small></label>
+    <label class="row"><input type="checkbox" id="sMl"> 브라우저 AI로 이미지 직접 검사 <small>(켜면 더 안전, 처음 한 번 준비하는 동안 화면이 잠깐 느려질 수 있어요)</small></label>
     <p class="note">공포·잔혹 주제는 해제할 수 없어요. 검색 기록은 저장하지 않아요.</p>
     <h3>검색 소스</h3>
     <div id="srcList"></div>
+    <div id="lockBox" hidden>
+      <h3>키를 등록하면 더 쓸 수 있어요</h3>
+      <div id="lockList"></div>
+      <p class="note">Cloudflare → 프로젝트 → Settings → <b>Runtime variables and secrets</b>(맨 위)에 Secret으로 등록하세요. Builds 쪽 Variables는 앱에 전달되지 않아요.</p>
+    </div>
     <h3>북마크 옮기기</h3>
     <div class="btns">
       <button id="expBm">내보내기</button>
