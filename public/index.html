@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0f1115">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="이미지피드">
+<meta name="robots" content="noindex,nofollow">
+<meta name="referrer" content="no-referrer">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icon-180.png">
+<link rel="icon" href="/icon-192.png" type="image/png">
+<link rel="stylesheet" href="/style.css">
+<title>이미지피드</title>
+</head>
+<body>
+<header>
+  <form id="sf" autocomplete="off">
+    <input id="q" type="search" placeholder="이미지 검색 (예: 따뜻한 카페 인테리어)" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="search" name="nq">
+    <button type="submit" class="pri">검색</button>
+  </form>
+  <nav>
+    <button id="tabFeed" class="on">피드</button>
+    <button id="tabTr">트렌드</button>
+    <button id="tabBm">북마크 <span id="bmc"></span></button>
+    <button id="gear" aria-label="설정">설정</button>
+  </nav>
+  <div id="filters">
+    <div id="orient"><button data-o="" class="on">전체</button><button data-o="v">세로</button><button data-o="h">가로</button><button data-o="s">정사각</button></div>
+    <div id="colors"></div>
+  </div>
+  <div id="chips"></div>
+  <div id="stat"></div>
+</header>
+
+<main>
+  <div id="home" hidden>
+    <p class="hint">주제를 고르거나 위에서 검색해 보세요.</p>
+    <div id="homeChips" class="chips"></div>
+    <button id="rand" class="pri">영감 뽑기</button>
+  </div>
+  <div id="trends" hidden>
+    <select id="trLang">
+      <option value="ko">한국어 (한국)</option><option value="en">English (영어권)</option><option value="ja">日本語 (일본)</option>
+      <option value="zh">中文</option><option value="de">Deutsch (독일)</option><option value="fr">Français (프랑스)</option>
+      <option value="es">Español (스페인어권)</option><option value="pt">Português (포르투갈어권)</option><option value="it">Italiano (이탈리아)</option>
+      <option value="ru">Русский (러시아)</option><option value="id">Indonesia</option><option value="vi">Tiếng Việt (베트남)</option>
+      <option value="th">ไทย (태국)</option><option value="tr">Türkçe (튀르키예)</option>
+    </select>
+    <p class="hint" id="trNote"></p>
+    <div id="trChips" class="chips"></div>
+  </div>
+  <div id="grid" class="grid"></div>
+  <div id="bmgrid" class="grid" hidden></div>
+  <div id="msg" hidden></div>
+  <div id="sentinel"></div>
+</main>
+
+<div id="toast" hidden></div>
+
+<div id="login" class="overlay" hidden>
+  <form id="lf" class="sheet">
+    <h2>이미지피드</h2>
+    <p>접속 암호를 입력하세요.</p>
+    <input id="lpass" type="password" autocomplete="current-password" placeholder="암호">
+    <p id="lmsg" class="err"></p>
+    <button class="pri" type="submit">들어가기</button>
+  </form>
+</div>
+
+<div id="viewer" class="overlay" hidden>
+  <div class="vtop">
+    <button id="vclose" aria-label="닫기">✕</button>
+    <div class="vmeta"><div id="vtitle"></div><small id="vsrc"></small></div>
+  </div>
+  <div class="vstage">
+    <button id="vprev" class="nav" aria-label="이전">‹</button>
+    <div class="vwrap">
+      <img id="vimg" alt="" referrerpolicy="no-referrer">
+      <div id="vveil" class="veil" hidden>민감할 수 있는 이미지<br><small>탭하면 보기</small></div>
+    </div>
+    <button id="vnext" class="nav" aria-label="다음">›</button>
+  </div>
+  <div class="vbar">
+    <button id="vstar">☆ 북마크</button>
+    <button id="vboard">보드</button>
+    <button id="vdl">다운로드</button>
+    <button id="vopen">원본 페이지</button>
+    <button id="vsim" class="pri">비슷한 이미지</button>
+  </div>
+</div>
+
+<div id="settings" class="overlay" hidden>
+  <div class="sheet">
+    <h2>설정</h2>
+    <label class="row"><input type="checkbox" id="sBlur"> 선정적일 수 있는 이미지 블러 (권장)</label>
+    <label class="row"><input type="checkbox" id="sMl"> 브라우저 AI로 이미지 직접 검사 <small>(켜면 더 안전, 처음 로딩이 조금 느림)</small></label>
+    <p class="note">공포·잔혹 주제는 해제할 수 없어요. 검색 기록은 저장하지 않아요.</p>
+    <h3>검색 소스</h3>
+    <div id="srcList"></div>
+    <h3>북마크 옮기기</h3>
+    <div class="btns">
+      <button id="expBm">내보내기</button>
+      <button id="impBmBtn">가져오기</button>
+      <input type="file" id="impBm" accept="application/json" hidden>
+    </div>
+    <div class="btns">
+      <button id="logout">암호 다시 입력</button>
+      <button id="closeSet" class="pri">닫기</button>
+    </div>
+  </div>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>
