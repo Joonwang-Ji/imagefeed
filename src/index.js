@@ -90,12 +90,13 @@ const SOURCES = [
       const start = (page - 1) * 40 + 1;
       if (start > 1000) return [];
       const d = await getJson(`${base}?query=${enc(q)}&display=40&start=${start}&sort=sim&filter=all`, headers);
-      // 네이버 기본 썸네일은 아주 작습니다. 썸네일 주소의 크기 코드(type=...)를 키워서 요청하고,
-      // 안 열리면 화면이 원래 작은 썸네일(alt)로 다시 시도합니다. 크기 코드를 못 찾으면 원본이 작을 때 원본을 씁니다.
+      // 네이버 기본 썸네일은 아주 작습니다. 카카오와 같은 방식으로, 원본이 너무 크지 않으면 원본을 썸네일로 쓰고
+      // 안 열리면(막힌 사이트·삭제된 이미지) 크기 코드를 키운 네이버 썸네일(type=w480)로, 그것도 안 되면 원래 썸네일로 대신합니다.
       return (d.items || []).map((it) => {
         const w = num(it.sizewidth), h = num(it.sizeheight), small = !w || !h || w * h <= 6e6;
-        const th = String(it.thumbnail || ""), big = /^https?:\/\/search\.pstatic\.net\/.*[?&]type=/i.test(th) ? th.replace(/([?&]type=)[^&]*/i, "$1w480") : (small && it.link ? it.link : th);
-        return { title: clean(it.title), thumb: big, alt: th, full: it.link, page: it.link, w, h, tags: [] };
+        const th = String(it.thumbnail || "");
+        const mid = /^https?:\/\/search\.pstatic\.net\/.*[?&]type=/i.test(th) ? th.replace(/([?&]type=)[^&]*/i, "$1w480") : th;
+        return { title: clean(it.title), thumb: small && it.link ? it.link : mid, alt: mid, full: it.link, page: it.link, w, h, tags: [] };
       });
     },
   },
