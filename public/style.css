@@ -120,3 +120,17 @@ body:not(.noblur) .card[data-st=pending]::after{content:"";position:absolute;lef
 .simhead button{background:#1d2027;border-color:#333;color:#fff;flex:none}
 .simmsg{color:#888}
 .simsent{height:1px}
+
+/* ---------- 4차 추가: 사진 검색 버튼, 북마크 도구, 오프라인, 보드·메모 시트 ---------- */
+#sf .upbtn{padding:7px 9px;background:transparent;border:none;font-size:16px;line-height:1}
+#bmtools{display:flex;gap:8px;align-items:center;padding:4px 2px 10px}
+#bmtools input{flex:1;min-width:0}
+#bmtools select{font:inherit;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:999px;padding:7px 10px;flex:none;max-width:42%}
+#offline{display:flex;gap:10px;align-items:center;justify-content:space-between;margin:2px 2px 10px;padding:10px 14px;border:1px solid var(--warn);border-radius:14px;color:var(--warn);font-size:14px}
+body.offline header .hrow:first-child,body.offline #tabFeed,body.offline #tabTr,body.offline #vsimbox,body.offline #vsim{display:none}
+#vnote{margin-top:2px;color:#ddd;font-size:13px;white-space:normal;overflow:visible;text-overflow:clip}
+#bmSheet{display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.6);z-index:60}
+#bmSheet[hidden]{display:none!important}
+#bmBoards{margin-bottom:8px}
+#bmSheet textarea{font:inherit;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px;width:100%;outline:none;resize:vertical}
+#bmSheet textarea:focus{border-color:var(--acc)}

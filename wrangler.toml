@@ -8,7 +8,7 @@ directory = "./public"
 binding = "ASSETS"
 run_worker_first = ["/api/*"]
 
-# 한글 검색어를 영어로 번역해서 영어 소스(Pexels/Unsplash 등)에도 쓰는 기능.
+# Workers AI: 한글 검색어를 영어로 번역(영어 전용 소스용)하고, 이미지 설명(비슷한 이미지·사진으로 검색)에도 씁니다.
 # 필요 없으면 아래 두 줄을 지우세요. (Workers AI 무료 할당량 사용)
 [ai]
 binding = "AI"

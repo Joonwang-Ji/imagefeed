@@ -21,6 +21,8 @@
     <button id="homeBtn" class="ico" aria-label="처음으로" title="처음 화면으로">⌂</button>
     <form id="sf" autocomplete="off">
       <input id="q" type="search" placeholder="어떤 이미지를 찾을까요?" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="search" name="nq">
+      <button type="button" id="upBtn" class="upbtn" aria-label="사진으로 검색" title="사진으로 검색" hidden>📷</button>
+      <input type="file" id="upFile" accept="image/*" hidden>
       <button type="submit" class="pri">검색</button>
     </form>
   </div>
@@ -52,6 +54,7 @@
 </header>
 
 <main>
+  <div id="offline" hidden><span>오프라인이에요. 저장해 둔 북마크만 볼 수 있어요.</span><button id="retry" class="sm">다시 연결</button></div>
   <div id="home" hidden>
     <h2 class="hh">무엇을 찾아볼까요?</h2>
     <p class="hint">위에서 검색하거나, 아래 주제를 눌러 보세요.</p>
@@ -75,6 +78,10 @@
     <div id="trChips" class="chips"></div>
   </div>
   <div id="grid" class="grid"></div>
+  <div id="bmtools" hidden>
+    <input id="bmq" type="search" placeholder="북마크에서 찾기 (제목·태그·보드·메모)" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+    <select id="bmsort" aria-label="정렬"><option value="new">최근 저장순</option><option value="old">오래된 순</option><option value="title">제목순</option></select>
+  </div>
   <div id="bmgrid" class="grid" hidden></div>
   <div id="msg" hidden></div>
   <div id="sentinel"></div>
@@ -95,7 +102,7 @@
 <div id="viewer" class="overlay" hidden>
   <div class="vtop">
     <button id="vclose" aria-label="닫기">✕</button>
-    <div class="vmeta"><div id="vtitle"></div><small id="vsrc"></small></div>
+    <div class="vmeta"><div id="vtitle"></div><small id="vsrc"></small><div id="vnote" hidden></div></div>
   </div>
   <div class="vstage">
     <button id="vprev" class="nav" aria-label="이전">‹</button>
@@ -107,7 +114,7 @@
   </div>
   <div class="vbar">
     <button id="vstar">☆ 북마크</button>
-    <button id="vboard">보드</button>
+    <button id="vboard">보드·메모</button>
     <button id="vdl">다운로드</button>
     <button id="vopen">원본 페이지</button>
     <button id="vsim" class="pri">비슷한 이미지 ↓</button>
@@ -116,10 +123,23 @@
     <div class="simhead">
       <b>비슷한 이미지</b><span id="vsimq"></span>
       <span class="grow"></span>
+      <button id="vsimai" class="sm" title="AI가 이미지를 설명해 그 말로 다시 찾아요">AI로 다시 찾기</button>
       <button id="vsimgo" class="sm">피드로 보기</button>
     </div>
     <div id="vsimlevels"></div>
   </section>
+</div>
+
+<div id="bmSheet" class="overlay" hidden>
+  <form id="bmForm" class="sheet">
+    <h2>보드·메모</h2>
+    <h3>보드</h3>
+    <div id="bmBoards" class="chips"></div>
+    <input id="bmNewBoard" type="search" placeholder="새 보드 이름 (선택)" maxlength="30" autocomplete="off">
+    <h3>메모</h3>
+    <textarea id="bmNote" rows="3" maxlength="200" placeholder="짧은 메모 (선택)"></textarea>
+    <div class="btns"><button type="button" id="bmCancel">취소</button><button class="pri" type="submit">저장</button></div>
+  </form>
 </div>
 
 <div id="settings" class="overlay" hidden>
@@ -127,6 +147,7 @@
     <h2>설정</h2>
     <label class="row"><input type="checkbox" id="sBlur"> 선정적일 수 있는 이미지 블러 (권장)</label>
     <label class="row"><input type="checkbox" id="sMl"> 브라우저 AI로 이미지 직접 검사 <small>(켜면 더 안전, 처음 한 번 준비하는 동안 화면이 잠깐 느려질 수 있어요)</small></label>
+    <label class="row" id="capRow" hidden><input type="checkbox" id="sCap"> AI 이미지 설명으로 비슷한 이미지 찾기 <small>(작게 줄인 이미지를 Cloudflare Workers AI에 보내요. 무료 사용량을 쓰고, 같은 이미지는 저장해 두었다가 다시 써요)</small></label>
     <p class="note">공포·잔혹 주제는 해제할 수 없어요. 검색 기록은 저장하지 않아요.</p>
     <h3>검색 소스</h3>
     <div id="srcList"></div>
@@ -148,6 +169,7 @@
   </div>
 </div>
 
+<script src="/color.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

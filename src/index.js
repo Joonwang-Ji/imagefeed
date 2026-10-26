@@ -274,6 +274,42 @@ async function translate(q, env, sl = "") {
   }
 }
 
+// ---------- 이미지 설명 (비슷한 이미지 보강 / 사진으로 검색) ----------
+// 화면이 작게 줄인 JPEG 를 보내면 Workers AI 가 한 줄 설명을 만들고, 그중 핵심 영어 단어만 돌려줍니다.
+// 모델 이름은 환경 변수 CAPTION_MODEL 로 바꿀 수 있고, 끄려면 AI_CAPTION=off 로 설정합니다.
+// 같은 이미지는 7일 동안 캐시되어 무료 한도를 아낍니다.
+const CAP_PROMPT = "Describe this image in one short sentence. Mention the main subject, setting, style and colors.";
+const CAP_STOP = new Set(["the", "and", "with", "from", "this", "that", "image", "picture", "photo", "photograph", "shows", "showing", "depicts",
+  "depicting", "features", "featuring", "there", "its", "for", "his", "her", "their", "being", "some", "appears", "seems", "very", "view",
+  "scene", "close", "closeup", "front", "side", "into", "has", "have", "while", "which", "who", "than", "then", "also", "one", "two", "three", "are", "was"]);
+function capKeywords(t) {
+  const w = String(t).toLowerCase().replace(/[^a-z0-9\s'-]/g, " ").split(/\s+/).filter((x) => x.length > 2 && !CAP_STOP.has(x));
+  return [...new Set(w)].slice(0, 6).join(" ");
+}
+async function caption(req, env) {
+  if (!env.AI || env.AI_CAPTION === "off") return json({ error: "unavailable", detail: "ai" });
+  if (num(req.headers.get("content-length")) > 300 * 1024) return json({ error: "size" }, 413);
+  const buf = new Uint8Array(await req.arrayBuffer());
+  if (!buf.length || buf.length > 300 * 1024) return json({ error: "size" }, 413);
+  const jpeg = buf[0] === 0xff && buf[1] === 0xd8, png = buf[0] === 0x89 && buf[1] === 0x50;
+  if (!jpeg && !png) return json({ error: "type" }, 415);
+  const hash = [...new Uint8Array(await crypto.subtle.digest("SHA-256", buf))].slice(0, 12).map((b) => b.toString(16).padStart(2, "0")).join("");
+  const key = new Request(`https://cache.local/cap?h=${hash}`);
+  try { const hit = await caches.default.match(key); if (hit) return json(await hit.json()); } catch { /* 캐시가 없으면 새로 만듭니다 */ }
+  let last = "";
+  for (const model of [env.CAPTION_MODEL, "@cf/unum/uform-gen2-qwen-500m", "@cf/llava-hf/llava-1.5-7b-hf"].filter(Boolean)) {
+    try {
+      const out = await env.AI.run(model, { image: Array.from(buf), prompt: CAP_PROMPT, max_tokens: 48 });
+      const text = String(out?.description ?? out?.response ?? out?.text ?? "").trim();
+      if (!text) continue;
+      const body = hardBlocked(text) ? { q: "", blocked: true } : { q: capKeywords(text), text: text.slice(0, 160) };
+      try { await caches.default.put(key, new Response(JSON.stringify(body), { headers: { "cache-control": "max-age=604800" } })); } catch { /* 캐시 실패는 무시 */ }
+      return json(body);
+    } catch (e) { last = String(e?.message || e).slice(0, 100); }
+  }
+  return json({ error: "unavailable", detail: last });
+}
+
 // ---------- 트렌드 (위키백과 많이 본 문서, 키 불필요) ----------
 const TREND_LANGS = ["ko", "en", "ja", "zh", "de", "fr", "es", "pt", "it", "ru", "id", "vi", "th", "tr"];
 const TREND_SKIP = /^(Main_Page|대문|メインページ|Wikipedia|위키백과|Hauptseite|Accueil|Portada|Pagina_principale|Заглавная_страница|Halaman_Utama|Trang_Chính|หน้าหลัก|Ana_Sayfa|Wikipédia|Página_principal|Pagina_principală|Special|特別|特殊|Spezial|Spécial|Especial|Speciale|Служебная|Khusus|Đặc_biệt|พิเศษ|Özel)/;
@@ -343,8 +379,11 @@ export default {
         // 키를 등록하면 쓸 수 있게 되는 소스 (설정 화면 안내용)
         locked: SOURCES.filter((s) => !s.ok(env)).map(({ id, name, desc, need, colors }) => ({ id, name, desc: desc || "", need: need || [], colors: !!colors })),
         ai: !!env.AI,
+        caption: !!env.AI && env.AI_CAPTION !== "off",
       });
     }
+
+    if (u.pathname === "/api/caption" && req.method === "POST") return caption(req, env);
 
     if (u.pathname === "/api/tr") {
       const q = (u.searchParams.get("q") || "").trim().slice(0, 100);
@@ -366,17 +405,18 @@ export default {
       const safe = u.searchParams.get("safe") !== "0";
       const color = u.searchParams.get("color") || "";
       const orient = u.searchParams.get("orient") || "";
-      if (color && !COLOR[src.id]?.[color]) return json({ items: [] });
+      // 색상: 이 소스가 해당 색을 서버에서 걸러 주면 sc=true. 아니면 색은 무시하고 화면이 불러온 뒤 대표 색으로 거릅니다.
+      const sc = !!(color && COLOR[src.id]?.[color]);
       let items;
       try {
-        items = await src.run(src.en ? qe : q, page, safe ? 1 : 0, env, { color, orient });
+        items = await src.run(src.en ? qe : q, page, safe ? 1 : 0, env, { color: sc ? color : "", orient });
       } catch (e) {
         // 502 대신 200 으로 사유를 함께 보내서 화면의 ⚠ 를 눌렀을 때 이유를 보여줄 수 있게 합니다.
         return json({ items: [], err: reasonOf(e), detail: String(e.message || e).slice(0, 120) });
       }
       items = items
         .filter((it) => it.thumb && it.full && !hardBlocked(`${it.title} ${it.tags.join(" ")}`))
-        .map((it) => ({ ...it, thumb: https(it.thumb), full: https(it.full), alt: it.alt ? https(it.alt) : "", page: https(it.page || it.full), src: src.id, adult: isAdult(`${it.title} ${it.tags.join(" ")}`) }));
+        .map((it) => ({ ...it, thumb: https(it.thumb), full: https(it.full), alt: it.alt ? https(it.alt) : "", page: https(it.page || it.full), src: src.id, sc, adult: isAdult(`${it.title} ${it.tags.join(" ")}`) }));
       return json({ items });
     }
 

@@ -35,6 +35,7 @@ const WHY = {
 const S = {
   pass: LS.get("pass", ""), blur: LS.get("blur", true), ml: LS.get("ml", true), off: new Set(LS.get("off", [])), only: new Set(),
   color: "", orient: "", board: "__all", view: "feed", list: [], bmIds: new Set(),
+  bmq: "", bmsort: LS.get("bmsort", "new"), offline: false,
 };
 let cfg = null;
 const srcName = (id) => cfg?.sources.find((s) => s.id === id)?.name || id;
@@ -49,7 +50,10 @@ async function api(path, opt = {}) {
 }
 const limiter = (n) => { let a = 0; const q = []; const next = () => { if (a < n && q.length) { a++; const { f, ok, no } = q.shift(); f().then(ok, no).finally(() => { a--; next(); }); } }; return (f) => new Promise((ok, no) => { q.push({ f, ok, no }); next(); }); };
 const limit = limiter(8);
-const fetchBlob = (path) => limit(async () => (await api(path, { signal: AbortSignal.timeout(20000) })).blob());
+// hi=true: 지금 화면에 필요한 큰 이미지는 썸네일 대기열을 기다리지 않고 바로 받습니다.
+const fetchBlob = (path, hi) => hi
+  ? api(path, { signal: AbortSignal.timeout(25000) }).then((r) => r.blob())
+  : limit(async () => (await api(path, { signal: AbortSignal.timeout(20000) })).blob());
 
 // ---------- 로그인 ----------
 function showLogin(msg) { $("#login").hidden = false; $("#lmsg").textContent = msg || ""; $("#lpass").focus(); }
@@ -76,7 +80,7 @@ async function toggleBookmark(it) {
     S.bmIds.add(it.id); toast("북마크에 담았어요");
   }
   refreshStars(); updateCount();
-  if (S.view === "bm" && $("#viewer").hidden) showBm();
+  if (S.view === "bm" && $("#viewer").hidden) renderBm();
 }
 function refreshStars() {
   document.querySelectorAll(".card").forEach((c) => { const b = c.querySelector(".star"); if (b && c._it) b.textContent = S.bmIds.has(c._it.id) ? "★" : "☆"; });
@@ -85,7 +89,12 @@ function refreshStars() {
 
 // ---------- 메이슨리 ----------
 class Masonry {
-  constructor(el) { this.el = el; this.all = []; this.cards = []; this.cols = []; this.hs = []; this.n = 0; this.pred = null; }
+  constructor(el) { this.el = el; this.all = []; this.cards = []; this.cols = []; this.hs = []; this.n = 0; this.pred = null; this.onChange = null; }
+  // 이미지를 불러온 뒤 비율·색을 알게 되어 필터 조건에서 벗어난 카드는 목록에서 뺍니다.
+  recheck(c) {
+    if (!this.pred || this.pred(c) || !this.cards.includes(c)) return;
+    this.cards = this.cards.filter((x) => x !== c); c.remove(); this.onChange?.();
+  }
   count() { const w = this.el.clientWidth || innerWidth; return w < 560 ? 2 : w < 860 ? 3 : w < 1180 ? 4 : 5; }
   build() {
     this.n = this.count(); this.el.textContent = ""; this.cols = []; this.hs = Array(this.n).fill(0);
@@ -128,15 +137,27 @@ function makeCard(it, open) {
   return el;
 }
 
+// 이미지에서 대표 색을 뽑습니다. 서버가 거쳐 준 이미지(blob)만 읽을 수 있고, 못 읽으면 null(걸러내지 않음).
+function pixelColors(img) {
+  try {
+    const c = document.createElement("canvas"); c.width = c.height = 24;
+    const x = c.getContext("2d", { willReadFrequently: true });
+    x.drawImage(img, 0, 0, 24, 24);
+    return window.ColorTools.classify(x.getImageData(0, 0, 24, 24).data);
+  } catch { return null; }
+}
+
 async function loadCard(el) {
   const it = el._it, img = el.querySelector("img");
   const needML = S.blur && S.ml && !it.adult && !it.fromBm;
+  const inMain = !!el.closest("#grid");
+  const wantColor = !!S.color && inMain && !it.sc && !it.cols;
   el.dataset.st = it.adult ? "flag" : needML ? "pending" : "ok";
   // 큰 썸네일 주소가 안 열리는 소스(예: V&A)는 작은 주소(alt)로 한 번 더 시도
   img.onerror = () => { if (it.alt && img.dataset.alt !== "1") { img.dataset.alt = "1"; img.referrerPolicy = "no-referrer"; img.src = it.alt; } else el.classList.add("broken"); };
   try {
     if (it.blob) img.src = URL.createObjectURL(it.blob);
-    else if (needML) { const b = await fetchBlob(`/api/img?u=${enc(it.thumb)}`); it.blob = b; img.src = URL.createObjectURL(b); }
+    else if (needML || wantColor) { const b = await fetchBlob(`/api/img?u=${enc(it.thumb)}`); it.blob = b; img.src = URL.createObjectURL(b); }
     else { img.referrerPolicy = "no-referrer"; img.src = it.thumb; }
     await img.decode().catch(() => {});
     el.classList.add("loaded");
@@ -145,6 +166,8 @@ async function loadCard(el) {
       it.w = img.naturalWidth; it.h = img.naturalHeight;
       el._r = clamp(it.w / it.h, 0.5, 2.2); el.style.aspectRatio = String(el._r);
     }
+    if (wantColor && it.blob) it.cols = pixelColors(img);
+    if (inMain) feedM.recheck(el); // 방향·색이 조건과 다르면 목록에서 뺌
     if (needML && it.blob) enqueueClassify(el, img, it);
   } catch (e) {
     if (e.message === "auth") return;
@@ -196,14 +219,15 @@ class Feed {
   constructor(m, o = {}) { this.m = m; this.o = o; this.gen = 0; this.reset(); }
   reset() {
     this.gen++;
-    Object.assign(this, { q: "", qe: "", sl: "", page: 0, loading: false, ended: false, blocked: false,
+    this.acs?.forEach((a) => a.abort()); // 진행 중이던 요청은 취소 (뷰어에서 빠르게 넘길 때 낭비 방지)
+    Object.assign(this, { q: "", qe: "", sl: "", page: 0, loading: false, ended: false, blocked: false, acs: new Set(),
       srcEnded: new Set(), stat: {}, items: [], keys: new Map(), tags: new Map(), trP: Promise.resolve() });
   }
   sources() {
     const on = (cfg?.sources || []).filter((s) => !S.off.has(s.id));
     // 소스 패널에서 고른 소스만 검색 (메인 피드만 해당). 고른 소스가 꺼져 있으면 전체로 되돌립니다.
     const pickd = this.o.filters && S.only.size ? on.filter((s) => S.only.has(s.id)) : on;
-    return (pickd.length ? pickd : on).filter((s) => !this.o.filters || !S.color || s.colors);
+    return pickd.length ? pickd : on;
   }
   begin(q, sl = "") {
     this.q = this.qe = q;
@@ -228,9 +252,11 @@ class Feed {
     const batch = []; let timer = null;
     const flush = () => { clearTimeout(timer); timer = null; const arr = batch.splice(0); if (gen === this.gen && arr.length) this.merge(arr); };
     await Promise.all(srcs.map(async (s) => {
+      const ac = new AbortController(); this.acs.add(ac);
+      let timedOut = false; const tm = setTimeout(() => { timedOut = true; ac.abort(); }, 16000);
       try {
         if (s.en) await this.trP;
-        const r = await (await api(`/api/search?src=${s.id}&q=${enc(this.q)}&qe=${enc(this.qe)}&page=${page}&safe=${safe}&color=${color}&orient=${orient}`, { signal: AbortSignal.timeout(16000) })).json();
+        const r = await (await api(`/api/search?src=${s.id}&q=${enc(this.q)}&qe=${enc(this.qe)}&page=${page}&safe=${safe}&color=${color}&orient=${orient}`, { signal: ac.signal })).json();
         if (gen !== this.gen) return;
         if (r.blocked) { this.blocked = true; return; }
         if (r.err) { this.fail(s, r); return; }
@@ -240,8 +266,8 @@ class Feed {
         if (!timer) timer = setTimeout(flush, page === 1 ? 600 : 300);
       } catch (e) {
         if (gen !== this.gen || e.message === "auth") return;
-        this.fail(s, { err: e.name === "TimeoutError" ? "timeout" : "network" });
-      }
+        this.fail(s, { err: timedOut || e.name === "TimeoutError" ? "timeout" : "network" });
+      } finally { clearTimeout(tm); this.acs.delete(ac); }
     }));
     flush();
     if (gen !== this.gen) return;
@@ -283,16 +309,37 @@ const M = new Feed(feedM, {
   onBlocked: () => showMsg("이 주제는 차단된 주제예요. (공포·잔혹 필터는 해제할 수 없어요)"),
   reobserve: () => { sio.unobserve($("#sentinel")); sio.observe($("#sentinel")); },
 });
-const predOrient = () => !S.orient ? null : (c) => { const r = c._it.w && c._it.h ? c._it.w / c._it.h : 1; return S.orient === "v" ? r < 0.9 : S.orient === "h" ? r > 1.1 : r >= 0.9 && r <= 1.1; };
+// 비율을 아직 모르는 이미지는 일단 통과시키고, 불러온 뒤 loadCard 가 다시 판정합니다.
+const predOrient = () => !S.orient ? null : (c) => {
+  if (!c._it.w || !c._it.h) return true;
+  const r = c._it.w / c._it.h; return S.orient === "v" ? r < 0.9 : S.orient === "h" ? r > 1.1 : r >= 0.9 && r <= 1.1;
+};
+// 서버가 색을 맞춰 준 이미지(sc)와 아직 색을 모르는 이미지는 통과, 대표 색을 알게 되면 고른 색이 포함될 때만 남깁니다.
+const predColor = () => !S.color ? null : (c) => !c._it.cols || !!c._it.sc || c._it.cols.includes(S.color);
+const feedPred = () => {
+  const po = predOrient(), pc = predColor();
+  return po || pc ? (c) => (!po || po(c)) && (!pc || pc(c)) : null;
+};
+// 필터로 카드가 빠지면 목록이 비거나 화면이 덜 찰 수 있으니 안내를 갱신하고 다음 페이지를 불러옵니다.
+let kickT;
+feedM.onChange = () => {
+  clearTimeout(kickT);
+  kickT = setTimeout(() => {
+    if (!M.items.length) return;
+    checkEmpty();
+    if (!M.ended) { sio.unobserve($("#sentinel")); sio.observe($("#sentinel")); }
+  }, 250);
+};
 
 async function startSearch(q, opts = {}) {
   q = (q || "").trim().slice(0, 100);
   if (!q || !cfg) return;
+  if (S.offline) return toast("오프라인이라 북마크만 볼 수 있어요");
   if (V.stack.length) closeViewer();
   setView("feed");
   M.reset(); M.begin(q, opts.sl);
   $("#q").value = q; $("#q").blur(); $("#home").hidden = true; $("#filters").hidden = true; if (!opts.keep) $("#srcPanel").hidden = true;
-  feedM.clear(); feedM.pred = predOrient(); markFilters(); $("#msg").hidden = true; $("#msg").textContent = ""; renderChips(); renderStat(); scrollTo(0, 0);
+  feedM.clear(); feedM.pred = feedPred(); markFilters(); $("#msg").hidden = true; $("#msg").textContent = ""; renderChips(); renderStat(); scrollTo(0, 0);
   await M.next();
 }
 
@@ -334,9 +381,12 @@ let rerunTimer = null;
 function queueRerun() { clearTimeout(rerunTimer); rerunTimer = setTimeout(() => { if (M.q) startSearch(M.q, { sl: M.sl, keep: true }); }, 450); }
 function showMsg(t) { const m = $("#msg"); m.textContent = t; m.hidden = false; }
 function checkEmpty() {
-  if (M.items.length) return;
+  if (feedM.cards.length) { if (M.items.length) $("#msg").hidden = true; return; }
+  if (M.items.length) { // 결과는 있었지만 방향·색 조건에 맞는 것이 하나도 없음
+    if (M.ended) showMsg("방향·색상 조건에 맞는 이미지를 찾지 못했어요. 필터를 바꾸거나 다른 말로 검색해 보세요.");
+    return;
+  }
   const act = M.sources();
-  if (S.color && !act.length) return showMsg("색상 필터는 Pixabay · Unsplash (키 필요)에서만 동작해요. 필터에서 색상을 해제해 주세요.");
   const allErr = act.length && act.every((s) => M.stat[s.id]?.err);
   if (M.ended || allErr) showMsg(!act.length ? "켜져 있는 검색 소스가 없어요. 설정에서 켜 주세요." : allErr ? "검색 소스에 연결하지 못했어요. 상단의 [소스] 버튼에서 ⚠ 를 눌러 이유를 확인해 보세요." : "결과가 없어요. 다른 말로 검색해 보세요.");
 }
@@ -350,6 +400,7 @@ function renderHome() {
   $("#home").hidden = !!M.q || S.view !== "feed";
 }
 function goHome() {
+  if (S.offline) return;
   if (V.stack.length) closeViewer();
   M.reset(); feedM.clear(); feedM.pred = null;
   S.color = ""; S.orient = ""; S.only.clear(); markFilters();
@@ -381,22 +432,29 @@ $("#exBm").onclick = async () => {
 function setView(v) {
   S.view = v;
   $("#tabFeed").classList.toggle("on", v === "feed"); $("#tabBm").classList.toggle("on", v === "bm"); $("#tabTr").classList.toggle("on", v === "tr");
-  $("#grid").hidden = v !== "feed"; $("#bmgrid").hidden = v !== "bm"; $("#trends").hidden = v !== "tr";
+  $("#grid").hidden = v !== "feed"; $("#bmgrid").hidden = v !== "bm"; $("#trends").hidden = v !== "tr"; $("#bmtools").hidden = v !== "bm";
   $("#srcBtn").hidden = v !== "feed"; $("#filterBtn").hidden = v !== "feed"; if (v !== "feed") { $("#filters").hidden = true; $("#srcPanel").hidden = true; }
   $("#home").hidden = !(v === "feed" && !M.q);
   if (v === "feed") { feedM.check(); renderChips(); const m = $("#msg"); m.hidden = !(M.q && !M.items.length && m.textContent); }
   else if (v === "tr") { $("#msg").hidden = true; renderChips(); loadTrends(); }
 }
-async function showBm() {
-  setView("bm");
-  const all = (await DB.all()).sort((a, b) => b.ts - a.ts).map((x) => ({ ...x, fromBm: true, tags: x.tags || [] }));
+async function showBm() { setView("bm"); await renderBm(); }
+// 북마크 목록 그리기: 보드 · 검색어 · 정렬을 적용합니다. (검색어는 저장하지 않고 이 화면에만 둡니다)
+async function renderBm() {
+  const all = (await DB.all()).map((x) => ({ ...x, fromBm: true, tags: x.tags || [] }));
   renderBoardChips(all);
-  const shown = all.filter((x) => S.board === "__all" || (x.board || "") === S.board);
+  const q = (S.bmq || "").trim().toLowerCase();
+  let shown = all.filter((x) => S.board === "__all" || (x.board || "") === S.board);
+  if (q) shown = shown.filter((x) => [x.title, srcName(x.src), x.board, x.note, ...x.tags].join(" ").toLowerCase().includes(q));
+  const by = S.bmsort;
+  shown.sort(by === "old" ? (a, b) => a.ts - b.ts : by === "title" ? (a, b) => String(a.title || srcName(a.src)).localeCompare(String(b.title || srcName(b.src)), "ko") : (a, b) => b.ts - a.ts);
   S.list = shown; bmM.clear();
-  if (!shown.length) { showMsg(all.length ? "이 보드는 비어 있어요." : "아직 북마크가 없어요. 이미지의 ☆ 를 눌러 담아 보세요."); return; }
+  if (!shown.length) { showMsg(!all.length ? "아직 북마크가 없어요. 이미지의 ☆ 를 눌러 담아 보세요." : q ? "찾는 북마크가 없어요. 다른 말로 검색해 보세요." : "이 보드는 비어 있어요."); return; }
   $("#msg").hidden = true;
   bmM.add(shown.map((it) => makeCard(it, () => openViewer(S.list, S.list.indexOf(it)))));
 }
+let bmT; $("#bmq").oninput = (e) => { S.bmq = e.target.value; clearTimeout(bmT); bmT = setTimeout(renderBm, 200); };
+$("#bmsort").value = S.bmsort; $("#bmsort").onchange = (e) => { S.bmsort = e.target.value; LS.set("bmsort", S.bmsort); renderBm(); };
 function renderBoardChips(all) {
   const box = $("#chips"); box.textContent = ""; $("#chipsLbl").textContent = "보드";
   const boards = [...new Set(all.map((x) => x.board).filter(Boolean))].sort();
@@ -465,7 +523,7 @@ function finishClose() {
   V.stack = []; V.pushed = 0; $("#vsimlevels").textContent = "";
   $("#viewer").hidden = true; document.body.classList.remove("lock"); vTok++;
   if (vUrl) { URL.revokeObjectURL(vUrl); vUrl = null; }
-  if (S.view === "bm") showBm();
+  if (S.view === "bm") renderBm();
 }
 function closeViewer() {
   if (!V.stack.length) return;
@@ -487,23 +545,47 @@ function showItem(keepSim) {
   img.classList.toggle("blur", hide); $("#vveil").hidden = !hide;
   $("#vtitle").textContent = it.title || srcName(it.src);
   $("#vsrc").textContent = srcName(it.src) + (it.w ? ` · ${it.w}×${it.h}` : "");
-  refreshStars(); $("#vboard").textContent = it.board ? "보드: " + it.board : "보드";
+  refreshStars(); $("#vboard").textContent = it.board ? "보드: " + it.board : "보드·메모";
+  $("#vnote").textContent = it.note || ""; $("#vnote").hidden = !it.note;
   img.referrerPolicy = "no-referrer";
   img.src = it.blob ? URL.createObjectURL(it.blob) : it.thumb;
-  fetchBlob(`/api/img?u=${enc(it.full)}`).then((b) => {
+  fetchBlob(`/api/img?u=${enc(it.full)}`, true).then((b) => {
     if (token !== vTok) return;
     it.fullBlob = b; if (vUrl) URL.revokeObjectURL(vUrl); vUrl = URL.createObjectURL(b); img.src = vUrl;
   }).catch(() => {
     if (token !== vTok) return;
     const t = new Image(); t.referrerPolicy = "no-referrer"; t.onload = () => { if (token === vTok) img.src = it.full; }; t.src = it.full;
   });
-  if (!keepSim) simStart(level, 0);
+  if (!keepSim) simSchedule(level);
 }
-// 비슷한 이미지 검색어: 태그 → 제목 키워드 → 현재 검색어 순서로 시도
-function simCandidates(it) {
+// 이미지를 넘길 때마다 바로 검색하지 않고, 0.4초 멈췄을 때 시작합니다. (빠르게 넘길 때 요청이 쌓이는 것을 막음)
+let simT = null;
+function simSchedule(level) {
+  clearTimeout(simT);
+  level.feed.reset(); level.m.clear(); level.msg.hidden = true; level.simQ = ""; updateSimHead();
+  if (S.offline) return;
+  const it = level.list[level.cur];
+  simT = setTimeout(() => { if (V.stack.includes(level) && level.list[level.cur] === it) simBegin(level, it); }, 400);
+}
+// 태그·제목 단서가 거의 없는 이미지(네이버·카카오 등)는 AI 설명을 먼저 받아 검색어로 씁니다.
+async function simBegin(level, it, force) {
+  let cap = "";
+  const weak = (it.tags || []).length < 2 && tokens(it.title || "").length < 2;
+  if ((force || weak) && !it.adult && captionOn()) {
+    level.msg.textContent = "AI가 이미지를 보는 중…"; level.msg.hidden = false;
+    cap = (await captionOfItem(it)).q;
+    if (!V.stack.includes(level) || level.list[level.cur] !== it) return;
+    level.msg.hidden = true;
+  }
+  level.cap = cap;
+  simStart(level, 0);
+}
+// 비슷한 이미지 검색어: (AI 설명) → 태그 → 제목 키워드 → 현재 검색어 순서로 시도
+function simCandidates(it, cap) {
   const tags = (it.tags || []).map((t) => String(t).toLowerCase().trim()).filter((t) => t.length > 1);
   const tt = [...new Set(tokens(it.title || ""))];
   const c = [];
+  if (cap) { c.push(cap); const w = cap.split(" "); if (w.length > 3) c.push(w.slice(0, 3).join(" ")); }
   if (tags.length) { c.push(tags.slice(0, 3).join(" ")); if (tags.length > 1) c.push(tags[0]); }
   if (tt.length) { c.push(tt.slice(0, 3).join(" ")); if (tt.length > 1) c.push(tt[0]); }
   if (M.q) c.push(M.q);
@@ -511,7 +593,7 @@ function simCandidates(it) {
 }
 function simStart(level, ci) {
   const it = level.list[level.cur]; if (!it) return;
-  if (ci === 0) level.cands = simCandidates(it);
+  if (ci === 0) level.cands = simCandidates(it, level.cap);
   const q = level.cands[ci]; level.ci = ci;
   level.m.clear(); level.msg.hidden = true;
   const f = level.feed; f.reset();
@@ -534,7 +616,11 @@ function updateSimHead() { const l = lv(); $("#vsimq").textContent = l?.simQ ? `
 $("#vveil").parentElement.addEventListener("click", () => { const it = curItem(); if (it && !$("#vveil").hidden) { it.revealed = true; showItem(true); } });
 const step = (d) => { const l = lv(); if (!l) return; const n = l.cur + d; if (n >= 0 && n < l.list.length) { l.cur = n; showItem(false); $("#viewer").scrollTop = 0; } };
 $("#vprev").onclick = () => step(-1); $("#vnext").onclick = () => step(1); $("#vclose").onclick = closeViewer;
-addEventListener("keydown", (e) => { if ($("#viewer").hidden) return; if (e.key === "Escape") closeViewer(); if (e.key === "ArrowLeft") step(-1); if (e.key === "ArrowRight") step(1); });
+addEventListener("keydown", (e) => {
+  if (!$("#bmSheet").hidden) { if (e.key === "Escape") closeSheet(); return; }
+  if ($("#viewer").hidden || e.target.closest?.("input,textarea,select")) return;
+  if (e.key === "Escape") closeViewer(); if (e.key === "ArrowLeft") step(-1); if (e.key === "ArrowRight") step(1);
+});
 let tx = 0; const stage = $(".vstage");
 stage.addEventListener("touchstart", (e) => { tx = e.touches[0].clientX; }, { passive: true });
 stage.addEventListener("touchend", (e) => { const dx = e.changedTouches[0].clientX - tx; if (Math.abs(dx) > 70) step(dx < 0 ? 1 : -1); }, { passive: true });
@@ -542,6 +628,11 @@ $("#vstar").onclick = () => { const it = curItem(); if (it) toggleBookmark(it); 
 $("#vopen").onclick = () => { const it = curItem(); if (it) window.open(it.page || it.full, "_blank", "noopener"); };
 $("#vsim").onclick = () => { const box = $("#vsimbox"), v = $("#viewer"); v.scrollTo({ top: box.offsetTop - 56, behavior: "smooth" }); };
 $("#vsimgo").onclick = () => { const q = lv()?.simQ; if (q) startSearch(q); };
+$("#vsimai").onclick = () => {
+  const l = lv(), it = l?.list[l.cur]; if (!l || !it) return;
+  if (!captionOn()) return toast("AI 설명을 쓸 수 없어요. 설정에서 켜져 있는지 확인해 주세요.");
+  clearTimeout(simT); l.feed.reset(); l.m.clear(); simBegin(l, it, true);
+};
 $("#vdl").onclick = async () => {
   const it = curItem(); if (!it) return;
   try {
@@ -579,18 +670,14 @@ function markFilters() {
   const n = (S.color ? 1 : 0) + (S.orient ? 1 : 0);
   $("#filterBadge").textContent = n ? String(n) : "";
   const cs = colorSources();
-  $("#colors").classList.toggle("dis", !cs.length);
-  $("#colorNote").textContent = !cfg ? "" : cs.length
-    ? `색상은 ${cs.map((s) => s.name).join("·")}에서만 적용돼요. 색상을 고르면 다른 소스는 그 검색에서 빠져요.`
-    : "색상 필터는 Pixabay·Unsplash 키를 등록해야 쓸 수 있어요. (설정 → 키 안내) 방향 필터는 지금도 돼요.";
+  $("#colors").classList.remove("dis");
+  $("#colorNote").textContent = !cfg ? "" : (cs.length ? `${cs.map((s) => s.name).join("·")}는 검색할 때 색을 맞추고, 다른 소스는 ` : "") +
+    "이미지를 불러온 뒤 대표 색으로 걸러요. 걸러지는 동안 결과가 천천히 채워질 수 있어요.";
 }
-const rerun = () => { markFilters(); if (M.q) startSearch(M.q, { sl: M.sl }); else feedM.pred = predOrient(); };
+const rerun = () => { markFilters(); if (M.q) startSearch(M.q, { sl: M.sl }); else feedM.pred = feedPred(); };
 Object.entries(COLORS).forEach(([k, c]) => {
   const b = document.createElement("button"); b.className = "dot"; b.style.background = c; b.dataset.c = k; b.setAttribute("aria-label", k);
-  b.onclick = () => {
-    if (!colorSources().length) return toast("색상 필터는 Pixabay·Unsplash 키가 있어야 해요. 설정에서 안내를 확인하세요.", 4500);
-    S.color = S.color === k ? "" : k; rerun();
-  };
+  b.onclick = () => { S.color = S.color === k ? "" : k; rerun(); };
   $("#colors").appendChild(b);
 });
 document.querySelectorAll("#orient button").forEach((b) => { b.onclick = () => { S.orient = b.dataset.o; rerun(); }; });
@@ -599,22 +686,86 @@ $("#srcBtn").onclick = () => { renderStat(); $("#filters").hidden = true; $("#sr
 $("#srcAll").onclick = () => { S.only.clear(); renderStat(); queueRerun(); };
 $("#filterReset").onclick = () => { S.color = ""; S.orient = ""; rerun(); };
 
-// ---------- 보드 ----------
+// ---------- 보드·메모 (입력창 대신 시트) ----------
+const sheet = { it: null, rec: null, board: "", names: [] };
+function renderSheetBoards() {
+  const box = $("#bmBoards"); box.textContent = "";
+  const mk = (label, val) => {
+    const b = document.createElement("button"); b.type = "button"; b.textContent = label;
+    if (!$("#bmNewBoard").value.trim() && sheet.board === val) b.classList.add("on");
+    b.onclick = () => { sheet.board = val; $("#bmNewBoard").value = ""; renderSheetBoards(); };
+    box.appendChild(b);
+  };
+  mk("미분류", ""); sheet.names.forEach((n) => mk(n, n));
+}
+function closeSheet() { $("#bmSheet").hidden = true; }
 $("#vboard").onclick = async () => {
   const it = curItem(); if (!it) return;
   if (!S.bmIds.has(it.id)) await toggleBookmark(it);
   const all = await DB.all(), rec = all.find((x) => x.id === it.id); if (!rec) return;
-  const names = [...new Set(all.map((x) => x.board).filter(Boolean))];
-  const v = prompt("보드 이름을 입력하세요 (비우면 미분류)" + (names.length ? "\n기존 보드: " + names.join(", ") : ""), rec.board || "");
-  if (v === null) return;
-  rec.board = v.trim().slice(0, 30); it.board = rec.board; await DB.put(rec);
-  $("#vboard").textContent = rec.board ? "보드: " + rec.board : "보드";
-  toast(rec.board ? `'${rec.board}' 보드에 담았어요` : "미분류로 옮겼어요");
+  Object.assign(sheet, { it, rec, board: rec.board || "", names: [...new Set(all.map((x) => x.board).filter(Boolean))].sort() });
+  $("#bmNewBoard").value = ""; $("#bmNote").value = rec.note || "";
+  renderSheetBoards(); $("#bmSheet").hidden = false;
+};
+$("#bmNewBoard").oninput = renderSheetBoards;
+$("#bmCancel").onclick = closeSheet;
+$("#bmForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const { it, rec } = sheet; if (!it || !rec) return closeSheet();
+  rec.board = ($("#bmNewBoard").value.trim() || sheet.board).slice(0, 30);
+  rec.note = $("#bmNote").value.trim().slice(0, 200);
+  it.board = rec.board; it.note = rec.note;
+  const ok = await DB.put(rec); closeSheet();
+  if (!ok) return toast("저장하지 못했어요");
+  $("#vboard").textContent = rec.board ? "보드: " + rec.board : "보드·메모";
+  $("#vnote").textContent = rec.note; $("#vnote").hidden = !rec.note;
+  toast(rec.board ? `'${rec.board}' 보드에 저장했어요` : "저장했어요");
+});
+
+// ---------- AI 이미지 설명 (비슷한 이미지 보강 / 사진으로 검색) ----------
+// 작게 줄인 JPEG 한 장을 서버(Workers AI)로 보내 핵심 영어 단어를 받습니다. 못 쓰는 서버면 이번 접속 동안 다시 시도하지 않습니다.
+let capOff = false;
+const captionOn = () => !capOff && !!cfg?.caption && LS.get("cap", true) && !S.offline;
+function shrink(blob, max = 384) {
+  return new Promise((res, rej) => {
+    const u = URL.createObjectURL(blob), im = new Image();
+    im.onload = () => {
+      const k = Math.min(1, max / Math.max(im.naturalWidth, im.naturalHeight, 1));
+      const c = document.createElement("canvas"); c.width = Math.max(1, Math.round(im.naturalWidth * k)); c.height = Math.max(1, Math.round(im.naturalHeight * k));
+      c.getContext("2d").drawImage(im, 0, 0, c.width, c.height); URL.revokeObjectURL(u);
+      c.toBlob((b) => (b ? res(b) : rej(new Error("toBlob"))), "image/jpeg", 0.72);
+    };
+    im.onerror = () => { URL.revokeObjectURL(u); rej(new Error("img")); };
+    im.src = u;
+  });
+}
+// 반환: { q } 단어들, 또는 { q:"", why } (why: off | blocked | fail)
+async function captionOfBlob(blob) {
+  if (capOff || !cfg?.caption) return { q: "", why: "off" };
+  try {
+    const small = await shrink(blob);
+    const r = await (await api("/api/caption", { method: "POST", body: small, headers: { "content-type": "image/jpeg" }, signal: AbortSignal.timeout(20000) })).json();
+    if (r.error === "unavailable") { capOff = true; return { q: "", why: "off" }; }
+    if (r.blocked) return { q: "", why: "blocked" };
+    return r.q ? { q: r.q } : { q: "", why: "fail" };
+  } catch (e) { return { q: "", why: e.message === "auth" ? "auth" : "fail" }; }
+}
+async function captionOfItem(it) {
+  try { return await captionOfBlob(it.blob || (await fetchBlob(`/api/img?u=${enc(it.thumb)}`))); } catch { return { q: "", why: "fail" }; }
+}
+$("#upBtn").onclick = () => { if (S.offline) return toast("오프라인이라 사용할 수 없어요"); $("#upFile").click(); };
+$("#upFile").onchange = async (e) => {
+  const f = e.target.files[0]; e.target.value = ""; if (!f) return;
+  toast("AI가 사진을 보는 중…", 6000);
+  const r = await captionOfBlob(f);
+  if (r.q) { toast(`AI가 본 것: ${r.q}`, 4500); startSearch(r.q); }
+  else if (r.why !== "auth") toast(r.why === "off" ? "이 서버에서는 AI 설명을 쓸 수 없어요. (Workers AI 설정 확인)" : r.why === "blocked" ? "이 사진은 검색할 수 없는 주제로 보여요." : "사진을 설명하지 못했어요. 다른 사진으로 해 보세요.", 5000);
 };
 
 // ---------- 설정 ----------
 function renderSettings() {
   $("#sBlur").checked = S.blur; $("#sMl").checked = S.ml;
+  $("#capRow").hidden = !cfg?.caption; $("#sCap").checked = LS.get("cap", true);
   const box = $("#srcList"); box.textContent = "";
   (cfg?.sources || []).forEach((s) => {
     const l = document.createElement("label"); l.className = "row src";
@@ -637,6 +788,7 @@ $("#sBlur").onchange = (e) => {
   toast("다음 검색부터 모두 적용돼요");
 };
 $("#sMl").onchange = (e) => { S.ml = e.target.checked; LS.set("ml", S.ml); toast("다음 검색부터 적용돼요"); };
+$("#sCap").onchange = (e) => { LS.set("cap", e.target.checked); capOff = false; toast(e.target.checked ? "AI 설명을 켰어요" : "AI 설명을 껐어요"); };
 $("#logout").onclick = () => { $("#settings").hidden = true; LS.set("pass", ""); S.pass = ""; showLogin(); };
 
 const blobToDataURL = (b) => new Promise((res) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => res(null); r.readAsDataURL(b); });
@@ -662,14 +814,29 @@ $("#impBm").onchange = async (e) => {
 };
 
 // ---------- 시작 ----------
+// 오프라인(또는 서버에 닿지 않을 때)에는 저장해 둔 북마크만 볼 수 있게 시작합니다.
+function setOffline(on) {
+  S.offline = on; document.body.classList.toggle("offline", on); $("#offline").hidden = !on;
+}
 async function boot() {
   if (!S.pass) return showLogin();
-  try { cfg = await (await api("/api/config")).json(); }
-  catch (e) { if (e.message !== "auth") showLogin("서버에 연결하지 못했어요. 잠시 후 다시 시도해 주세요."); return; }
+  let off = false;
+  try { cfg = await (await api("/api/config", { signal: AbortSignal.timeout(9000) })).json(); }
+  catch (e) {
+    if (e.message === "auth") return;
+    if (e.name === "TypeError" || e.name === "TimeoutError" || e.name === "AbortError" || !navigator.onLine) { off = true; cfg = { sources: [], locked: [], ai: false, caption: false }; }
+    else { showLogin("서버에 연결하지 못했어요. 잠시 후 다시 시도해 주세요."); return; }
+  }
   $("#login").hidden = true;
-  await DB.open(); S.bmIds = new Set((await DB.all()).map((x) => x.id)); updateCount();
-  markFilters(); setView("feed"); renderHome(); renderStat();
+  if (!DB.db) await DB.open();
+  S.bmIds = new Set((await DB.all()).map((x) => x.id)); updateCount();
+  setOffline(off); $("#upBtn").hidden = !cfg.caption;
+  markFilters();
+  if (off) { await showBm(); return; }
+  setView("feed"); renderHome(); renderStat();
   // AI 검사 모델은 접속 직후에 내려받지 않고, 첫 이미지를 검사할 때 준비합니다 (첫 화면이 굳는 문제 완화)
 }
+$("#retry").onclick = () => { $("#retry").textContent = "연결 중…"; boot().finally(() => { $("#retry").textContent = "다시 연결"; }); };
+addEventListener("online", () => { if (S.offline) boot(); });
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
 boot();

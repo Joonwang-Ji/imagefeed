@@ -22,9 +22,21 @@ const EN_HARD = [
 const KO_ADULT = ["누드", "나체", "야동", "포르노", "19금", "에로", "섹스", "섹시", "음란", "야한", "노출"];
 const EN_ADULT = ["nude", "nudity", "naked", "porn", "nsfw", "erotic", "xxx", "hentai", "topless", "fetish", "bdsm", "sexy", "lingerie", "onlyfans"];
 
+// 정상적인 디자인·사진·패션 용어는 검사 전에 지웁니다. (예: 노출 콘크리트, 노출 보정, 고어텍스, nude 색상, naked eye)
+// 목록에 더하고 싶은 용어가 있으면 아래 SAFE 에 추가하세요.
+const SAFE = new RegExp([
+  "노출\\s*(?:콘크리트|보정|시간|계|값|천장|벽돌|벽|배관|조명|슬라브|마감|인테리어|형)",
+  "장노출|단노출|과노출|저노출",
+  "고어\\s?텍스",
+  "에로스|에로우",
+  "nude\\s+(?:colou?rs?|tones?|shades?|palettes?|lipsticks?|makeup|nails?|pink|beige|dress|heels?|aesthetic)",
+  "naked\\s+(?:eyes?|singularity|mole\\s+rat)",
+].join("|"), "gi");
+const neutral = (s) => String(s ?? "").replace(SAFE, " ");
+
 const build = (ko, en) => new RegExp(`(${ko.join("|")})|\\b(${en.join("|")})`, "i");
 const hardRe = build(KO_HARD, EN_HARD);
 const adultRe = build(KO_ADULT, EN_ADULT);
 
-export const hardBlocked = (s = "") => hardRe.test(s);
-export const isAdult = (s = "") => adultRe.test(s);
+export const hardBlocked = (s = "") => hardRe.test(neutral(s));
+export const isAdult = (s = "") => adultRe.test(neutral(s));
