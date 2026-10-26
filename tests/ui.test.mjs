@@ -29,14 +29,14 @@ const sources = [
   { id: "pixabay", name: "Pixabay", w: 1.1, en: false, colors: true, desc: "", keyless: false },
   { id: "openverse", name: "Openverse", w: 0.6, en: true, colors: false, desc: "", keyless: true },
 ];
-let cfgCaption = false; const searchCalls = []; let trendsPayload = null;
+let cfgCaption = false; const searchCalls = []; let trendsPayload = null, imgFail = false;
 const mk = (n, src = "pixabay", tags = ["sunset", "beach", "sea"], title = "") => ({ title, thumb: `https://x.test/${src}${n}.jpg`, full: `https://x.test/${src}${n}_full.jpg`, page: `https://x.test/p${n}`, w: 400, h: 300 + n * 10, tags, src, sc: false, adult: false });
 w.fetch = async (url) => {
   const u = String(url), res = (o) => ({ ok: true, status: 200, json: async () => o, blob: async () => new w.Blob(["x"], { type: "image/jpeg" }) });
   if (u.startsWith("/api/config")) return res({ sources, locked: [], ai: false, caption: cfgCaption });
   if (u.startsWith("/api/search")) { searchCalls.push(u); const src = u.match(/src=(\w+)/)[1]; return res({ items: [1, 2, 3, 4, 5, 6].map((n) => mk(n, src)) }); }
   if (u.startsWith("/api/trends")) return res(trendsPayload);
-  if (u.startsWith("/api/img")) return res({});
+  if (u.startsWith("/api/img")) { if (!imgFail) return res({}); const f = { ok: false, status: 502, json: async () => ({ error: "upstream 403" }) }; f.clone = () => f; return f; }
   return { ok: false, status: 404, json: async () => ({}) };
 };
 trendsPayload = { date: "2026-10-24", items: [
@@ -147,6 +147,39 @@ ok(run("lv().rrDone") === 1, "rerank counted");
 run("lv().m.reorder((a,b)=> a._it.id < b._it.id ? -1 : 1); lv().rrDone = 2; simRerank(lv())");
 ok(run("lv().m.cards[0]._it.title") === "c0", "no more than two reranks per image");
 $("#vclose").click(); await tick(60);
+
+// ---- 이미지가 계속 열리지 않는 소스: 깜빡임·끝없는 불러오기 방지 ----
+{
+  const lc = run("loadCard"), img = (c) => c.querySelector("img");
+  const fire = (el, type) => el.dispatchEvent(new w.Event(type));
+  run('S.only = new Set(["openverse"])'); imgFail = true; searchCalls.length = 0;
+  run('startSearch("brokenimg")'); await tick(900);
+  let cs = $$("#grid .card");
+  ok(cs.length === 6 && searchCalls.length === 1, `broken source: ${cs.length} cards rendered from ${searchCalls.length} search call`);
+  for (const [i, c] of cs.slice(0, 4).entries()) {
+    await lc(c); await tick(10); fire(img(c), "error");
+    if (i < 3) ok(!c.isConnected && !run("Object.keys(DEAD).length"), `failed card ${i + 1} is removed, source not given up yet`);
+  }
+  await tick(30);
+  ok(run("Object.keys(DEAD)").includes("openverse"), "after 4 failures with 0 successes the source is rested");
+  ok($$("#grid .card").length === 0, "all its cards (also the ones not opened yet) are cleared from the grid");
+  const n = searchCalls.length; await run("M.next()"); await tick(50);
+  ok(searchCalls.length === n, "no more pages are requested for the rested source (no endless loading)");
+  ok($$("#stat .sc.bad").length === 1 && !!$("#stat .warn"), "stat shows ⚠ on the rested source");
+  $("#stat .warn").click(); ok(/upstream 403/.test($("#toast").textContent) && /쉬고/.test($("#toast").textContent), "⚠ shows the reason with proxy detail: " + $("#toast").textContent);
+  ok(!$("#msg").hidden && /쉬고 있는/.test($("#msg").textContent), "empty-feed message explains the rested source");
+  // 소스 이름을 누르면 다시 시도
+  imgFail = false; run("S.ml = false");
+  searchCalls.length = 0; $$("#stat .sel").find((b) => /Openverse/.test(b.textContent)).click(); await tick(1100);
+  ok(!run("Object.keys(DEAD).length") && searchCalls.length >= 1, "tapping the source name clears the rest and searches again");
+  const ov = () => $$("#grid .card").filter((c) => c._it.src === "openverse");
+  cs = ov(); ok(cs.length === 6, "its cards are back after the retry (selection was cleared, so all sources searched): " + cs.length);
+  await lc(cs[0]); await tick(10); fire(img(cs[0]), "load");
+  for (const c of cs.slice(1)) { await lc(c); await tick(5); fire(img(c), "error"); }
+  await tick(30);
+  ok(!run("Object.keys(DEAD).length") && ov().length === 1, "a source that opened at least one image is never rested; only the broken cards go");
+  run('S.only = new Set(); S.ml = true'); imgFail = false;
+}
 
 // ---- 트렌드: 이미지 그리드 ----
 $("#tabTr").click(); await tick(100);

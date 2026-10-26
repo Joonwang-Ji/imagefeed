@@ -194,8 +194,11 @@ const SOURCES = [
         `https://api.artic.edu/api/v1/artworks/search?q=${enc(q)}&query[term][is_public_domain]=true&limit=20&page=${page}&fields=${f}`,
         { "AIC-User-Agent": "ImageFeed (personal use)" }, 3600);
       const base = d.config?.iiif_url || "https://www.artic.edu/iiif/2";
+      // 이미지 크기는 시카고 미술관이 권장하는 843 한 가지만 씁니다. (임의 크기 400 은 이미지 서버가 거절하거나 아주 느린 것으로 의심됨)
+      // 작은 크기(200)는 843 이 안 열릴 때를 위한 예비 주소(alt)입니다.
+      const img = (id, w) => `${base}/${id}/full/${w},/0/default.jpg`;
       return (d.data || []).filter((it) => it.image_id).map((it) => ({
-        title: clean(it.title || ""), thumb: `${base}/${it.image_id}/full/400,/0/default.jpg`, full: `${base}/${it.image_id}/full/843,/0/default.jpg`,
+        title: clean(it.title || ""), thumb: img(it.image_id, 843), full: img(it.image_id, 843), alt: img(it.image_id, 200),
         page: `https://www.artic.edu/artworks/${it.id}`, w: num(it.thumbnail?.width), h: num(it.thumbnail?.height),
         tags: [...(it.subject_titles || []), ...(it.style_titles || []), ...(it.term_titles || [])].filter(Boolean).slice(0, 12),
       }));
@@ -409,9 +412,12 @@ async function proxyImage(u) {
   try { t = new URL(u.searchParams.get("u") || ""); } catch { return json({ error: "bad url" }, 400); }
   if (t.protocol !== "https:" || blockedHost(t.hostname)) return json({ error: "blocked" }, 400);
   let r;
+  const hdr = { "user-agent": UA, accept: "image/*", referer: t.origin + "/" };
+  // 시카고 미술관은 API 와 같은 방식으로 앱 이름을 밝히는 요청을 선호합니다.
+  if (/(^|\.)artic\.edu$/i.test(t.hostname)) hdr["AIC-User-Agent"] = "ImageFeed (personal use)";
   try {
     r = await fetch(t.href, {
-      headers: { "user-agent": UA, accept: "image/*", referer: t.origin + "/" },
+      headers: hdr,
       redirect: "follow",
       signal: AbortSignal.timeout(12000),
       cf: { cacheEverything: true, cacheTtlByStatus: { "200-299": 86400, "300-599": 0 } },
@@ -419,7 +425,7 @@ async function proxyImage(u) {
   } catch { return json({ error: "fetch failed" }, 502); }
   if (!r.ok) return json({ error: "upstream " + r.status }, 502);
   const ct = (r.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
-  if (!ct.startsWith("image/") || ct.includes("svg")) return json({ error: "not an image" }, 415);
+  if (!ct.startsWith("image/") || ct.includes("svg")) return json({ error: "not an image (" + (ct || "?").slice(0, 40) + ")" }, 415);
   if (num(r.headers.get("content-length")) > 30 * 1024 * 1024) return json({ error: "too large" }, 413);
   const h = new Headers({
     "content-type": ct,

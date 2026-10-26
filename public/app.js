@@ -66,7 +66,11 @@ const WHY = {
   badjson: "올바른 응답이 아니에요 (차단 화면일 수 있어요)",
   network: "소스에 연결하지 못했어요",
   error: "알 수 없는 오류예요",
+  img: "이 소스의 이미지가 열리지 않아서 쉬고 있어요. 소스 이름을 누르면 다시 시도해요",
 };
+// 이미지가 계속 열리지 않는 소스. 이 화면을 연 동안만 기억하고 어디에도 저장하지 않습니다.
+// IMGH: 소스별 이미지 성공·실패 횟수, DEAD: 쉬게 한 소스와 그 이유
+const IMGH = {}, DEAD = {};
 
 // ---------- 상태 (검색어는 저장하지 않음) ----------
 // 전역 설정만 S 에 두고, 검색 한 번의 상태(검색어·결과·페이지)는 Feed 객체가 따로 가집니다.
@@ -83,7 +87,11 @@ document.body.classList.toggle("noblur", !S.blur);
 async function api(path, opt = {}) {
   const r = await fetch(path, { ...opt, headers: { "x-pass": S.pass, ...(opt.headers || {}) }, cache: "no-store" });
   if (r.status === 401) { showLogin("암호가 맞지 않아요"); throw new Error("auth"); }
-  if (!r.ok) throw new Error("HTTP " + r.status);
+  if (!r.ok) {
+    // 이미지 중계가 실패한 이유(예: upstream 403)를 오류에 붙여 둡니다. ⚠ 에서 원인을 보여주는 데 씁니다.
+    let detail = ""; try { detail = String((await r.clone().json()).error || "").slice(0, 60); } catch { /* 본문 없음 */ }
+    throw Object.assign(new Error("HTTP " + r.status), { detail });
+  }
   return r;
 }
 const limiter = (n) => { let a = 0; const q = []; const next = () => { if (a < n && q.length) { a++; const { f, ok, no } = q.shift(); f().then(ok, no).finally(() => { a--; next(); }); } }; return (f) => new Promise((ok, no) => { q.push({ f, ok, no }); next(); }); };
@@ -132,6 +140,12 @@ class Masonry {
   recheck(c) {
     if (!this.pred || this.pred(c) || !this.cards.includes(c)) return;
     this.cards = this.cards.filter((x) => x !== c); c.remove(); this.onChange?.();
+  }
+  // 이미지가 열리지 않는 카드를 목록에서 완전히 뺍니다. (필터가 바뀌어도 되살아나지 않음)
+  drop(c) {
+    const had = this.cards.includes(c);
+    this.all = this.all.filter((x) => x !== c); this.cards = this.cards.filter((x) => x !== c); c.remove();
+    if (had) this.onChange?.();
   }
   count() { const w = this.el.clientWidth || innerWidth; return w < 560 ? 2 : w < 860 ? 3 : w < 1180 ? 4 : 5; }
   build() {
@@ -199,6 +213,22 @@ function blobInfo(blob) {
   });
 }
 
+// 이미지가 끝내 열리지 않은 카드: 화면에서 빼고, 한 장도 못 연 소스가 연달아 실패하면 그 소스를 잠시 쉬게 합니다.
+// (쉬게 하지 않으면 빈 칸이 계속 생겼다 사라지면서 "다음 페이지"를 끝없이 불러와 화면이 깜빡입니다.)
+function failCard(el) {
+  const it = el._it; el.classList.add("broken");
+  io.unobserve(el); el._m?.drop(el);
+  if (!el._feed || !it?.src) return;
+  const h = (IMGH[it.src] ||= { ok: 0, bad: 0 }); h.bad++;
+  if (!h.ok && h.bad >= 4 && !DEAD[it.src]) markDead(it.src, it._why || "");
+}
+function markDead(src, why) {
+  DEAD[src] = { why };
+  const ms = [feedM, ...V.stack.map((l) => l.m)];
+  ms.forEach((m) => m.all.filter((c) => c._it?.src === src && !c._ok).forEach((c) => { io.unobserve(c); m.drop(c); })); // 아직 못 연 카드는 모두 치움
+  renderStat(); M.o.onAfter?.(); V.stack.forEach((l) => l.feed.o.onAfter?.());
+}
+
 async function loadCard(el) {
   const it = el._it, img = el.querySelector("img");
   const needML = S.blur && S.ml && !it.adult && !it.fromBm;
@@ -210,7 +240,8 @@ async function loadCard(el) {
   const colorFromAlt = wantColor && !!it.alt && !it.blob && !needML;
   el.dataset.st = it.adult ? "flag" : needML ? "pending" : "ok";
   // 큰 썸네일 주소가 안 열리는 소스(예: V&A)는 작은 주소(alt)로 한 번 더 시도
-  img.onerror = () => { if (it.alt && img.dataset.alt !== "1") { img.dataset.alt = "1"; img.referrerPolicy = "no-referrer"; img.src = it.alt; } else el.classList.add("broken"); };
+  img.onload = () => { if (!el._ok) { el._ok = true; (IMGH[it.src] ||= { ok: 0, bad: 0 }).ok++; } };
+  img.onerror = () => { if (it.alt && img.dataset.alt !== "1") { img.dataset.alt = "1"; img.referrerPolicy = "no-referrer"; img.src = it.alt; } else failCard(el); };
   try {
     let altInfo = null;
     if (colorFromAlt) { try { altInfo = await blobInfo(await fetchBlob(`/api/img?u=${enc(it.alt)}`)); } catch (e) { if (e.message === "auth") throw e; } }
@@ -230,6 +261,7 @@ async function loadCard(el) {
     if (needML && it.blob) enqueueClassify(el, img, it);
   } catch (e) {
     if (e.message === "auth") return;
+    if (e.detail) it._why = e.detail; // 서버 중계가 실패한 이유 (예: upstream 403)
     el.dataset.st = it.adult ? "flag" : "ok";
     img.referrerPolicy = "no-referrer"; img.src = it.thumb; el.classList.add("loaded");
   }
@@ -290,7 +322,7 @@ class Feed {
     // 색을 골랐을 때는 색을 직접 걸러 주는 소스(Pixabay·Unsplash)만 씁니다. 빠르고 정확하기 때문이에요.
     // (필터 패널에서 "넓게"를 고르면 다른 소스도 쓰되, 이미지를 불러온 뒤 브라우저가 대표 색으로 거릅니다.)
     if (this.o.filters && S.color && !S.colorWide) { const cs = pickd.filter((s) => s.colors); if (cs.length) pickd = cs; }
-    return pickd;
+    return pickd.filter((s) => !DEAD[s.id]); // 이미지가 열리지 않아 쉬는 소스는 뺌
   }
   begin(q, sl = "") {
     this.q = this.qe = q;
@@ -357,7 +389,9 @@ class Feed {
     const cards = list.map((it) => {
       this.keys.set(it.key, it); this.items.push(it);
       for (const t of new Set([...it.tags.map((x) => String(x).toLowerCase()), ...tokens(it.title)])) this.tags.set(t, (this.tags.get(t) || 0) + 1);
-      return makeCard(it, () => this.o.open(this, it));
+      const c = makeCard(it, () => this.o.open(this, it));
+      c._feed = this; c._m = this.m; // 이미지가 열리지 않을 때 어느 목록에서 뺄지 알기 위함
+      return c;
     });
     this.m.add(cards);
   }
@@ -423,12 +457,13 @@ function renderStat() {
   const used = new Set(M.sources().map((x) => x.id)); // 지금 검색에 쓰는 소스 (색을 고르면 일부만 씀)
   let bads = 0;
   all.forEach((s) => {
-    const st = M.q ? M.stat[s.id] : null, bad = !!st?.err; if (bad) bads++;
-    const idle = !!M.q && !used.has(s.id);
+    const dead = DEAD[s.id];
+    const st = dead ? { n: 0, err: "img", detail: dead.why } : M.q ? M.stat[s.id] : null, bad = !!st?.err; if (bad) bads++;
+    const idle = !!M.q && !used.has(s.id) && !dead;
     const w = document.createElement("span"); w.className = "sc" + (S.only.has(s.id) ? " on" : "") + (bad ? " bad" : "") + (idle ? " idle" : "");
     const b = document.createElement("button"); b.className = "sel";
     b.textContent = !M.q || idle ? s.name : !st ? `${s.name} …` : bad ? s.name : `${s.name} ${st.n}`;
-    b.onclick = () => { S.only.has(s.id) ? S.only.delete(s.id) : S.only.add(s.id); renderStat(); queueRerun(); };
+    b.onclick = () => { delete DEAD[s.id]; delete IMGH[s.id]; S.only.has(s.id) ? S.only.delete(s.id) : S.only.add(s.id); renderStat(); queueRerun(); }; // 눌러서 다시 시도할 수 있게 쉬는 상태도 풂
     w.appendChild(b);
     if (bad) {
       const x = document.createElement("button"); x.className = "warn"; x.textContent = "⚠"; x.setAttribute("aria-label", "이유 보기");
@@ -447,8 +482,9 @@ function queueRerun() { clearTimeout(rerunTimer); rerunTimer = setTimeout(() => 
 function showMsg(t) { const m = $("#msg"); m.textContent = t; m.hidden = false; }
 function checkEmpty() {
   if (feedM.cards.length) { if (M.items.length) $("#msg").hidden = true; return; }
-  if (M.items.length) { // 결과는 있었지만 방향·색 조건에 맞는 것이 하나도 없음
-    if (M.ended) showMsg("방향·색상 조건에 맞는 이미지를 찾지 못했어요. 필터를 바꾸거나 다른 말로 검색해 보세요.");
+  if (M.items.length) { // 결과는 있었지만 화면에 남은 카드가 없음
+    if (!M.sources().length && Object.keys(DEAD).length) showMsg("이미지가 열리지 않아 쉬고 있는 소스예요. 위의 [소스]에서 ⚠ 를 누르면 이유를, 소스 이름을 누르면 다시 시도해요.");
+    else if (M.ended) showMsg("방향·색상 조건에 맞는 이미지를 찾지 못했어요. 필터를 바꾸거나 다른 말로 검색해 보세요.");
     return;
   }
   const act = M.sources();

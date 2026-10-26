@@ -64,4 +64,37 @@ const bad = CATS.flatMap((c) => [c[1], ...c[2]]).filter((t) => hardBlocked(t) ||
 ok(bad.length === 0, "no home topic trips the filters" + (bad.length ? ": " + bad : ""));
 ok(CATS.every((c) => c[2].length >= 5), "each category has >= 5 sub topics");
 
+// ---- 시카고 미술관: 이미지 주소와 중계 ----
+{
+  const seen = [];
+  globalThis.fetch = async (url, opt = {}) => {
+    const u = String(url); seen.push({ u, h: opt.headers || {} });
+    if (u.startsWith("https://api.artic.edu/api/v1/artworks/search")) return jres({
+      config: { iiif_url: "https://www.artic.edu/iiif/2" },
+      data: [{ id: 1, title: "Cat", image_id: "abc-123", thumbnail: { width: 800, height: 600 }, subject_titles: ["cats"] }, { id: 2, title: "No image", image_id: null }] });
+    if (u.startsWith("https://www.artic.edu/iiif/")) return new Response("img", { status: 200, headers: { "content-type": "image/jpeg" } });
+    return new Response("nf", { status: 404 });
+  };
+  r = await worker.fetch(req("/api/search?src=artic&q=cat&qe=cat&page=1"), env); j = await r.json();
+  const it = j.items?.[0];
+  ok(j.items?.length === 1 && !j.err, "artic search returns the one item that has an image");
+  ok(it?.thumb === "https://www.artic.edu/iiif/2/abc-123/full/843,/0/default.jpg" && it?.full === it?.thumb, "artic thumb/full use the recommended 843 width: " + it?.thumb);
+  ok(/\/full\/200,\//.test(it?.alt || ""), "artic keeps a small fallback (alt): " + it?.alt);
+  ok(!/\/full\/400,\//.test(JSON.stringify(j)), "no non-standard 400 width anywhere");
+  seen.length = 0;
+  r = await worker.fetch(req("/api/img?u=" + encodeURIComponent("https://www.artic.edu/iiif/2/abc-123/full/843,/0/default.jpg")), env);
+  ok(r.status === 200 && r.headers.get("content-type") === "image/jpeg", "image proxy serves artic image");
+  ok(seen[0]?.h["AIC-User-Agent"] && seen[0]?.h.referer === "https://www.artic.edu/", "proxy sends AIC-User-Agent + referer to artic.edu");
+  seen.length = 0;
+  await worker.fetch(req("/api/img?u=" + encodeURIComponent("https://upload.wikimedia.org/a.jpg")), env);
+  ok(seen[0] && !seen[0].h["AIC-User-Agent"], "AIC header is not sent to other hosts");
+  // 중계가 실패하면 이유를 화면에 알려 주는지
+  globalThis.fetch = async () => new Response("denied", { status: 403 });
+  r = await worker.fetch(req("/api/img?u=" + encodeURIComponent("https://www.artic.edu/x.jpg")), env); j = await r.json();
+  ok(r.status === 502 && j.error === "upstream 403", "failed proxy reports reason: " + j.error);
+  globalThis.fetch = async () => new Response("<html>challenge</html>", { status: 200, headers: { "content-type": "text/html; charset=utf-8" } });
+  r = await worker.fetch(req("/api/img?u=" + encodeURIComponent("https://www.artic.edu/x.jpg")), env); j = await r.json();
+  ok(r.status === 415 && /text\/html/.test(j.error), "html (block page) reported with its type: " + j.error);
+}
+
 console.log(fail ? `\n${fail} failed` : "\nall passed"); process.exit(fail ? 1 : 0);
