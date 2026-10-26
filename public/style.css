@@ -3,13 +3,23 @@
 @media(prefers-color-scheme:light){:root{--bg:#f5f6f8;--fg:#15171c;--mut:#6b7280;--card:#ffffff;--card2:#eceef2;--acc:#3b5bdb;--accbg:rgba(59,91,219,.10);--line:#e1e4ea;--warn:#b86e00}}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR",sans-serif}
+/* 화면 전체는 확대·축소되지 않게 하고 (이미지 확대는 뷰어 안에서만), 입력칸은 16px 이상이어야 아이폰이 저절로 확대하지 않음 */
+html,body{touch-action:pan-x pan-y;-webkit-text-size-adjust:100%;overscroll-behavior-x:none}
 body.lock{overflow:hidden}
 button{white-space:nowrap;font:inherit;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:999px;padding:7px 14px;cursor:pointer;transition:background .15s,border-color .15s,color .15s}
 button:active{transform:scale(.97)}
 button.pri{background:var(--acc);border-color:var(--acc);color:#fff;font-weight:600}
 button.on{background:var(--accbg);border-color:var(--acc);color:var(--acc)}
 button.sm{padding:4px 12px;font-size:13px}
-input[type=search],input[type=password]{font:inherit;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px;width:100%;outline:none}
+input[type=search],input[type=password]{font:inherit;font-size:16px;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px;width:100%;outline:none;-webkit-appearance:none;appearance:none}
+input[type=search]::-webkit-search-cancel-button,input[type=search]::-webkit-search-decoration{-webkit-appearance:none;display:none}
+select,textarea{font-size:16px}
+/* 입력칸 오른쪽의 ✕ (한 번에 지우기) */
+.clr{flex:none;width:30px;height:30px;min-width:30px;padding:0;border-radius:50%;border:none;background:var(--card2);color:var(--mut);font-size:13px;line-height:1;text-align:center}
+.inwrap{position:relative;flex:1;min-width:0}
+.inwrap input{padding-right:42px}
+.inwrap .clr{position:absolute;right:7px;top:50%;transform:translateY(-50%)}
+.inwrap .clr:active{transform:translateY(-50%) scale(.95)}
 input[type=search]:focus,input[type=password]:focus{border-color:var(--acc)}
 .grow{flex:1}
 .lbl{color:var(--mut);font-size:12px;white-space:nowrap}
@@ -25,6 +35,7 @@ header{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--bg) 9
 #sf:focus-within{border-color:var(--acc)}
 #sf input{border:none;background:transparent;padding:7px 10px;border-radius:999px}
 #sf button{padding:7px 16px;flex:none}
+#sf button.clr{padding:0;margin-right:2px}
 .seg{display:flex;background:var(--card2);border-radius:999px;padding:3px}
 .seg button{border:none;background:transparent;padding:5px 9px;font-size:13px;color:var(--mut)}
 .seg button.on{background:var(--card);color:var(--fg);box-shadow:0 1px 3px rgba(0,0,0,.25)}
@@ -45,6 +56,11 @@ header{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--bg) 9
 .dot.on{border-color:var(--acc);box-shadow:0 0 0 2px var(--acc)}
 .panel .note{margin:8px 0 0}
 #filters .note{margin:6px 0 10px}
+.prow{display:flex;gap:8px;align-items:center}
+#cwSeg{display:flex;gap:6px;flex-wrap:wrap}
+#cwSeg button{padding:3px 12px;font-size:13px;background:transparent}
+#cwSeg button.on{background:var(--accbg)}
+.sc.idle .sel{color:var(--mut);opacity:.7}
 #stat{display:flex;gap:6px;flex-wrap:wrap}
 #stat .st{color:var(--mut);font-size:12px;align-self:center}
 .sc{display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:999px;background:transparent;overflow:hidden}
@@ -66,6 +82,14 @@ main{padding:10px max(10px,env(safe-area-inset-right)) 80px max(10px,env(safe-ar
 #home{padding:18px 4px}
 .hh{margin:0 0 4px;font-size:20px}
 .hsub{margin:22px 0 8px;font-size:14px;color:var(--mut);font-weight:600}
+.hsubrow{display:flex;align-items:center;gap:8px;margin-top:22px}
+.hsubrow .hsub{margin:0}
+#homeChips{margin-top:10px}
+#homeChips button{padding:9px 16px;font-size:14px}
+#homeChips button.cat b{font-weight:600}
+#homeChips button.mine{border-color:var(--acc);color:var(--acc)}
+.trhead{display:flex;align-items:center;gap:8px;padding:2px 0 6px}
+#trSeg button{padding:5px 12px}
 .explore{display:grid;gap:8px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
 .xbtn{display:flex;flex-direction:column;gap:3px;text-align:left;padding:14px 16px;border-radius:18px;background:var(--card)}
 .xbtn:hover{border-color:var(--acc)}
@@ -87,9 +111,21 @@ body:not(.noblur) .card[data-st=pending]::after{content:"";position:absolute;lef
 #msg,.simmsg{padding:40px 12px;text-align:center;color:var(--mut)}
 #toast{position:fixed;left:50%;bottom:max(24px,env(safe-area-inset-bottom));transform:translateX(-50%);background:#222;color:#fff;padding:10px 16px;border-radius:999px;z-index:100;max-width:90vw;font-size:14px}
 .overlay{position:fixed;inset:0;z-index:50;background:var(--bg);overflow:auto}
-#login,#settings{display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.6)}
-#login[hidden],#settings[hidden],#viewer[hidden],[hidden]{display:none!important}
+#login{display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.6)}
+#login[hidden],#viewer[hidden],[hidden]{display:none!important}
 .sheet{background:var(--bg);border:1px solid var(--line);border-radius:20px;padding:20px;width:min(440px,92vw);max-height:90vh;overflow:auto}
+/* 아래에서 올라오는 시트: 위쪽 손잡이를 아래로 끌거나, 바깥을 누르거나, 맨 아래 큰 버튼으로 닫습니다 */
+.overlay.wrap{display:flex;align-items:flex-end;justify-content:center;background:rgba(0,0,0,.55);overflow:hidden}
+.bsheet{display:flex;flex-direction:column;padding:0;width:min(560px,100vw);max-height:88vh;max-height:88dvh;border-radius:22px 22px 0 0;border-bottom:none;overflow:hidden;transition:transform .2s ease}
+.bsheet.drag{transition:none}
+.grab{flex:none;padding:10px 0 6px;touch-action:none;cursor:grab}
+.grab i{display:block;width:44px;height:5px;margin:0 auto;border-radius:3px;background:var(--line)}
+.shead{flex:none;padding:0 20px 4px}
+.shead h2{margin:0}
+.sbody{flex:1;overflow:auto;-webkit-overflow-scrolling:touch;padding:0 20px 12px;overscroll-behavior:contain}
+.sfoot{flex:none;display:flex;gap:10px;padding:10px 20px max(14px,env(safe-area-inset-bottom));border-top:1px solid var(--line);background:var(--bg)}
+.sfoot button{flex:1;padding:12px 14px;font-size:15px}
+.sfoot button.wide{flex:1}
 .sheet h2{margin:0 0 8px}.sheet h3{margin:16px 0 6px;font-size:14px;color:var(--mut)}
 .row{display:flex;gap:8px;align-items:flex-start;padding:6px 0}
 .row small,.note{color:var(--mut)}
@@ -98,16 +134,23 @@ body:not(.noblur) .card[data-st=pending]::after{content:"";position:absolute;lef
 .btns{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
 .src small{display:block}
 .lockrow{padding:4px 0;font-size:14px}.lockrow small{color:var(--mut)}
-#trends{padding:12px 4px}
-#trends select{font:inherit;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:999px;padding:7px 12px}
+#trends{padding:6px 0}
+#trends .hint{margin:2px 2px 10px;font-size:13px}
 
 /* ---------- 뷰어: 위아래로 스크롤, 이미지 아래에 비슷한 이미지 피드 ---------- */
 #viewer{display:block;background:#000;color:#fff;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
-.vtop{position:sticky;top:0;z-index:5;display:flex;gap:10px;align-items:center;padding:max(10px,env(safe-area-inset-top)) 12px 8px;background:rgba(0,0,0,.82);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
-.vmeta{min-width:0}.vmeta div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vmeta small{color:#aaa}
-.vstage{height:min(72vh,820px);height:min(72dvh,820px);display:flex;align-items:center;justify-content:center;position:relative}
-.vwrap{position:relative;flex:1;height:100%;display:flex;align-items:center;justify-content:center;min-width:0}
-#vimg{max-width:100%;max-height:100%;object-fit:contain}
+.vtop{position:sticky;top:0;z-index:5;display:flex;gap:10px;align-items:center;padding:max(10px,env(safe-area-inset-top)) 12px 8px 16px;background:rgba(0,0,0,.82);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
+.vmeta{min-width:0;flex:1}.vmeta div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vmeta small{color:#aaa}
+.vx{flex:none;width:44px;height:44px;padding:0;border-radius:50%;font-size:18px;background:#23262d;border-color:#3a3d45;color:#fff}
+.fab{position:fixed;right:14px;bottom:max(18px,env(safe-area-inset-bottom));z-index:8;padding:11px 18px;font-size:15px;font-weight:600;background:rgba(30,33,40,.92);border-color:#444;color:#fff;box-shadow:0 4px 14px rgba(0,0,0,.5)}
+#viewer[hidden] .fab{display:none}
+.vstage{height:min(72vh,820px);height:min(72dvh,820px);display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden}
+/* 이미지 확대: 세로 스크롤은 그대로 두고 핀치·가로 끌기는 직접 처리. 확대된 동안에는 이미지 이동에 모든 터치를 씀 */
+.vwrap{position:relative;flex:1;height:100%;display:flex;align-items:center;justify-content:center;min-width:0;touch-action:pan-y;user-select:none;-webkit-user-select:none}
+.vstage.zoomed .vwrap{touch-action:none}
+.vstage.zoomed .nav{display:none}
+#vimg{max-width:100%;max-height:100%;object-fit:contain;transform-origin:50% 50%;will-change:transform;-webkit-user-drag:none;-webkit-touch-callout:none}
+.zreset{position:absolute;top:8px;right:8px;z-index:3;padding:5px 12px;font-size:13px;background:rgba(0,0,0,.6);border-color:#555;color:#fff}
 #vimg.blur{filter:blur(30px)}
 .nav{position:absolute;top:50%;transform:translateY(-50%);z-index:2;background:rgba(0,0,0,.35);border:none;font-size:30px;line-height:1;color:#fff;padding:14px 10px;border-radius:12px;opacity:.7}
 #vprev{left:4px}#vnext{right:4px}
@@ -125,12 +168,13 @@ body:not(.noblur) .card[data-st=pending]::after{content:"";position:absolute;lef
 #sf .upbtn{padding:7px 9px;background:transparent;border:none;font-size:16px;line-height:1}
 #bmtools{display:flex;gap:8px;align-items:center;padding:4px 2px 10px}
 #bmtools input{flex:1;min-width:0}
-#bmtools select{font:inherit;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:999px;padding:7px 10px;flex:none;max-width:42%}
+#bmtools select{font:inherit;font-size:16px;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:999px;padding:7px 10px;flex:none;max-width:42%}
 #offline{display:flex;gap:10px;align-items:center;justify-content:space-between;margin:2px 2px 10px;padding:10px 14px;border:1px solid var(--warn);border-radius:14px;color:var(--warn);font-size:14px}
 body.offline header .hrow:first-child,body.offline #tabFeed,body.offline #tabTr,body.offline #vsimbox,body.offline #vsim{display:none}
 #vnote{margin-top:2px;color:#ddd;font-size:13px;white-space:normal;overflow:visible;text-overflow:clip}
-#bmSheet{display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.6);z-index:60}
-#bmSheet[hidden]{display:none!important}
+#bmSheet{z-index:60}
+#bmSheet[hidden],#settings[hidden]{display:none!important}
+#settings{z-index:70}
 #bmBoards{margin-bottom:8px}
-#bmSheet textarea{font:inherit;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px;width:100%;outline:none;resize:vertical}
+#bmSheet textarea{font:inherit;font-size:16px;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px;width:100%;outline:none;resize:vertical}
 #bmSheet textarea:focus{border-color:var(--acc)}

@@ -17,7 +17,45 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const idle = (ms = 3000) => new Promise((r) => (window.requestIdleCallback ? requestIdleCallback(r, { timeout: ms }) : setTimeout(r, 300)));
 const pick = (a) => a[Math.floor(Math.random() * a.length)];
 
-const DEFAULT_CHIPS = ["미니멀 인테리어", "빈티지 포스터", "레트로 타이포", "한옥 풍경", "새벽 안개 숲", "손글씨 캘리그라피", "패키지 디자인", "수채화 풍경", "도시 야경", "보태니컬 일러스트", "잡지 레이아웃", "파스텔 그라데이션"];
+// 홈의 추천 주제: 넓은 카테고리 [이모지, 이름, 세부 주제들]. 홈을 열 때마다 무작위로 몇 개만 보여 주고, 누르면 세부 주제로 내려갑니다.
+const CATS = [
+  ["🏞️", "풍경", ["바다 수평선", "안개 낀 산", "숲길", "노을 하늘", "호수 반영", "폭포", "사막 모래언덕", "초원"]],
+  ["🌆", "도시", ["도시 야경", "비 오는 거리", "골목길", "고층 빌딩", "지하철역", "다리 야경", "옥상 전망"]],
+  ["🛋️", "인테리어", ["미니멀 거실", "아늑한 침실", "북유럽 주방", "작은 서재", "호텔 욕실", "카페 인테리어", "빈티지 소품"]],
+  ["🏛️", "건축", ["한옥 처마", "고딕 성당", "현대 건축", "나선 계단", "전통 사원", "스테인드글라스", "노출 콘크리트"]],
+  ["🍜", "음식", ["한식 한 상", "디저트", "브런치", "라떼아트", "갓 구운 빵", "길거리 음식", "과일 접시"]],
+  ["🌸", "꽃과 식물", ["벚꽃", "들꽃", "다육식물", "온실 정원", "이끼", "단풍잎", "해바라기 밭"]],
+  ["🐈", "동물", ["고양이", "강아지", "새", "바다 생물", "야생동물", "곤충 접사", "말"]],
+  ["🌌", "우주", ["은하수", "보름달", "오로라", "행성", "성운", "우주 정거장", "일식"]],
+  ["🎨", "미술", ["유화 풍경", "수채화", "조각상", "추상화", "동양화", "판화", "인상주의"]],
+  ["✒️", "디자인", ["포스터 디자인", "로고 디자인", "패키지 디자인", "타이포그래피", "잡지 레이아웃", "일러스트", "브랜딩 목업"]],
+  ["👗", "패션", ["스트리트 패션", "빈티지 옷", "운동화", "가방", "한복", "모자 스타일", "니트"]],
+  ["✈️", "여행", ["유럽 골목", "일본 소도시", "동남아 해변", "캠핑", "기차 여행", "섬 여행", "시장 풍경"]],
+  ["🎞️", "빈티지", ["레트로 포스터", "옛날 사진", "필름 카메라", "오래된 간판", "복고풍 가전", "옛 지도"]],
+  ["🌈", "색감", ["파스텔 톤", "네온 불빛", "흑백 사진", "따뜻한 색감", "모노톤", "그라데이션", "보색 대비"]],
+  ["🧱", "질감", ["종이 질감", "대리석", "나무 결", "천 주름", "녹슨 철", "유리 반사", "돌담"]],
+  ["💡", "빛과 그림자", ["역광", "골든아워", "창가 햇살", "그림자 놀이", "네온사인", "촛불", "안개 속 빛"]],
+  ["🌊", "물과 불", ["파도", "물방울", "폭우", "불꽃", "모닥불", "얼음", "연기"]],
+  ["🎵", "음악", ["기타", "피아노 건반", "콘서트 무대", "LP 레코드", "첼로", "합창", "버스킹"]],
+  ["📚", "책과 문구", ["도서관", "손글씨 노트", "만년필", "작은 서점", "펜과 잉크", "책상 위", "종이 공예"]],
+  ["🧪", "교실과 과학", ["칠판 수식", "교실 풍경", "수학 도형", "지구본과 지도", "과학 실험", "현미경", "별자리 지도"]],
+  ["🎒", "배움", ["책가방", "운동장", "도서관 열람실", "스케치북", "블록 장난감", "퍼즐"]],
+  ["⚽", "스포츠", ["축구장", "농구 코트", "새벽 러닝", "서핑", "클라이밍", "자전거", "수영장"]],
+  ["🚆", "탈것", ["기차", "비행기 창밖", "클래식 카", "범선", "버스 정류장", "열기구"]],
+  ["🧩", "패턴", ["기하학 패턴", "타일", "모자이크", "줄무늬", "꽃무늬", "한국 전통 문양", "벽지"]],
+  ["💻", "기술", ["코딩 화면", "회로기판", "서버실", "로봇", "드론", "스마트폰 목업", "미래 도시"]],
+  ["🏡", "가족과 일상", ["놀이터", "가족 소풍", "생일 파티", "집밥", "산책길", "빨래 널린 마당"]],
+  ["🍂", "계절", ["봄 새순", "여름 소나기", "가을 단풍길", "눈 내린 마을", "첫눈", "장마"]],
+  ["🇰🇷", "한국", ["한옥마을", "전통시장", "서울 야경", "제주 바다", "사찰 풍경", "골목 벽화", "한강 노을"]],
+  ["🧑", "사람", ["흑백 인물 사진", "거리 스냅", "손", "실루엣", "군중 속 한 사람", "뒷모습", "웃음"]],
+  ["📷", "사진 스타일", ["미니멀 구도", "광각 풍경", "접사", "항공 사진", "장노출", "하이앵글", "대칭 구도"]],
+  ["☕", "카페와 공간", ["북카페", "루프탑", "작업실", "동네 빵집", "창가 자리", "벽돌 골목 카페"]],
+  ["⛺", "아웃도어", ["캠핑 텐트", "등산길", "별 보는 밤", "계곡", "낚시", "해변 산책"]],
+];
+const EXTRA_SRC = { wiki: "위키백과" }; // 검색 소스는 아니지만 트렌드에 나오는 이미지의 출처 이름
+const KO_COLOR = { red: "빨강", orange: "주황", yellow: "노랑", green: "초록", teal: "청록", blue: "파랑", purple: "보라", pink: "분홍", brown: "갈색", black: "검정", white: "하양", gray: "회색" };
+const COLOR_WORDS = /\b(red|orange|yellow|green|teal|turquoise|cyan|blue|purple|violet|pink|brown|black|white|gr[ae]y|gold|golden|silver|beige|colorful|pastel|monochrome)\b/i;
+const shuffle = (a) => { const r = a.slice(); for (let i = r.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [r[i], r[j]] = [r[j], r[i]]; } return r; };
 // 소스가 실패했을 때 ⚠ 를 누르면 보여주는 이유
 const WHY = {
   timeout: "응답이 너무 늦어서 포기했어요 (시간 초과)",
@@ -35,10 +73,10 @@ const WHY = {
 const S = {
   pass: LS.get("pass", ""), blur: LS.get("blur", true), ml: LS.get("ml", true), off: new Set(LS.get("off", [])), only: new Set(),
   color: "", orient: "", board: "__all", view: "feed", list: [], bmIds: new Set(),
-  bmq: "", bmsort: LS.get("bmsort", "new"), offline: false,
+  bmq: "", bmsort: LS.get("bmsort", "new"), offline: false, colorWide: LS.get("cw", false),
 };
 let cfg = null;
-const srcName = (id) => cfg?.sources.find((s) => s.id === id)?.name || id;
+const srcName = (id) => cfg?.sources.find((s) => s.id === id)?.name || EXTRA_SRC[id] || id;
 document.body.classList.toggle("noblur", !S.blur);
 
 // ---------- 서버 호출 ----------
@@ -111,10 +149,13 @@ class Masonry {
   setFilter(p) { this.pred = p; this.cards = p ? this.all.filter(p) : this.all.slice(); this.build(); }
   clear() { this.all = []; this.cards = []; this.cols = []; this.hs = []; this.el.textContent = ""; }
   check() { if (this.cols.length && this.n !== this.count()) this.build(); }
+  // 카드 순서를 다시 매깁니다 (이미 불러온 이미지는 그대로 두고 칸만 옮김)
+  reorder(cmp) { this.cards.sort(cmp); this.build(); }
 }
 const feedM = new Masonry($("#grid"));
 const bmM = new Masonry($("#bmgrid"));
-let rzT; addEventListener("resize", () => { clearTimeout(rzT); rzT = setTimeout(() => { feedM.check(); bmM.check(); lv()?.m.check(); }, 200); });
+const trM = new Masonry($("#trGrid"));
+let rzT; addEventListener("resize", () => { clearTimeout(rzT); rzT = setTimeout(() => { feedM.check(); bmM.check(); trM.check(); lv()?.m.check(); }, 200); });
 
 // ---------- 카드 ----------
 const io = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) { io.unobserve(e.target); loadCard(e.target); } }), { rootMargin: "800px 0px" });
@@ -137,27 +178,44 @@ function makeCard(it, open) {
   return el;
 }
 
-// 이미지에서 대표 색을 뽑습니다. 서버가 거쳐 준 이미지(blob)만 읽을 수 있고, 못 읽으면 null(걸러내지 않음).
-function pixelColors(img) {
+// 이미지에서 대표 색(cols: 색상 점 이름 목록)과 색 분포(sh)를 뽑습니다.
+// 서버를 거쳐 받은 이미지(blob)만 읽을 수 있고, 못 읽으면 null(걸러내지 않음).
+function pixelInfo(img) {
   try {
-    const c = document.createElement("canvas"); c.width = c.height = 24;
+    const N = 32, c = document.createElement("canvas"); c.width = c.height = N;
     const x = c.getContext("2d", { willReadFrequently: true });
-    x.drawImage(img, 0, 0, 24, 24);
-    return window.ColorTools.classify(x.getImageData(0, 0, 24, 24).data);
+    x.drawImage(img, 0, 0, N, N);
+    const d = x.getImageData(0, 0, N, N).data;
+    return { cols: window.ColorTools.classify(d, N, N), sh: window.ColorTools.shares(d, N, N) };
   } catch { return null; }
+}
+// blob(작은 이미지)에서 색 정보만 뽑습니다. 화면에는 표시하지 않음.
+function blobInfo(blob) {
+  return new Promise((res) => {
+    const u = URL.createObjectURL(blob), im = new Image();
+    im.onload = () => { const r = pixelInfo(im); URL.revokeObjectURL(u); res(r); };
+    im.onerror = () => { URL.revokeObjectURL(u); res(null); };
+    im.src = u;
+  });
 }
 
 async function loadCard(el) {
   const it = el._it, img = el.querySelector("img");
   const needML = S.blur && S.ml && !it.adult && !it.fromBm;
   const inMain = !!el.closest("#grid");
+  const simLevel = el.closest(".simlevel") ? V.stack.find((l) => l.wrap.contains(el)) : null;
   const wantColor = !!S.color && inMain && !it.sc && !it.cols;
+  const wantSh = !!simLevel && !it.sh;
+  // 색만 알면 되는 경우(색 필터)에는 작은 이미지(alt)로 분석해서 느린 원본 내려받기를 피합니다.
+  const colorFromAlt = wantColor && !!it.alt && !it.blob && !needML;
   el.dataset.st = it.adult ? "flag" : needML ? "pending" : "ok";
   // 큰 썸네일 주소가 안 열리는 소스(예: V&A)는 작은 주소(alt)로 한 번 더 시도
   img.onerror = () => { if (it.alt && img.dataset.alt !== "1") { img.dataset.alt = "1"; img.referrerPolicy = "no-referrer"; img.src = it.alt; } else el.classList.add("broken"); };
   try {
+    let altInfo = null;
+    if (colorFromAlt) { try { altInfo = await blobInfo(await fetchBlob(`/api/img?u=${enc(it.alt)}`)); } catch (e) { if (e.message === "auth") throw e; } }
     if (it.blob) img.src = URL.createObjectURL(it.blob);
-    else if (needML || wantColor) { const b = await fetchBlob(`/api/img?u=${enc(it.thumb)}`); it.blob = b; img.src = URL.createObjectURL(b); }
+    else if (needML || (wantColor && !colorFromAlt)) { const b = await fetchBlob(`/api/img?u=${enc(it.thumb)}`); it.blob = b; img.src = URL.createObjectURL(b); }
     else { img.referrerPolicy = "no-referrer"; img.src = it.thumb; }
     await img.decode().catch(() => {});
     el.classList.add("loaded");
@@ -166,7 +224,8 @@ async function loadCard(el) {
       it.w = img.naturalWidth; it.h = img.naturalHeight;
       el._r = clamp(it.w / it.h, 0.5, 2.2); el.style.aspectRatio = String(el._r);
     }
-    if (wantColor && it.blob) it.cols = pixelColors(img);
+    if (wantColor) { const inf = altInfo || (it.blob ? pixelInfo(img) : null); it.cols = inf?.cols || null; it.sh = inf?.sh || it.sh; }
+    if (wantSh && it.blob) { const inf = pixelInfo(img); if (inf?.sh) { it.sh = inf.sh; simRerankSoon(simLevel); } }
     if (inMain) feedM.recheck(el); // 방향·색이 조건과 다르면 목록에서 뺌
     if (needML && it.blob) enqueueClassify(el, img, it);
   } catch (e) {
@@ -226,8 +285,12 @@ class Feed {
   sources() {
     const on = (cfg?.sources || []).filter((s) => !S.off.has(s.id));
     // 소스 패널에서 고른 소스만 검색 (메인 피드만 해당). 고른 소스가 꺼져 있으면 전체로 되돌립니다.
-    const pickd = this.o.filters && S.only.size ? on.filter((s) => S.only.has(s.id)) : on;
-    return pickd.length ? pickd : on;
+    let pickd = this.o.filters && S.only.size ? on.filter((s) => S.only.has(s.id)) : on;
+    if (!pickd.length) pickd = on;
+    // 색을 골랐을 때는 색을 직접 걸러 주는 소스(Pixabay·Unsplash)만 씁니다. 빠르고 정확하기 때문이에요.
+    // (필터 패널에서 "넓게"를 고르면 다른 소스도 쓰되, 이미지를 불러온 뒤 브라우저가 대표 색으로 거릅니다.)
+    if (this.o.filters && S.color && !S.colorWide) { const cs = pickd.filter((s) => s.colors); if (cs.length) pickd = cs; }
+    return pickd;
   }
   begin(q, sl = "") {
     this.q = this.qe = q;
@@ -338,7 +401,7 @@ async function startSearch(q, opts = {}) {
   if (V.stack.length) closeViewer();
   setView("feed");
   M.reset(); M.begin(q, opts.sl);
-  $("#q").value = q; $("#q").blur(); $("#home").hidden = true; $("#filters").hidden = true; if (!opts.keep) $("#srcPanel").hidden = true;
+  $("#q").value = q; syncQ(); $("#q").blur(); $("#home").hidden = true; $("#filters").hidden = true; if (!opts.keep) $("#srcPanel").hidden = true;
   feedM.clear(); feedM.pred = feedPred(); markFilters(); $("#msg").hidden = true; $("#msg").textContent = ""; renderChips(); renderStat(); scrollTo(0, 0);
   await M.next();
 }
@@ -357,12 +420,14 @@ function renderChips() {
 function renderStat() {
   const box = $("#stat"); box.textContent = "";
   const all = (cfg?.sources || []).filter((s) => !S.off.has(s.id));
+  const used = new Set(M.sources().map((x) => x.id)); // 지금 검색에 쓰는 소스 (색을 고르면 일부만 씀)
   let bads = 0;
   all.forEach((s) => {
     const st = M.q ? M.stat[s.id] : null, bad = !!st?.err; if (bad) bads++;
-    const w = document.createElement("span"); w.className = "sc" + (S.only.has(s.id) ? " on" : "") + (bad ? " bad" : "");
+    const idle = !!M.q && !used.has(s.id);
+    const w = document.createElement("span"); w.className = "sc" + (S.only.has(s.id) ? " on" : "") + (bad ? " bad" : "") + (idle ? " idle" : "");
     const b = document.createElement("button"); b.className = "sel";
-    b.textContent = !M.q ? s.name : !st ? `${s.name} …` : bad ? s.name : `${s.name} ${st.n}`;
+    b.textContent = !M.q || idle ? s.name : !st ? `${s.name} …` : bad ? s.name : `${s.name} ${st.n}`;
     b.onclick = () => { S.only.has(s.id) ? S.only.delete(s.id) : S.only.add(s.id); renderStat(); queueRerun(); };
     w.appendChild(b);
     if (bad) {
@@ -394,37 +459,59 @@ const sio = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecti
 sio.observe($("#sentinel"));
 
 // ---------- 홈 / 처음으로 ----------
-function renderHome() {
-  const box = $("#homeChips"); box.textContent = "";
-  DEFAULT_CHIPS.forEach((t) => { const b = document.createElement("button"); b.textContent = t; b.onclick = () => startSearch(t); box.appendChild(b); });
+// 홈을 열 때마다 카테고리를 새로 섞어서 보여 줍니다. 카테고리를 누르면 그 안의 세부 주제로 내려갑니다.
+const HOME = { cat: null, picks: [], tok: 0 };
+async function bmTopTags(n = 8) {
+  const cnt = new Map();
+  for (const x of await DB.all()) for (const t of new Set([...(x.tags || []).map((v) => String(v).toLowerCase()), ...tokens(x.title || "")])) cnt.set(t, (cnt.get(t) || 0) + 1);
+  return [...cnt.entries()].sort((a, b) => b[1] - a[1]).slice(0, n).map(([t]) => t);
+}
+function renderHome(reshuffle) {
+  const box = $("#homeChips"), tok = ++HOME.tok, cat = HOME.cat; box.textContent = "";
+  const chip = (label, cls, fn) => { const b = document.createElement("button"); b.textContent = label; if (cls) b.className = cls; b.onclick = fn; box.appendChild(b); };
+  $("#homeBack").hidden = !cat; $("#homeShuffle").hidden = !!cat;
+  $("#homeTitle").textContent = cat ? `${cat[0]} ${cat[1]}` : "추천 주제";
+  if (!cat) {
+    if (reshuffle || !HOME.picks.length) HOME.picks = shuffle(CATS).slice(0, 10);
+    HOME.picks.forEach((c) => chip(`${c[0]} ${c[1]}`, "cat", () => { HOME.cat = c; renderHome(); }));
+    // 북마크가 있으면 내 취향 태그를 한두 개 섞어 줍니다
+    bmTopTags(6).then((tags) => { if (tok === HOME.tok && !HOME.cat) shuffle(tags).slice(0, 2).forEach((t) => chip(`⭐ ${t}`, "mine", () => startSearch(t))); });
+  } else {
+    chip(`‘${cat[1]}’ 전체 보기`, "cat", () => startSearch(cat[1]));
+    cat[2].forEach((s) => chip(s, "", () => startSearch(s)));
+  }
   $("#home").hidden = !!M.q || S.view !== "feed";
 }
+$("#homeShuffle").onclick = () => renderHome(true);
+$("#homeBack").onclick = () => { HOME.cat = null; renderHome(); };
 function goHome() {
   if (S.offline) return;
   if (V.stack.length) closeViewer();
   M.reset(); feedM.clear(); feedM.pred = null;
   S.color = ""; S.orient = ""; S.only.clear(); markFilters();
-  $("#q").value = ""; $("#q").blur(); $("#msg").hidden = true; $("#msg").textContent = ""; $("#filters").hidden = true; $("#srcPanel").hidden = true;
-  setView("feed"); renderChips(); renderStat(); renderHome(); scrollTo(0, 0);
+  $("#q").value = ""; syncQ(); $("#q").blur(); $("#msg").hidden = true; $("#msg").textContent = ""; $("#filters").hidden = true; $("#srcPanel").hidden = true;
+  HOME.cat = null;
+  setView("feed"); renderChips(); renderStat(); renderHome(true); scrollTo(0, 0);
 }
 $("#homeBtn").onclick = goHome;
 $("#sf").addEventListener("submit", (e) => { e.preventDefault(); startSearch($("#q").value); });
 
+// 입력칸의 ✕: 한 번에 모두 지웁니다. (키보드는 그대로 둠)
+function bindClear(input, btn, onClear) {
+  const sync = () => { btn.hidden = !input.value; };
+  input.addEventListener("input", sync);
+  btn.addEventListener("pointerdown", (e) => e.preventDefault());
+  btn.addEventListener("click", () => { input.value = ""; sync(); input.focus(); onClear?.(); });
+  sync(); return sync;
+}
+const syncQ = bindClear($("#q"), $("#qClear"));
+
 // 둘러보기 버튼 3종
-$("#exRand").onclick = () => startSearch(pick(DEFAULT_CHIPS));
-$("#exTrend").onclick = async () => {
-  const lang = LS.get("trLang", "ko");
-  try {
-    const j = await (await api(`/api/trends?lang=${lang}`)).json();
-    if (!j.items?.length) throw new Error("none");
-    startSearch(pick(j.items.slice(0, 25)), { sl: lang });
-  } catch (e) { if (e.message !== "auth") { toast("요즘 화제 주제를 불러오지 못해서 랜덤 주제로 찾아요"); startSearch(pick(DEFAULT_CHIPS)); } }
-};
+$("#exRand").onclick = () => { const c = pick(CATS); startSearch(pick(c[2])); };
+$("#exTrend").onclick = () => setView("tr");
 $("#exBm").onclick = async () => {
-  const cnt = new Map();
-  for (const x of await DB.all()) for (const t of new Set([...(x.tags || []).map((v) => String(v).toLowerCase()), ...tokens(x.title || "")])) cnt.set(t, (cnt.get(t) || 0) + 1);
-  const top = [...cnt.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([t]) => t);
-  if (!top.length) { toast("북마크한 이미지에 태그가 아직 없어서 랜덤 주제로 찾아요"); return startSearch(pick(DEFAULT_CHIPS)); }
+  const top = await bmTopTags(8);
+  if (!top.length) { toast("북마크한 이미지에 태그가 아직 없어서 아무 주제로 찾아요"); const c = pick(CATS); return startSearch(pick(c[2])); }
   startSearch(pick(top));
 };
 
@@ -436,7 +523,7 @@ function setView(v) {
   $("#srcBtn").hidden = v !== "feed"; $("#filterBtn").hidden = v !== "feed"; if (v !== "feed") { $("#filters").hidden = true; $("#srcPanel").hidden = true; }
   $("#home").hidden = !(v === "feed" && !M.q);
   if (v === "feed") { feedM.check(); renderChips(); const m = $("#msg"); m.hidden = !(M.q && !M.items.length && m.textContent); }
-  else if (v === "tr") { $("#msg").hidden = true; renderChips(); loadTrends(); }
+  else if (v === "tr") { $("#msg").hidden = true; renderChips(); trM.check(); loadTrends(); scrollTo(0, 0); }
 }
 async function showBm() { setView("bm"); await renderBm(); }
 // 북마크 목록 그리기: 보드 · 검색어 · 정렬을 적용합니다. (검색어는 저장하지 않고 이 화면에만 둡니다)
@@ -454,6 +541,7 @@ async function renderBm() {
   bmM.add(shown.map((it) => makeCard(it, () => openViewer(S.list, S.list.indexOf(it)))));
 }
 let bmT; $("#bmq").oninput = (e) => { S.bmq = e.target.value; clearTimeout(bmT); bmT = setTimeout(renderBm, 200); };
+bindClear($("#bmq"), $("#bmClear"), () => { S.bmq = ""; renderBm(); });
 $("#bmsort").value = S.bmsort; $("#bmsort").onchange = (e) => { S.bmsort = e.target.value; LS.set("bmsort", S.bmsort); renderBm(); };
 function renderBoardChips(all) {
   const box = $("#chips"); box.textContent = ""; $("#chipsLbl").textContent = "보드";
@@ -519,8 +607,8 @@ function popLevel() {
   $("#viewer").scrollTop = l.scrollTop;
 }
 function finishClose() {
-  V.stack.forEach((l) => { l.feed.reset(); vio.unobserve(l.sent); });
-  V.stack = []; V.pushed = 0; $("#vsimlevels").textContent = "";
+  V.stack.forEach((l) => { l.feed.reset(); clearTimeout(l.rrT); vio.unobserve(l.sent); });
+  V.stack = []; V.pushed = 0; $("#vsimlevels").textContent = ""; zReset();
   $("#viewer").hidden = true; document.body.classList.remove("lock"); vTok++;
   if (vUrl) { URL.revokeObjectURL(vUrl); vUrl = null; }
   if (S.view === "bm") renderBm();
@@ -541,6 +629,7 @@ addEventListener("popstate", () => {
 function showItem(keepSim) {
   const level = lv(), it = level?.list[level.cur]; if (!it) return;
   const img = $("#vimg"), token = ++vTok;
+  zReset();
   const hide = it.adult && S.blur && !it.revealed;
   img.classList.toggle("blur", hide); $("#vveil").hidden = !hide;
   $("#vtitle").textContent = it.title || srcName(it.src);
@@ -552,6 +641,8 @@ function showItem(keepSim) {
   fetchBlob(`/api/img?u=${enc(it.full)}`, true).then((b) => {
     if (token !== vTok) return;
     it.fullBlob = b; if (vUrl) URL.revokeObjectURL(vUrl); vUrl = URL.createObjectURL(b); img.src = vUrl;
+    // 큰 이미지에서 색 분포를 다시 뽑아, 비슷한 이미지를 색이 가까운 순으로 정리하는 기준으로 씁니다.
+    img.decode().then(() => { if (token !== vTok || !V.stack.includes(level)) return; const inf = pixelInfo(img); if (inf?.sh) { level.sig = inf.sh; simRerankSoon(level); } }).catch(() => {});
   }).catch(() => {
     if (token !== vTok) return;
     const t = new Image(); t.referrerPolicy = "no-referrer"; t.onload = () => { if (token === vTok) img.src = it.full; }; t.src = it.full;
@@ -561,39 +652,62 @@ function showItem(keepSim) {
 // 이미지를 넘길 때마다 바로 검색하지 않고, 0.4초 멈췄을 때 시작합니다. (빠르게 넘길 때 요청이 쌓이는 것을 막음)
 let simT = null;
 function simSchedule(level) {
-  clearTimeout(simT);
-  level.feed.reset(); level.m.clear(); level.msg.hidden = true; level.simQ = ""; updateSimHead();
+  clearTimeout(simT); clearTimeout(level.rrT);
+  level.feed.reset(); level.m.clear(); level.msg.hidden = true; level.simQ = ""; level.sig = null; level.cw = ""; level.rrDone = 0; updateSimHead();
   if (S.offline) return;
   const it = level.list[level.cur];
   simT = setTimeout(() => { if (V.stack.includes(level) && level.list[level.cur] === it) simBegin(level, it); }, 400);
 }
-// 태그·제목 단서가 거의 없는 이미지(네이버·카카오 등)는 AI 설명을 먼저 받아 검색어로 씁니다.
+// 비슷한 이미지 검색어를 정하는 순서:
+//  1) 이미 불러온 썸네일에서 대표 색 이름을 뽑아 둠 (검색어에 덧붙여 색감을 맞춤)
+//  2) 태그가 3개 미만이면 AI 설명(소재·분위기·색)을 받아 검색어로 씀. 태그가 충분하면 AI 없이 태그로 바로 찾음.
 async function simBegin(level, it, force) {
+  const same = () => V.stack.includes(level) && level.list[level.cur] === it;
+  if (!level.sig && it.blob) { try { level.sig = (await blobInfo(it.blob))?.sh || null; } catch { /* 색 정보 없이 진행 */ } if (!same()) return; }
   let cap = "";
-  const weak = (it.tags || []).length < 2 && tokens(it.title || "").length < 2;
-  if ((force || weak) && !it.adult && captionOn()) {
+  const strong = (it.tags || []).length >= 3;
+  if (!it.adult && (force ? captionOn() : captionAuto() && !strong)) {
     level.msg.textContent = "AI가 이미지를 보는 중…"; level.msg.hidden = false;
     cap = (await captionOfItem(it)).q;
-    if (!V.stack.includes(level) || level.list[level.cur] !== it) return;
+    if (!same()) return;
     level.msg.hidden = true;
   }
-  level.cap = cap;
+  level.cap = cap; level.cw = window.ColorTools.topColor(level.sig);
   simStart(level, 0);
 }
-// 비슷한 이미지 검색어: (AI 설명) → 태그 → 제목 키워드 → 현재 검색어 순서로 시도
-function simCandidates(it, cap) {
+// 비슷한 이미지 검색어 후보 (앞에서부터 시도하고, 결과가 없으면 다음 후보):
+// AI 설명 → 태그(+색 이름) → 태그 → 제목 키워드(+색 이름) → 제목 키워드 → 현재 검색어
+function simCandidates(it, cap, cw) {
   const tags = (it.tags || []).map((t) => String(t).toLowerCase().trim()).filter((t) => t.length > 1);
   const tt = [...new Set(tokens(it.title || ""))];
+  // 색 이름은 검색어에 이미 색이 없을 때만 덧붙임 (한글 검색어면 한글 색 이름)
+  const withC = (s) => (!cw || !s || COLOR_WORDS.test(s) || /(빨강|주황|노랑|초록|파랑|보라|분홍|갈색|검정|하양|회색)/.test(s)) ? s : `${s} ${hasHangul(s) ? KO_COLOR[cw] || "" : cw}`.trim();
   const c = [];
   if (cap) { c.push(cap); const w = cap.split(" "); if (w.length > 3) c.push(w.slice(0, 3).join(" ")); }
-  if (tags.length) { c.push(tags.slice(0, 3).join(" ")); if (tags.length > 1) c.push(tags[0]); }
-  if (tt.length) { c.push(tt.slice(0, 3).join(" ")); if (tt.length > 1) c.push(tt[0]); }
+  if (tags.length) { c.push(withC(tags.slice(0, 2).join(" "))); c.push(tags.slice(0, 3).join(" ")); if (tags.length > 1) c.push(tags[0]); }
+  if (tt.length) { c.push(withC(tt.slice(0, 2).join(" "))); c.push(tt.slice(0, 3).join(" ")); if (tt.length > 1) c.push(tt[0]); }
   if (M.q) c.push(M.q);
   return [...new Set(c.filter(Boolean))];
 }
+// 글자 검색만으로는 색감이 어긋나서, 불러온 비슷한 이미지를 현재 이미지와 색 분포가 가까운 순으로 살짝 끌어올립니다.
+// (순위의 절반은 원래 검색 순서, 절반은 색 유사도. 최대 두 번, 사용자가 아직 이미지 근처에 있을 때만)
+function simRerankSoon(level) {
+  if (!level || (level.rrDone || 0) >= 2) return;
+  clearTimeout(level.rrT); level.rrT = setTimeout(() => simRerank(level), 900);
+}
+function simRerank(level) {
+  if (!V.stack.includes(level) || level !== lv() || !level.sig || (level.rrDone || 0) >= 2) return;
+  if ($("#viewer").scrollTop > $("#vsimbox").offsetTop + 60) return; // 이미 아래로 내려가서 보는 중이면 순서를 바꾸지 않음
+  const cards = level.m.cards, n = cards.length;
+  if (cards.filter((c) => c._it.sh).length < 6) return;
+  const CT = window.ColorTools;
+  const sc = new Map(cards.map((c, i) => { const s = CT.similarity(level.sig, c._it.sh); return [c, 0.5 * (1 - i / n) + 0.5 * (s == null ? 0.3 : s)]; }));
+  level.m.reorder((a, b) => sc.get(b) - sc.get(a));
+  level.rrDone = (level.rrDone || 0) + 1;
+}
 function simStart(level, ci) {
   const it = level.list[level.cur]; if (!it) return;
-  if (ci === 0) level.cands = simCandidates(it, level.cap);
+  if (ci === 0) level.cands = simCandidates(it, level.cap, level.cw);
   const q = level.cands[ci]; level.ci = ci;
   level.m.clear(); level.msg.hidden = true;
   const f = level.feed; f.reset();
@@ -615,15 +729,84 @@ function updateSimHead() { const l = lv(); $("#vsimq").textContent = l?.simQ ? `
 
 $("#vveil").parentElement.addEventListener("click", () => { const it = curItem(); if (it && !$("#vveil").hidden) { it.revealed = true; showItem(true); } });
 const step = (d) => { const l = lv(); if (!l) return; const n = l.cur + d; if (n >= 0 && n < l.list.length) { l.cur = n; showItem(false); $("#viewer").scrollTop = 0; } };
-$("#vprev").onclick = () => step(-1); $("#vnext").onclick = () => step(1); $("#vclose").onclick = closeViewer;
+$("#vprev").onclick = () => step(-1); $("#vnext").onclick = () => step(1); $("#vclose").onclick = closeViewer; $("#vfab").onclick = closeViewer;
 addEventListener("keydown", (e) => {
   if (!$("#bmSheet").hidden) { if (e.key === "Escape") closeSheet(); return; }
+  if (!$("#settings").hidden) { if (e.key === "Escape") closeSettings(); return; }
   if ($("#viewer").hidden || e.target.closest?.("input,textarea,select")) return;
   if (e.key === "Escape") closeViewer(); if (e.key === "ArrowLeft") step(-1); if (e.key === "ArrowRight") step(1);
 });
-let tx = 0; const stage = $(".vstage");
-stage.addEventListener("touchstart", (e) => { tx = e.touches[0].clientX; }, { passive: true });
-stage.addEventListener("touchend", (e) => { const dx = e.changedTouches[0].clientX - tx; if (Math.abs(dx) > 70) step(dx < 0 ? 1 : -1); }, { passive: true });
+// ----- 이미지 확대·축소: 화면 전체는 확대되지 않고, 뷰어의 이미지에서만 핀치·더블탭·끌기로 확대합니다 -----
+// 확대 전(1배)에는 좌우로 밀어서 이전·다음 이미지, 세로로 밀면 평소처럼 화면 스크롤(비슷한 이미지 보기).
+const stage = $(".vstage"), wrap = $(".vwrap"), vimg = $("#vimg");
+const Z = { s: 1, x: 0, y: 0, pts: new Map(), p0: null, drag: null, swipe: null, tap: null };
+const ZMAX = 5;
+function zApply() {
+  vimg.style.transform = Z.s <= 1.001 && !Z.x && !Z.y ? "" : `translate(${Z.x}px,${Z.y}px) scale(${Z.s})`;
+  const on = Z.s > 1.01; stage.classList.toggle("zoomed", on); $("#vzreset").hidden = !on;
+}
+function zReset() { Z.s = 1; Z.x = Z.y = 0; Z.pts.clear(); Z.p0 = Z.drag = Z.swipe = Z.tap = null; zApply(); }
+function zSnap() { if (Z.s <= 1.01) { Z.s = 1; Z.x = Z.y = 0; zApply(); } } // 거의 1배면 1배로 붙이기 (넘기기·더블탭 기록은 건드리지 않음)
+function zClamp() {
+  if (Z.s <= 1) { Z.s = 1; Z.x = Z.y = 0; return; }
+  const mx = Math.max(0, (vimg.clientWidth * Z.s - wrap.clientWidth) / 2), my = Math.max(0, (vimg.clientHeight * Z.s - wrap.clientHeight) / 2);
+  Z.x = clamp(Z.x, -mx, mx); Z.y = clamp(Z.y, -my, my);
+}
+// 이미지 중심(= 틀의 중심)을 기준으로 한 좌표
+const zRel = (cx, cy) => { const r = wrap.getBoundingClientRect(); return [cx - (r.left + r.width / 2), cy - (r.top + r.height / 2)]; };
+function zZoomAt(s2, cx, cy) {
+  s2 = clamp(s2, 1, ZMAX); const [px, py] = zRel(cx, cy);
+  Z.x = px - (px - Z.x) * s2 / Z.s; Z.y = py - (py - Z.y) * s2 / Z.s; Z.s = s2; zClamp(); zApply();
+}
+function zPinchStart() {
+  const [a, b] = [...Z.pts.values()], [cx, cy] = zRel((a.x + b.x) / 2, (a.y + b.y) / 2);
+  Z.p0 = { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, s: Z.s, px: (cx - Z.x) / Z.s, py: (cy - Z.y) / Z.s };
+  Z.swipe = Z.drag = Z.tap = null;
+}
+wrap.addEventListener("pointerdown", (e) => {
+  if (e.pointerType === "mouse" && e.button !== 0) return;
+  try { wrap.setPointerCapture(e.pointerId); } catch { /* 일부 브라우저는 지원하지 않음 */ }
+  Z.pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (Z.pts.size === 2) zPinchStart();
+  else if (Z.pts.size === 1) { Z.swipe = { x: e.clientX, y: e.clientY, t: Date.now() }; Z.drag = { x: Z.x, y: Z.y, px: e.clientX, py: e.clientY }; }
+});
+wrap.addEventListener("pointermove", (e) => {
+  const p = Z.pts.get(e.pointerId); if (!p) return;
+  p.x = e.clientX; p.y = e.clientY;
+  if (Z.pts.size === 2 && Z.p0) {
+    const [a, b] = [...Z.pts.values()], s2 = clamp(Z.p0.s * (Math.hypot(a.x - b.x, a.y - b.y) / Z.p0.d), 1, ZMAX);
+    const [cx, cy] = zRel((a.x + b.x) / 2, (a.y + b.y) / 2);
+    Z.s = s2; Z.x = cx - s2 * Z.p0.px; Z.y = cy - s2 * Z.p0.py; zClamp(); zApply();
+  } else if (Z.pts.size === 1 && Z.drag && Z.s > 1.01) {
+    Z.x = Z.drag.x + (e.clientX - Z.drag.px); Z.y = Z.drag.y + (e.clientY - Z.drag.py); zClamp(); zApply();
+  }
+});
+function zUp(e) {
+  const had = Z.pts.delete(e.pointerId); if (!had) return;
+  if (Z.pts.size === 1) { // 두 손가락 중 하나를 뗌: 남은 손가락으로 이어서 끌 수 있게 기준을 다시 잡음 (이때는 넘기기·더블탭 아님)
+    const q = [...Z.pts.values()][0]; Z.p0 = null; Z.swipe = Z.tap = null; Z.drag = { x: Z.x, y: Z.y, px: q.x, py: q.y };
+    zSnap();
+    return;
+  }
+  if (Z.pts.size > 0) return;
+  Z.p0 = null; Z.drag = null;
+  const sw = Z.swipe; Z.swipe = null;
+  zSnap();
+  if (!sw || e.type === "pointercancel") return;
+  const dx = e.clientX - sw.x, dy = e.clientY - sw.y, moved = Math.hypot(dx, dy);
+  if (Z.s <= 1.01 && Math.abs(dx) > 70 && Math.abs(dx) > Math.abs(dy) * 1.5) { Z.tap = null; step(dx < 0 ? 1 : -1); return; }
+  if (moved < 12 && Date.now() - sw.t < 350) { // 가볍게 두 번 누르면 확대 ↔ 원래 크기
+    const t = Z.tap, now = Date.now();
+    if (t && now - t.t < 320 && Math.hypot(e.clientX - t.x, e.clientY - t.y) < 32) { Z.tap = null; Z.s > 1.01 ? zReset() : zZoomAt(2.5, e.clientX, e.clientY); }
+    else Z.tap = { t: now, x: e.clientX, y: e.clientY };
+  }
+}
+wrap.addEventListener("pointerup", zUp); wrap.addEventListener("pointercancel", zUp);
+// 컴퓨터: Ctrl+휠(트랙패드 핀치)로 확대
+wrap.addEventListener("wheel", (e) => { if (!e.ctrlKey) return; e.preventDefault(); zZoomAt(Z.s * Math.exp(-e.deltaY * 0.01), e.clientX, e.clientY); }, { passive: false });
+$("#vzreset").onclick = zReset;
+// 아이폰 사파리의 기본 핀치 확대(제스처)도 막습니다. 뷰어의 이미지 확대는 위 코드가 처리해요.
+["gesturestart", "gesturechange", "gestureend"].forEach((n) => document.addEventListener(n, (e) => e.preventDefault(), { passive: false }));
 $("#vstar").onclick = () => { const it = curItem(); if (it) toggleBookmark(it); };
 $("#vopen").onclick = () => { const it = curItem(); if (it) window.open(it.page || it.full, "_blank", "noopener"); };
 $("#vsim").onclick = () => { const box = $("#vsimbox"), v = $("#viewer"); v.scrollTo({ top: box.offsetTop - 56, behavior: "smooth" }); };
@@ -647,19 +830,31 @@ $("#vdl").onclick = async () => {
   } catch (e) { if (e.name !== "AbortError") toast("다운로드에 실패했어요. '원본 페이지'에서 받아 보세요."); }
 };
 
-// ---------- 트렌드 (위키백과 많이 본 문서) ----------
-async function loadTrends() {
-  const sel = $("#trLang"), lang = sel.value, box = $("#trChips");
-  LS.set("trLang", lang); box.textContent = ""; $("#trNote").textContent = "불러오는 중…";
+// ---------- 트렌드: 단어 대신 이미지로 ----------
+// 서버가 위키백과(한국어·영어)에서 많이 본 문서의 대표 사진(grp "news")과 Pixabay·Unsplash 인기 사진(grp "pop")을 섞어서 줍니다.
+const TR = { g: "", at: 0, items: [], date: "", loading: false };
+async function loadTrends(force) {
+  if (TR.loading) return;
+  if (!force && TR.items.length && Date.now() - TR.at < 30 * 60000) { renderTrends(); return; }
+  TR.loading = true; trM.clear(); $("#trNote").textContent = "불러오는 중…";
   try {
-    const j = await (await api(`/api/trends?lang=${lang}`)).json();
-    if (sel.value !== lang) return;
-    $("#trNote").textContent = `위키백과 ${sel.selectedOptions[0].textContent} · ${j.date} 기준 많이 본 문서예요. 주제를 누르면 이미지를 찾아요. (사람·사건 위주라 디자인 유행과는 달라요)`;
-    j.items.forEach((t) => { const b = document.createElement("button"); b.textContent = t; b.onclick = () => startSearch(t, { sl: lang }); box.appendChild(b); });
-  } catch (e) { if (e.message !== "auth") $("#trNote").textContent = "트렌드를 불러오지 못했어요. 잠시 후 다시 시도해 주세요."; }
+    const j = await (await api("/api/trends")).json();
+    TR.items = (j.items || []).map((it) => { const key = keyOf(it); return { ...it, id: hashId(key), key, tags: it.tags || [] }; });
+    TR.date = j.date || ""; TR.at = Date.now();
+    renderTrends();
+  } catch (e) { if (e.message !== "auth") $("#trNote").textContent = "트렌드를 불러오지 못했어요. 잠시 후 [새로고침]을 눌러 주세요."; }
+  finally { TR.loading = false; }
 }
-$("#trLang").value = LS.get("trLang", "ko");
-$("#trLang").onchange = loadTrends;
+function renderTrends() {
+  const list = TR.items.filter((it) => !TR.g || it.grp === TR.g);
+  trM.clear();
+  document.querySelectorAll("#trSeg button").forEach((b) => b.classList.toggle("on", b.dataset.g === TR.g));
+  $("#trNote").textContent = !list.length ? "이 분류에 보여 줄 이미지가 없어요. (인기 사진은 Pixabay·Unsplash 키가 있어야 나와요)"
+    : `${TR.date ? TR.date + " 기준 · " : ""}위키백과(한국어·영어)에서 많이 본 문서의 대표 사진과 인기 사진이에요. 탭하면 크게 보고 비슷한 이미지도 찾아요.`;
+  trM.add(list.map((it) => makeCard(it, () => openViewer(list, list.indexOf(it)))));
+}
+document.querySelectorAll("#trSeg button").forEach((b) => { b.onclick = () => { TR.g = b.dataset.g; renderTrends(); }; });
+$("#trRefresh").onclick = () => loadTrends(true);
 
 // ---------- 필터 (방향·색상) ----------
 const COLORS = { red: "#e53935", orange: "#fb8c00", yellow: "#fdd835", green: "#43a047", teal: "#00acc1", blue: "#1e88e5", purple: "#8e24aa", pink: "#ec407a", brown: "#6d4c41", black: "#111", white: "#fff", gray: "#9e9e9e" };
@@ -669,10 +864,15 @@ function markFilters() {
   document.querySelectorAll("#orient button").forEach((b) => b.classList.toggle("on", b.dataset.o === S.orient));
   const n = (S.color ? 1 : 0) + (S.orient ? 1 : 0);
   $("#filterBadge").textContent = n ? String(n) : "";
-  const cs = colorSources();
+  const cs = colorSources(), names = cs.map((s) => s.name).join("·");
   $("#colors").classList.remove("dis");
-  $("#colorNote").textContent = !cfg ? "" : (cs.length ? `${cs.map((s) => s.name).join("·")}는 검색할 때 색을 맞추고, 다른 소스는 ` : "") +
-    "이미지를 불러온 뒤 대표 색으로 걸러요. 걸러지는 동안 결과가 천천히 채워질 수 있어요.";
+  $("#cwRow").hidden = !(S.color && cs.length);
+  document.querySelectorAll("#cwSeg button").forEach((b) => b.classList.toggle("on", (b.dataset.w === "1") === S.colorWide));
+  $("#colorNote").textContent = !cfg ? "" :
+    !cs.length ? "색 필터가 되는 소스(Pixabay·Unsplash)가 없어서, 모든 이미지를 불러온 뒤 대표 색으로 걸러요. 결과가 천천히 채워질 수 있어요."
+    : !S.color ? `${names}는 검색할 때 색을 직접 걸러 줘서 빠르고 정확해요.`
+    : !S.colorWide ? `${names}가 색을 직접 걸러 줘서 빠르고 정확해요. 다른 소스까지 쓰려면 ‘넓게’를 고르세요. (이미지를 불러온 뒤 대표 색으로 걸러서 느려요)`
+    : `모든 소스에서 찾아요. ${names}는 검색할 때 걸러 주고, 나머지는 이미지를 불러온 뒤 대표 색으로 걸러서 천천히 채워져요.`;
 }
 const rerun = () => { markFilters(); if (M.q) startSearch(M.q, { sl: M.sl }); else feedM.pred = feedPred(); };
 Object.entries(COLORS).forEach(([k, c]) => {
@@ -681,9 +881,12 @@ Object.entries(COLORS).forEach(([k, c]) => {
   $("#colors").appendChild(b);
 });
 document.querySelectorAll("#orient button").forEach((b) => { b.onclick = () => { S.orient = b.dataset.o; rerun(); }; });
+document.querySelectorAll("#cwSeg button").forEach((b) => { b.onclick = () => { S.colorWide = b.dataset.w === "1"; LS.set("cw", S.colorWide); rerun(); }; });
 $("#filterBtn").onclick = () => { markFilters(); $("#srcPanel").hidden = true; $("#filters").hidden = !$("#filters").hidden; };
 $("#srcBtn").onclick = () => { renderStat(); $("#filters").hidden = true; $("#srcPanel").hidden = !$("#srcPanel").hidden; };
 $("#srcAll").onclick = () => { S.only.clear(); renderStat(); queueRerun(); };
+$("#srcClose").onclick = () => { $("#srcPanel").hidden = true; };
+$("#filterClose").onclick = () => { $("#filters").hidden = true; };
 $("#filterReset").onclick = () => { S.color = ""; S.orient = ""; rerun(); };
 
 // ---------- 보드·메모 (입력창 대신 시트) ----------
@@ -699,6 +902,22 @@ function renderSheetBoards() {
   mk("미분류", ""); sheet.names.forEach((n) => mk(n, n));
 }
 function closeSheet() { $("#bmSheet").hidden = true; }
+function closeSettings() { $("#settings").hidden = true; }
+// 아래에서 올라오는 시트(설정·보드 메모): 바깥을 누르거나, 위쪽 손잡이를 아래로 끌거나, Esc 로 닫고, 맨 아래 큰 버튼으로도 닫습니다.
+function bindSheet(overlay, close) {
+  const sh = overlay.querySelector(".bsheet");
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  let y0 = null, dy = 0;
+  const end = () => { if (y0 === null) return; y0 = null; sh.classList.remove("drag"); const far = dy > 90; dy = 0; sh.style.transform = ""; if (far) close(); };
+  overlay.querySelectorAll(".grab,.shead").forEach((h) => {
+    h.style.touchAction = "none";
+    h.addEventListener("pointerdown", (e) => { y0 = e.clientY; dy = 0; sh.classList.add("drag"); try { h.setPointerCapture(e.pointerId); } catch { /* 무시 */ } });
+    h.addEventListener("pointermove", (e) => { if (y0 === null) return; dy = Math.max(0, e.clientY - y0); sh.style.transform = `translateY(${dy}px)`; });
+    h.addEventListener("pointerup", end); h.addEventListener("pointercancel", end);
+  });
+}
+bindSheet($("#bmSheet"), closeSheet);
+bindSheet($("#settings"), closeSettings);
 $("#vboard").onclick = async () => {
   const it = curItem(); if (!it) return;
   if (!S.bmIds.has(it.id)) await toggleBookmark(it);
@@ -724,8 +943,10 @@ $("#bmForm").addEventListener("submit", async (e) => {
 
 // ---------- AI 이미지 설명 (비슷한 이미지 보강 / 사진으로 검색) ----------
 // 작게 줄인 JPEG 한 장을 서버(Workers AI)로 보내 핵심 영어 단어를 받습니다. 못 쓰는 서버면 이번 접속 동안 다시 시도하지 않습니다.
-let capOff = false;
+let capOff = false, capFails = 0, capPause = 0;
 const captionOn = () => !capOff && !!cfg?.caption && LS.get("cap", true) && !S.offline;
+// 자동으로 쓸 때는 연달아 실패하면 10분 쉽니다 (한도 초과·모델 오류일 때 비슷한 이미지 검색이 계속 늦어지지 않게)
+const captionAuto = () => captionOn() && Date.now() >= capPause;
 function shrink(blob, max = 384) {
   return new Promise((res, rej) => {
     const u = URL.createObjectURL(blob), im = new Image();
@@ -747,8 +968,14 @@ async function captionOfBlob(blob) {
     const r = await (await api("/api/caption", { method: "POST", body: small, headers: { "content-type": "image/jpeg" }, signal: AbortSignal.timeout(20000) })).json();
     if (r.error === "unavailable") { capOff = true; return { q: "", why: "off" }; }
     if (r.blocked) return { q: "", why: "blocked" };
-    return r.q ? { q: r.q } : { q: "", why: "fail" };
-  } catch (e) { return { q: "", why: e.message === "auth" ? "auth" : "fail" }; }
+    if (r.q) { capFails = 0; return { q: r.q }; }
+    if (++capFails >= 3) capPause = Date.now() + 10 * 60000;
+    return { q: "", why: "fail" };
+  } catch (e) {
+    if (e.message === "auth") return { q: "", why: "auth" };
+    if (++capFails >= 3) capPause = Date.now() + 10 * 60000;
+    return { q: "", why: "fail" };
+  }
 }
 async function captionOfItem(it) {
   try { return await captionOfBlob(it.blob || (await fetchBlob(`/api/img?u=${enc(it.thumb)}`))); } catch { return { q: "", why: "fail" }; }
@@ -781,7 +1008,7 @@ function renderSettings() {
   locked.forEach((s) => { const d = document.createElement("div"); d.className = "lockrow"; d.textContent = s.name + " "; const sm = document.createElement("small"); sm.textContent = `${s.desc ? s.desc + " · " : ""}변수 이름: ${s.need.join(", ")}`; d.appendChild(sm); lb.appendChild(d); });
 }
 $("#gear").onclick = () => { renderSettings(); $("#settings").hidden = false; };
-$("#closeSet").onclick = () => { $("#settings").hidden = true; };
+$("#closeSet").onclick = closeSettings;
 $("#sBlur").onchange = (e) => {
   if (!e.target.checked && !confirm("선정적일 수 있는 이미지가 그대로 보여요. 블러를 해제할까요?")) { e.target.checked = true; return; }
   S.blur = e.target.checked; LS.set("blur", S.blur); document.body.classList.toggle("noblur", !S.blur);
@@ -789,7 +1016,7 @@ $("#sBlur").onchange = (e) => {
 };
 $("#sMl").onchange = (e) => { S.ml = e.target.checked; LS.set("ml", S.ml); toast("다음 검색부터 적용돼요"); };
 $("#sCap").onchange = (e) => { LS.set("cap", e.target.checked); capOff = false; toast(e.target.checked ? "AI 설명을 켰어요" : "AI 설명을 껐어요"); };
-$("#logout").onclick = () => { $("#settings").hidden = true; LS.set("pass", ""); S.pass = ""; showLogin(); };
+$("#logout").onclick = () => { closeSettings(); LS.set("pass", ""); S.pass = ""; showLogin(); };
 
 const blobToDataURL = (b) => new Promise((res) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => res(null); r.readAsDataURL(b); });
 $("#expBm").onclick = async () => {

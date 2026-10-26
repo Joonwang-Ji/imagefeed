@@ -310,26 +310,91 @@ async function caption(req, env) {
   return json({ error: "unavailable", detail: last });
 }
 
-// ---------- 트렌드 (위키백과 많이 본 문서, 키 불필요) ----------
-const TREND_LANGS = ["ko", "en", "ja", "zh", "de", "fr", "es", "pt", "it", "ru", "id", "vi", "th", "tr"];
-const TREND_SKIP = /^(Main_Page|대문|メインページ|Wikipedia|위키백과|Hauptseite|Accueil|Portada|Pagina_principale|Заглавная_страница|Halaman_Utama|Trang_Chính|หน้าหลัก|Ana_Sayfa|Wikipédia|Página_principal|Pagina_principală|Special|特別|特殊|Spezial|Spécial|Especial|Speciale|Служебная|Khusus|Đặc_biệt|พิเศษ|Özel)/;
-async function trends(u) {
-  const lang = u.searchParams.get("lang") || "ko";
-  if (!TREND_LANGS.includes(lang)) return json({ error: "lang" }, 400);
+// ---------- 트렌드: 단어 대신 이미지 ----------
+// 위키백과(한국어·영어)에서 많이 본 문서의 대표 사진(grp "news")과, Pixabay·Unsplash 키가 있으면 인기 사진(grp "pop")을 섞어 돌려줍니다.
+// 나라를 고르는 대신 한국어·영어 두 곳만 씁니다. (다른 언어는 제목을 읽기 어려워서)
+const TREND_SKIP = /^(Main_Page|대문|Wikipedia|위키백과|Special|특수|Portal|포털|Help|도움말|Category|분류|File|파일)/;
+const rr = (...lists) => { // 여러 목록을 번갈아 한 줄로 섞기
+  const out = [];
+  for (let i = 0; lists.some((l) => i < l.length); i++) for (const l of lists) if (i < l.length) out.push(l[i]);
+  return out;
+};
+async function wikiTrend(lang) {
   for (let back = 2; back <= 4; back++) {
     const d = new Date(Date.now() - back * 86400000);
     const y = d.getUTCFullYear(), m = String(d.getUTCMonth() + 1).padStart(2, "0"), day = String(d.getUTCDate()).padStart(2, "0");
+    let titles;
     try {
       const j = await getJson(`https://wikimedia.org/api/rest_v1/metrics/pageviews/top/${lang}.wikipedia/all-access/${y}/${m}/${day}`, {}, 3600);
       const arts = j.items?.[0]?.articles || [];
-      const list = arts
-        .map((a) => String(a.article || "").replace(/_/g, " "))
-        .filter((t, i) => t && !TREND_SKIP.test(arts[i].article) && !t.includes(":") && !hardBlocked(t) && !isAdult(t))
+      titles = arts
+        .filter((a) => a.article && !TREND_SKIP.test(a.article))
+        .map((a) => String(a.article).replace(/_/g, " "))
+        .filter((t) => !t.includes(":") && !t.includes("|") && !hardBlocked(t) && !isAdult(t))
         .slice(0, 40);
-      if (list.length) return json({ lang, date: `${y}-${m}-${day}`, items: list });
-    } catch { /* 다음 날짜 시도 */ }
+    } catch { continue; } // 아직 없는 날짜면 하루 전 것을 시도
+    if (!titles.length) continue;
+    // 한 번의 호출로 문서 40개의 대표 사진을 받아 옵니다.
+    let q;
+    try {
+      q = (await getJson(
+        `https://${lang}.wikipedia.org/w/api.php?action=query&format=json&prop=pageimages&piprop=thumbnail|original&pithumbsize=640&pilimit=50&redirects=1&titles=${enc(titles.join("|"))}`,
+        {}, 3600)).query || {};
+    } catch { continue; }
+    const norm = new Map((q.normalized || []).map((n) => [n.from, n.to]));
+    const redir = new Map((q.redirects || []).map((r) => [r.from, r.to]));
+    const rank = new Map();
+    titles.forEach((t, i) => { const f = redir.get(norm.get(t) || t) || norm.get(t) || t; if (!rank.has(f)) rank.set(f, i); });
+    const items = Object.values(q.pages || {})
+      .filter((p) => p.thumbnail?.source && !/\.svg(\.png)?$/i.test(p.original?.source || p.thumbnail.source)) // 지도·깃발·로고(svg)는 제외
+      .sort((a, b) => (rank.get(a.title) ?? 99) - (rank.get(b.title) ?? 99))
+      .map((p) => {
+        const big = p.original?.source;
+        return {
+          title: clean(p.title), thumb: p.thumbnail.source, full: big && /\.(jpe?g|png|webp)$/i.test(big) ? big : p.thumbnail.source,
+          page: `https://${lang}.wikipedia.org/wiki/${enc(p.title.replace(/ /g, "_"))}`,
+          w: num(p.thumbnail.width), h: num(p.thumbnail.height), tags: [], src: "wiki", grp: "news", adult: false,
+        };
+      });
+    if (items.length) return { date: `${y}-${m}-${day}`, items };
   }
-  return json({ error: "no data", items: [] }, 502);
+  return null;
+}
+// 키가 등록된 사진 소스의 인기·추천 사진 (날짜에 따라 페이지를 바꿔서 매일 조금씩 다르게)
+async function popularPhotos(env, day) {
+  const out = [];
+  if (env.PIXABAY_KEY) {
+    try {
+      const d = await getJson(`https://pixabay.com/api/?key=${env.PIXABAY_KEY}&image_type=photo&editors_choice=true&safesearch=true&order=popular&per_page=30&page=${1 + (day % 4)}`, {}, 1800);
+      out.push((d.hits || []).map((it) => ({
+        title: "", thumb: it.webformatURL, full: it.largeImageURL || it.webformatURL, page: it.pageURL, w: num(it.imageWidth), h: num(it.imageHeight),
+        tags: String(it.tags || "").split(",").map((t) => t.trim()).filter(Boolean), src: "pixabay", grp: "pop",
+      })));
+    } catch { /* 이 소스는 건너뜀 */ }
+  }
+  if (env.UNSPLASH_KEY) {
+    try {
+      const d = await getJson(`https://api.unsplash.com/photos?order_by=popular&per_page=20&page=${1 + (day % 3)}`,
+        { Authorization: `Client-ID ${env.UNSPLASH_KEY}`, "Accept-Version": "v1" }, 1800);
+      out.push((Array.isArray(d) ? d : []).map((it) => ({
+        title: clean(it.alt_description || it.description || ""), thumb: it.urls?.small, full: it.urls?.regular, page: it.links?.html,
+        w: num(it.width), h: num(it.height), tags: (it.tags || []).map((t) => t.title).filter(Boolean), src: "unsplash", grp: "pop",
+      })));
+    } catch { /* 이 소스는 건너뜀 */ }
+  }
+  return rr(...out);
+}
+async function trends(env) {
+  const day = Math.floor(Date.now() / 86400000);
+  const [ko, en, pop] = await Promise.all([wikiTrend("ko").catch(() => null), wikiTrend("en").catch(() => null), popularPhotos(env, day).catch(() => [])]);
+  const seen = new Set();
+  const items = rr(ko?.items || [], en?.items || [], pop)
+    .filter((it) => it.thumb && it.full && !hardBlocked(`${it.title} ${it.tags.join(" ")}`))
+    .map((it) => ({ ...it, thumb: https(it.thumb), full: https(it.full), page: https(it.page || it.full), adult: it.adult || isAdult(`${it.title} ${it.tags.join(" ")}`) }))
+    .filter((it) => (seen.has(it.thumb) ? false : seen.add(it.thumb)))
+    .slice(0, 100);
+  if (!items.length) return json({ error: "no data", items: [] }, 502);
+  return json({ date: ko?.date || en?.date || "", items });
 }
 
 // ---------- 이미지 중계 ----------
@@ -392,7 +457,7 @@ export default {
 
     if (u.pathname === "/api/img") return proxyImage(u);
 
-    if (u.pathname === "/api/trends") return trends(u);
+    if (u.pathname === "/api/trends") return trends(env);
 
     if (u.pathname === "/api/search") {
       const src = SOURCES.find((s) => s.id === u.searchParams.get("src"));
