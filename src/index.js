@@ -68,12 +68,10 @@ const https = (u = "") => String(u).replace(/^http:\/\//i, "https://");
 const COLOR = {
   pixabay: { red: "red", orange: "orange", yellow: "yellow", green: "green", teal: "turquoise", blue: "blue", purple: "lilac", pink: "pink", brown: "brown", black: "black", white: "white", gray: "gray" },
   unsplash: { red: "red", orange: "orange", yellow: "yellow", green: "green", teal: "teal", blue: "blue", purple: "purple", pink: "magenta", black: "black", white: "white", gray: "black_and_white" },
-  pexels: { red: "red", orange: "orange", yellow: "yellow", green: "green", teal: "turquoise", blue: "blue", purple: "violet", pink: "pink", brown: "brown", black: "black", white: "white", gray: "gray" },
 };
 const ORIENT = {
   pixabay: { v: "vertical", h: "horizontal" },
   unsplash: { v: "portrait", h: "landscape", s: "squarish" },
-  pexels: { v: "portrait", h: "landscape", s: "square" },
 };
 
 // ---------- 소스 정의 ----------
@@ -106,10 +104,15 @@ const SOURCES = [
       const d = await getJson(
         `https://dapi.kakao.com/v2/search/image?query=${enc(q)}&sort=accuracy&page=${page}&size=40`,
         { Authorization: `KakaoAK ${e.KAKAO_KEY}` });
-      return (d.documents || []).map((it) => ({
-        title: clean(it.display_sitename || ""), thumb: it.thumbnail_url, full: it.image_url,
-        page: it.doc_url || it.image_url, w: num(it.width), h: num(it.height), tags: [],
-      }));
+      // thumbnail_url 은 아주 작아서 흐리게 보입니다. 원본(image_url)이 너무 크지 않을 때는 원본을 쓰고,
+      // 안 열리면 화면이 작은 썸네일(alt)로 한 번 더 시도합니다.
+      return (d.documents || []).map((it) => {
+        const w = num(it.width), h = num(it.height), small = !w || !h || w * h <= 6e6;
+        return {
+          title: clean(it.display_sitename || ""), thumb: small && it.image_url ? it.image_url : it.thumbnail_url, alt: it.thumbnail_url, full: it.image_url,
+          page: it.doc_url || it.image_url, w, h, tags: [],
+        };
+      });
     },
   },
   {
@@ -138,19 +141,6 @@ const SOURCES = [
         title: clean(it.alt_description || it.description || ""), thumb: it.urls?.small, full: it.urls?.regular,
         page: it.links?.html, w: num(it.width), h: num(it.height),
         tags: (it.tags || []).map((t) => t.title).filter(Boolean),
-      }));
-    },
-  },
-  {
-    id: "pexels", name: "Pexels", w: 0.9, en: true, colors: true, desc: "일반 사진 (색상 필터)", need: ["PEXELS_KEY"],
-    ok: (e) => e.PEXELS_KEY,
-    async run(q, page, safe, e, o = {}) {
-      const d = await getJson(
-        `https://api.pexels.com/v1/search?query=${enc(q)}&per_page=40&page=${page}` + extra("pexels", "color", "orientation", o),
-        { Authorization: e.PEXELS_KEY }, 900);
-      return (d.photos || []).map((it) => ({
-        title: clean(it.alt || ""), thumb: it.src?.medium, full: it.src?.large2x || it.src?.large,
-        page: it.url, w: num(it.width), h: num(it.height), tags: [],
       }));
     },
   },
@@ -189,35 +179,8 @@ const SOURCES = [
     },
   },
 
-  // ---------- 키 없이 쓰는 기관 소스 (미술관·박물관·우주·역사 사진) ----------
+  // ---------- 키 없이 쓰는 기관 소스 (미술관·박물관·우주) ----------
   // 응답 구조는 각 기관의 공개 문서를 기준으로 작성했고, 실제 호출은 배포 후 처음 확인하게 됩니다.
-  {
-    id: "met", name: "Met 미술관", w: 0.7, en: true, desc: "미국 · 미술·유물 (공개 이미지)",
-    ok: () => true,
-    async run(q, page) {
-      const per = 12, base = "https://collectionapi.metmuseum.org/public/collection/v1";
-      // 검색 결과 ID 목록이 수천~수만 개라 통째로 JSON 파싱하면 서버 CPU 한도(무료 10ms)를 넘길 수 있어,
-      // 필요한 앞부분만 잘라서 숫자를 뽑습니다.
-      let txt;
-      try { txt = await (await getRaw(`${base}/search?hasImages=true&q=${enc(q)}`, {}, 3600)).text(); }
-      catch (e) { e.message += " · 검색 단계"; throw e; } // 어느 단계에서 막혔는지 ⚠ 에 표시
-      const a = txt.indexOf("[");
-      if (a < 0) return [];
-      const want = page * per, lim = a + 1 + want * 9 + 20;
-      let ids = (txt.slice(a + 1, lim).match(/\d+/g) || []).map(Number);
-      if (lim < txt.length) ids.pop(); // 잘린 마지막 숫자 버림
-      ids = ids.slice((page - 1) * per, want);
-      if (!ids.length) return [];
-      const errs = [];
-      const objs = await Promise.all(ids.map((id) => getJson(`${base}/objects/${id}`, {}, 86400).catch((e) => { errs.push(e); return null; })));
-      const good = objs.filter((o) => o && o.primaryImageSmall);
-      if (!good.length && errs.length === ids.length) { errs[0].message += " · 작품 조회 단계"; throw errs[0]; }
-      return good.map((o) => ({
-        title: clean(o.title || o.objectName || ""), thumb: o.primaryImageSmall, full: o.primaryImage || o.primaryImageSmall,
-        page: o.objectURL, w: 0, h: 0, tags: (o.tags || []).map((t) => t.term).filter(Boolean),
-      }));
-    },
-  },
   {
     id: "artic", name: "시카고 미술관", w: 0.7, en: true, desc: "미국 · 미술 (공개 이미지)",
     ok: () => true,
@@ -283,26 +246,6 @@ const SOURCES = [
           title: clean(m.title || ""), thumb: th, full: th.replace(/~(thumb|small|medium)\.(\w+)$/i, "~large.$2"),
           page: `https://images.nasa.gov/details/${enc(m.nasa_id || "")}`, w: 0, h: 0,
           tags: (m.keywords || []).map(String).slice(0, 12),
-        };
-      }).filter(Boolean);
-    },
-  },
-  {
-    id: "loc", name: "미국 의회도서관", w: 0.5, en: true, desc: "미국 · 역사 사진·판화 (분당 20회 제한이 엄격해서 기본은 꺼짐)",
-    ok: () => true,
-    async run(q, page) {
-      let d;
-      try { d = await getJson(`https://www.loc.gov/photos/?q=${enc(q)}&fo=json&c=24&sp=${page}`, {}, 3600); }
-      catch (e) { if (e.status === 404) return []; throw e; } // 결과 없음이 404로 옴
-      const px = (u) => Number((String(u).match(/(\d{2,4})px/) || [])[1]) || 0;
-      return (d.results || []).map((r) => {
-        const iu = (Array.isArray(r.image_url) ? r.image_url : []).filter((u) => u && !/grp\.gif$/.test(u));
-        const sorted = [...iu].sort((a, b) => px(a) - px(b));
-        const thumb = sorted.find((u) => px(u) >= 300) || r.item?.service_medium || sorted[sorted.length - 1];
-        if (!thumb) return null;
-        return {
-          title: clean(String(r.title || r.item?.title || "").replace(/^\[|\]$/g, "")), thumb, full: sorted[sorted.length - 1] || thumb,
-          page: r.url || r.item?.link || r.id || thumb, w: 0, h: 0, tags: (r.subject || []).map(String).slice(0, 12),
         };
       }).filter(Boolean);
     },

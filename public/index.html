@@ -20,21 +20,27 @@
   <div class="hrow">
     <button id="homeBtn" class="ico" aria-label="처음으로" title="처음 화면으로">⌂</button>
     <form id="sf" autocomplete="off">
-      <input id="q" type="search" placeholder="이미지 검색 (예: 따뜻한 카페 인테리어)" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="search" name="nq">
+      <input id="q" type="search" placeholder="어떤 이미지를 찾을까요?" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="search" name="nq">
       <button type="submit" class="pri">검색</button>
     </form>
   </div>
   <div class="hrow tabs">
-    <nav>
+    <nav class="seg">
       <button id="tabFeed" class="on">피드</button>
       <button id="tabTr">트렌드</button>
       <button id="tabBm">북마크 <span id="bmc"></span></button>
     </nav>
     <span class="grow"></span>
-    <button id="filterBtn" class="sm">필터 <span id="filterBadge"></span></button>
-    <button id="gear" class="sm" aria-label="설정">설정</button>
+    <button id="srcBtn" class="tool">소스 <span id="srcBadge" class="badge"></span></button>
+    <button id="filterBtn" class="tool">필터 <span id="filterBadge" class="badge"></span></button>
+    <button id="gear" class="tool" aria-label="설정">⚙</button>
   </div>
-  <div id="filters" hidden>
+  <div id="srcPanel" class="panel" hidden>
+    <div class="phead"><b>검색할 소스</b><span class="grow"></span><button id="srcAll" class="sm">전체 보기</button></div>
+    <div id="stat"></div>
+    <p id="srcNote" class="note"></p>
+  </div>
+  <div id="filters" class="panel" hidden>
     <div class="frow"><span class="lbl">방향</span>
       <div id="orient"><button data-o="" class="on">전체</button><button data-o="v">세로</button><button data-o="h">가로</button><button data-o="s">정사각</button></div>
     </div>
@@ -43,7 +49,6 @@
     <button id="filterReset" class="sm">필터 초기화</button>
   </div>
   <div id="chipsWrap" hidden><span class="lbl" id="chipsLbl">관련 주제</span><div id="chips"></div></div>
-  <div id="stat"></div>
 </header>
 
 <main>

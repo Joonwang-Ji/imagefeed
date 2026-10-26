@@ -33,7 +33,7 @@ const WHY = {
 // ---------- 상태 (검색어는 저장하지 않음) ----------
 // 전역 설정만 S 에 두고, 검색 한 번의 상태(검색어·결과·페이지)는 Feed 객체가 따로 가집니다.
 const S = {
-  pass: LS.get("pass", ""), blur: LS.get("blur", true), ml: LS.get("ml", true), off: new Set(LS.get("off", [])),
+  pass: LS.get("pass", ""), blur: LS.get("blur", true), ml: LS.get("ml", true), off: new Set(LS.get("off", [])), only: new Set(),
   color: "", orient: "", board: "__all", view: "feed", list: [], bmIds: new Set(),
 };
 let cfg = null;
@@ -199,7 +199,12 @@ class Feed {
     Object.assign(this, { q: "", qe: "", sl: "", page: 0, loading: false, ended: false, blocked: false,
       srcEnded: new Set(), stat: {}, items: [], keys: new Map(), tags: new Map(), trP: Promise.resolve() });
   }
-  sources() { return (cfg?.sources || []).filter((s) => !S.off.has(s.id) && (!this.o.filters || !S.color || s.colors)); }
+  sources() {
+    const on = (cfg?.sources || []).filter((s) => !S.off.has(s.id));
+    // 소스 패널에서 고른 소스만 검색 (메인 피드만 해당). 고른 소스가 꺼져 있으면 전체로 되돌립니다.
+    const pickd = this.o.filters && S.only.size ? on.filter((s) => S.only.has(s.id)) : on;
+    return (pickd.length ? pickd : on).filter((s) => !this.o.filters || !S.color || s.colors);
+  }
   begin(q, sl = "") {
     this.q = this.qe = q;
     this.sl = sl || (hasHangul(q) ? "ko" : "");
@@ -286,7 +291,7 @@ async function startSearch(q, opts = {}) {
   if (V.stack.length) closeViewer();
   setView("feed");
   M.reset(); M.begin(q, opts.sl);
-  $("#q").value = q; $("#q").blur(); $("#home").hidden = true; $("#filters").hidden = true;
+  $("#q").value = q; $("#q").blur(); $("#home").hidden = true; $("#filters").hidden = true; if (!opts.keep) $("#srcPanel").hidden = true;
   feedM.clear(); feedM.pred = predOrient(); markFilters(); $("#msg").hidden = true; $("#msg").textContent = ""; renderChips(); renderStat(); scrollTo(0, 0);
   await M.next();
 }
@@ -304,24 +309,36 @@ function renderChips() {
 }
 function renderStat() {
   const box = $("#stat"); box.textContent = "";
-  if (!M.q) return;
-  M.sources().forEach((s) => {
-    const st = M.stat[s.id], bad = !!st?.err;
-    const el = document.createElement(bad ? "button" : "span");
-    el.className = "st" + (bad ? " bad" : "");
-    el.textContent = st ? `${s.name} ${bad ? "⚠" : st.n}` : `${s.name} …`;
-    if (bad) el.onclick = () => toast(`${s.name}: ${WHY[st.err] || WHY.error}${st.detail ? ` (${st.detail})` : ""}`, 7000);
-    box.appendChild(el);
+  const all = (cfg?.sources || []).filter((s) => !S.off.has(s.id));
+  let bads = 0;
+  all.forEach((s) => {
+    const st = M.q ? M.stat[s.id] : null, bad = !!st?.err; if (bad) bads++;
+    const w = document.createElement("span"); w.className = "sc" + (S.only.has(s.id) ? " on" : "") + (bad ? " bad" : "");
+    const b = document.createElement("button"); b.className = "sel";
+    b.textContent = !M.q ? s.name : !st ? `${s.name} …` : bad ? s.name : `${s.name} ${st.n}`;
+    b.onclick = () => { S.only.has(s.id) ? S.only.delete(s.id) : S.only.add(s.id); renderStat(); queueRerun(); };
+    w.appendChild(b);
+    if (bad) {
+      const x = document.createElement("button"); x.className = "warn"; x.textContent = "⚠"; x.setAttribute("aria-label", "이유 보기");
+      x.onclick = () => toast(`${s.name}: ${WHY[st.err] || WHY.error}${st.detail ? ` (${st.detail})` : ""}`, 7000);
+      w.appendChild(x);
+    }
+    box.appendChild(w);
   });
   if (aiState === "loading") { const el = document.createElement("span"); el.className = "st"; el.textContent = "AI 검사 준비 중…"; box.appendChild(el); }
+  $("#srcBadge").textContent = S.only.size ? String(S.only.size) : bads ? "⚠" : "";
+  $("#srcBadge").classList.toggle("warnb", !S.only.size && !!bads);
+  $("#srcNote").textContent = S.only.size ? "선택한 소스에서만 검색해요. 다시 누르면 선택이 풀려요." : "지금은 켜져 있는 모든 소스에서 검색해요. 소스 이름을 누르면 그 소스에서만 찾아요.";
 }
+let rerunTimer = null;
+function queueRerun() { clearTimeout(rerunTimer); rerunTimer = setTimeout(() => { if (M.q) startSearch(M.q, { sl: M.sl, keep: true }); }, 450); }
 function showMsg(t) { const m = $("#msg"); m.textContent = t; m.hidden = false; }
 function checkEmpty() {
   if (M.items.length) return;
   const act = M.sources();
-  if (S.color && !act.length) return showMsg("색상 필터는 Pixabay · Unsplash · Pexels (키 필요)에서만 동작해요. 필터에서 색상을 해제해 주세요.");
+  if (S.color && !act.length) return showMsg("색상 필터는 Pixabay · Unsplash (키 필요)에서만 동작해요. 필터에서 색상을 해제해 주세요.");
   const allErr = act.length && act.every((s) => M.stat[s.id]?.err);
-  if (M.ended || allErr) showMsg(!act.length ? "켜져 있는 검색 소스가 없어요. 설정에서 켜 주세요." : allErr ? "검색 소스에 연결하지 못했어요. 위쪽 소스 이름의 ⚠ 를 눌러 이유를 확인해 보세요." : "결과가 없어요. 다른 말로 검색해 보세요.");
+  if (M.ended || allErr) showMsg(!act.length ? "켜져 있는 검색 소스가 없어요. 설정에서 켜 주세요." : allErr ? "검색 소스에 연결하지 못했어요. 상단의 [소스] 버튼에서 ⚠ 를 눌러 이유를 확인해 보세요." : "결과가 없어요. 다른 말로 검색해 보세요.");
 }
 const sio = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting) && S.view === "feed") M.next(); }, { rootMargin: "1200px 0px" });
 sio.observe($("#sentinel"));
@@ -335,8 +352,8 @@ function renderHome() {
 function goHome() {
   if (V.stack.length) closeViewer();
   M.reset(); feedM.clear(); feedM.pred = null;
-  S.color = ""; S.orient = ""; markFilters();
-  $("#q").value = ""; $("#q").blur(); $("#msg").hidden = true; $("#msg").textContent = ""; $("#filters").hidden = true;
+  S.color = ""; S.orient = ""; S.only.clear(); markFilters();
+  $("#q").value = ""; $("#q").blur(); $("#msg").hidden = true; $("#msg").textContent = ""; $("#filters").hidden = true; $("#srcPanel").hidden = true;
   setView("feed"); renderChips(); renderStat(); renderHome(); scrollTo(0, 0);
 }
 $("#homeBtn").onclick = goHome;
@@ -365,7 +382,7 @@ function setView(v) {
   S.view = v;
   $("#tabFeed").classList.toggle("on", v === "feed"); $("#tabBm").classList.toggle("on", v === "bm"); $("#tabTr").classList.toggle("on", v === "tr");
   $("#grid").hidden = v !== "feed"; $("#bmgrid").hidden = v !== "bm"; $("#trends").hidden = v !== "tr";
-  $("#stat").hidden = v !== "feed"; $("#filterBtn").hidden = v !== "feed"; if (v !== "feed") $("#filters").hidden = true;
+  $("#srcBtn").hidden = v !== "feed"; $("#filterBtn").hidden = v !== "feed"; if (v !== "feed") { $("#filters").hidden = true; $("#srcPanel").hidden = true; }
   $("#home").hidden = !(v === "feed" && !M.q);
   if (v === "feed") { feedM.check(); renderChips(); const m = $("#msg"); m.hidden = !(M.q && !M.items.length && m.textContent); }
   else if (v === "tr") { $("#msg").hidden = true; renderChips(); loadTrends(); }
@@ -565,19 +582,21 @@ function markFilters() {
   $("#colors").classList.toggle("dis", !cs.length);
   $("#colorNote").textContent = !cfg ? "" : cs.length
     ? `색상은 ${cs.map((s) => s.name).join("·")}에서만 적용돼요. 색상을 고르면 다른 소스는 그 검색에서 빠져요.`
-    : "색상 필터는 Pixabay·Unsplash·Pexels 키를 등록해야 쓸 수 있어요. (설정 → 키 안내) 방향 필터는 지금도 돼요.";
+    : "색상 필터는 Pixabay·Unsplash 키를 등록해야 쓸 수 있어요. (설정 → 키 안내) 방향 필터는 지금도 돼요.";
 }
 const rerun = () => { markFilters(); if (M.q) startSearch(M.q, { sl: M.sl }); else feedM.pred = predOrient(); };
 Object.entries(COLORS).forEach(([k, c]) => {
   const b = document.createElement("button"); b.className = "dot"; b.style.background = c; b.dataset.c = k; b.setAttribute("aria-label", k);
   b.onclick = () => {
-    if (!colorSources().length) return toast("색상 필터는 Pixabay·Unsplash·Pexels 키가 있어야 해요. 설정에서 안내를 확인하세요.", 4500);
+    if (!colorSources().length) return toast("색상 필터는 Pixabay·Unsplash 키가 있어야 해요. 설정에서 안내를 확인하세요.", 4500);
     S.color = S.color === k ? "" : k; rerun();
   };
   $("#colors").appendChild(b);
 });
 document.querySelectorAll("#orient button").forEach((b) => { b.onclick = () => { S.orient = b.dataset.o; rerun(); }; });
-$("#filterBtn").onclick = () => { markFilters(); $("#filters").hidden = !$("#filters").hidden; };
+$("#filterBtn").onclick = () => { markFilters(); $("#srcPanel").hidden = true; $("#filters").hidden = !$("#filters").hidden; };
+$("#srcBtn").onclick = () => { renderStat(); $("#filters").hidden = true; $("#srcPanel").hidden = !$("#srcPanel").hidden; };
+$("#srcAll").onclick = () => { S.only.clear(); renderStat(); queueRerun(); };
 $("#filterReset").onclick = () => { S.color = ""; S.orient = ""; rerun(); };
 
 // ---------- 보드 ----------
@@ -600,7 +619,7 @@ function renderSettings() {
   (cfg?.sources || []).forEach((s) => {
     const l = document.createElement("label"); l.className = "row src";
     const c = document.createElement("input"); c.type = "checkbox"; c.checked = !S.off.has(s.id);
-    c.onchange = () => { c.checked ? S.off.delete(s.id) : S.off.add(s.id); LS.set("off", [...S.off]); markFilters(); };
+    c.onchange = () => { c.checked ? S.off.delete(s.id) : S.off.add(s.id); LS.set("off", [...S.off]); markFilters(); renderStat(); };
     const t = document.createElement("span"); t.textContent = s.name;
     if (s.desc) { const d = document.createElement("small"); d.textContent = s.desc + (s.keyless ? " · 키 불필요" : ""); t.appendChild(d); }
     l.append(c, t); box.appendChild(l);
@@ -648,10 +667,8 @@ async function boot() {
   try { cfg = await (await api("/api/config")).json(); }
   catch (e) { if (e.message !== "auth") showLogin("서버에 연결하지 못했어요. 잠시 후 다시 시도해 주세요."); return; }
   $("#login").hidden = true;
-  // 미국 의회도서관은 분당 20회 제한을 넘기면 1시간 차단되므로 처음에는 꺼 둡니다 (설정에서 켤 수 있음)
-  if (!LS.get("locInit", false)) { S.off.add("loc"); LS.set("off", [...S.off]); LS.set("locInit", true); }
   await DB.open(); S.bmIds = new Set((await DB.all()).map((x) => x.id)); updateCount();
-  markFilters(); setView("feed"); renderHome();
+  markFilters(); setView("feed"); renderHome(); renderStat();
   // AI 검사 모델은 접속 직후에 내려받지 않고, 첫 이미지를 검사할 때 준비합니다 (첫 화면이 굳는 문제 완화)
 }
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
