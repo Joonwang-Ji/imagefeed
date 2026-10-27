@@ -487,10 +487,25 @@ async function datalabTopics(env, now) {
 
 // ---- 실제 인기 검색어: 구글 트렌드(한국) 일일 인기 검색어 RSS ----
 // 40개 후보를 직접 정하는 대신, 지금 사람들이 실제로 많이 찾는 말을 가져옵니다. 다만 인기 검색어는 연예인·경기 결과·사건 소식이 많아서
-//  1) 사건·정치·경기 같은 뉴스 제목이 붙은 말은 걸러내고(NEWSY),
-//  2) Workers AI 가 있으면 "이미지로 볼 만한 말"(장소·음식·동물·자연·행사·물건·취미)만 한 번 더 고릅니다.
+//  1) 사건·사고·정치·경기 결과·가십 같은 뉴스 제목이 붙은 말은 걸러내고(NEWSY — 연예·드라마·유행 자체는 통과),
+//  2) Workers AI 가 있으면 "이미지로 볼 만한 말"(장소·음식·동물·자연·행사·물건·취미·연예·콘텐츠)만 한 번 더 고릅니다.
 // 1시간 캐시. 못 가져오면(차단·형식 변경) 빈 목록을 주고, 화면은 기존 방식(데이터랩·계절 주제)으로 채웁니다.
-const NEWSY = /사망|숨져|사고|체포|구속|검찰|경찰|재판|판결|선거|대통령|의원|정당|국회|탄핵|총격|테러|전쟁|미사일|확진|감염|실종|화재|폭행|살인|논란|사과|이혼|열애|결별|승|패배|우승|득점|골|홈런|경기|리그|주가|환율|코스피|금리|폭락|급등|배우|가수|아이돌|감독|선수/;
+const NEWSY = new RegExp([
+  // 사건·사고·재난 ("사고력", "폭발적 인기" 같은 평범한 말은 걸리지 않게 뒤를 확인)
+  "사망|숨져|숨진|사고(?!력|방식|팔)|체포|구속|실종|화재|폭행|살인|총격|테러|폭발(?!적)|붕괴|추락|침몰|산불|지진|확진|감염",
+  // 수사·재판
+  "검찰|경찰|재판|판결|기소|영장|피의자|용의자|피해자|혐의|압수수색|특검",
+  // 정치 ("국회의사당 벚꽃", "단풍 장관" 같은 풍경은 남김)
+  "정치|선거|대통령|국회(?!의사당)|정당(?!한|성|화|방위)|여당|야당|[가-힣]부\\s?장관|장관\\s?(?:후보|임명|지명|사퇴)|총리|탄핵|계엄|청문회|국정감사",
+  // 전쟁
+  "전쟁|미사일|파병",
+  // 가십·논란 (연예·유행 자체는 허용하고, 사생활 가십과 사과·논란 기사만 뺌)
+  "논란|이혼|열애|결별|불륜|사과(?:했|문|하며|하는|하고)|공식\\s?사과|사과\\s?요구",
+  // 경기 결과 ("경기도", "경기장"은 남김)
+  "패배|우승|득점|홈런|연승|연패|결승|승리|경기(?![도장])",
+  // 금융
+  "주가|환율|코스피|금리|폭락|급등",
+].join("|"));
 function parseGoogleTrends(xml) {
   const out = [];
   for (const m of String(xml || "").matchAll(/<item>([\s\S]*?)<\/item>/g)) {
@@ -505,8 +520,9 @@ function parseGoogleTrends(xml) {
 async function aiPickVisual(env, rows) {
   if (!env.AI || env.TREND_AI === "off" || !rows.length) return null;
   const list = rows.map((r, i) => `${i}: ${r.label}${r.news[0] ? " (" + r.news[0].slice(0, 40) + ")" : ""}`).join("\n");
-  const sys = "You pick trending Korean search keywords that people would enjoy browsing as PICTURES: places, travel, food, drinks, animals, plants, nature, weather, seasonal events and holidays, products, fashion items, interiors, hobbies, art and design. " +
-    "Exclude: names of people (celebrities, athletes, politicians), sports match results, crime, accidents, politics, finance, lawsuits, gossip, anything violent or sexual. " +
+  const sys = "You pick trending Korean search keywords that people would enjoy browsing as PICTURES: places, travel, food and drink trends, animals, plants, nature, weather, seasonal events and holidays, products, fashion and beauty trends, interiors, hobbies, art and design, " +
+    "and entertainment (dramas, movies, shows, music, the actors and idols in them, memes and challenges). " +
+    "Exclude: politicians and political news, elections, crime (suspects, victims), accidents and disasters, sports match results, finance, lawsuits, scandals, breakups, divorces and gossip, death news, anything violent or sexual. " +
     'Reply with ONLY a JSON array of the chosen numbers, e.g. [0,3,7]. If none fit, reply [].';
   for (const model of [env.TR_MODEL, "@cf/meta/llama-3.1-8b-instruct", "@cf/meta/llama-3.2-3b-instruct"].filter(Boolean)) {
     try {

@@ -349,4 +349,32 @@ ok(CATS.every((c) => c[2].length >= 5), "each category has >= 5 sub topics");
   globalThis.fetch = base;
 }
 
+// ---- 14차: 뉴스 필터(NEWSY) 오탐 수정 + 연예·유행 허용 ----
+{
+  const item = (t, n) => `<item><title>${t}</title><ht:approx_traffic>1,000+</ht:approx_traffic><ht:news_item><ht:news_item_title>${n}</ht:news_item_title></ht:news_item></item>`;
+  const rows = [
+    ["골목 카페", "골목 카페 거리 인기", true], ["사과 농장", "사과 따기 체험 인기", true], ["승마 체험", "주말 승마 체험 인기", true],
+    ["단풍 장관", "설악산 단풍 장관", true], ["폭발적 디저트", "폭발적 인기 끄는 디저트", true], ["신작 드라마", "배우 김아무개 주연 새 드라마 인기", true],
+    ["아이돌 컴백", "아이돌 그룹 컴백 앨범 공개", true], ["경기도 단풍", "경기도 단풍 명소 인기", true],
+    ["국회의사당 벚꽃", "국회의사당 벚꽃길 개방", true],
+    ["대통령 연설", "대통령 국회 연설", false], ["고속도로 소식", "고속도로 추돌 사고 발생", false], ["야구 결과", "한국시리즈 우승 확정", false],
+    ["가수 소식", "가수 A 공식 사과", false], ["배우 소식", "배우 B 이혼 발표", false], ["여당 소식", "여당 대표 기자회견", false],
+  ];
+  const rss = `<?xml version="1.0"?><rss xmlns:ht="https://trends.google.com/trending/rss"><channel>${rows.map((r) => item(r[0], r[1])).join("")}</channel></rss>`;
+  const base = globalThis.fetch; caches.default.store.clear();
+  globalThis.fetch = async (url, opt) => { if (String(url).includes("trends.google.com")) return new Response(rss, { status: 200 }); return base(url, opt); };
+  const E4 = { ...env, NAVER_ID: "id", NAVER_SECRET: "sec", PIXABAY_KEY: "pk", UNSPLASH_KEY: "uk", KAKAO_KEY: "kk" };
+  const jr = await (await worker.fetch(req("/api/trends"), E4)).json();
+  const live = jr.topics.filter((t) => t.kind === "live").map((t) => t.q);
+  const wantIn = rows.filter((r) => r[2]).map((r) => r[0]), wantOut = rows.filter((r) => !r[2]).map((r) => r[0]);
+  ok(wantIn.every((q) => live.includes(q)), "ordinary words are no longer filtered (골목·사과·승마·장관·폭발적·경기도): missing " + wantIn.filter((q) => !live.includes(q)));
+  ok(live.includes("신작 드라마") && live.includes("아이돌 컴백"), "entertainment and idol topics are allowed");
+  ok(!wantOut.some((q) => live.includes(q)), "politics, accidents, sports results, apology/divorce gossip stay filtered: " + wantOut.filter((q) => live.includes(q)));
+  // AI 에 보내는 안내문: 연예는 허용, 정치·사건은 제외
+  caches.default.store.clear(); let sys = "";
+  await worker.fetch(req("/api/trends"), { ...E4, AI: { run: async (m, b) => { sys = b.messages[0].content; return { response: "[0]" }; } } });
+  ok(/entertainment/i.test(sys) && /politicians/i.test(sys) && !/names of people/i.test(sys), "AI prompt allows entertainment, excludes politics/crime/gossip");
+  globalThis.fetch = base;
+}
+
 console.log(fail ? `\n${fail} failed` : "\nall passed"); process.exit(fail ? 1 : 0);
