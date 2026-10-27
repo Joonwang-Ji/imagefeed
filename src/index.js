@@ -166,20 +166,28 @@ const SOURCES = [
   {
     id: "wikimedia", name: "Wikimedia", w: 0.5, en: true, desc: "위키백과 이미지 저장소 (장소·인물·역사)",
     ok: () => true,
-    async run(q, page) {
+    async run(q, page, safe, e, o = {}) {
       const off = (page - 1) * 30;
-      const d = await getJson(
-        `https://commons.wikimedia.org/w/api.php?action=query&format=json&generator=search&gsrnamespace=6&gsrlimit=30&gsroffset=${off}` +
-        `&gsrsearch=${enc(q + " filetype:bitmap")}&prop=imageinfo&iiprop=url|size|mime&iiurlwidth=480`, {}, 3600);
-      const pages = Object.values(d.query?.pages || {}).sort((a, b) => (a.index || 0) - (b.index || 0));
-      return pages.map((p) => {
-        const ii = p.imageinfo?.[0];
-        if (!ii || !/^image\/(jpeg|png|webp)$/.test(ii.mime)) return null;
-        return {
-          title: clean(p.title.replace(/^File:/, "").replace(/\.\w+$/, "").replace(/_/g, " ")),
-          thumb: ii.thumburl, full: ii.url, page: ii.descriptionurl, w: num(ii.width), h: num(ii.height), tags: [],
-        };
-      }).filter(Boolean);
+      const one = async (term) => {
+        const d = await getJson(
+          `https://commons.wikimedia.org/w/api.php?action=query&format=json&generator=search&gsrnamespace=6&gsrlimit=30&gsroffset=${off}` +
+          `&gsrsearch=${enc(term + " filetype:bitmap")}&prop=imageinfo&iiprop=url|size|mime&iiurlwidth=480`, {}, 3600);
+        const pages = Object.values(d.query?.pages || {}).sort((a, b) => (a.index || 0) - (b.index || 0));
+        return pages.map((p) => {
+          const ii = p.imageinfo?.[0];
+          if (!ii || !/^image\/(jpeg|png|webp)$/.test(ii.mime)) return null;
+          return {
+            title: clean(p.title.replace(/^File:/, "").replace(/\.\w+$/, "").replace(/_/g, " ")),
+            thumb: ii.thumburl, full: ii.url, page: ii.descriptionurl, w: num(ii.width), h: num(ii.height), tags: [],
+          };
+        }).filter(Boolean);
+      };
+      // 고유명사를 한글로 입력했다면 영어(로마자) 이름과 한글 원문을 함께 찾습니다. (위키 저장소에는 한글 설명·분류가 많음)
+      const terms = [q]; if (o.alt && o.alt !== q) terms.push(o.alt);
+      const rs = await Promise.allSettled(terms.map(one));
+      const good = rs.filter((r) => r.status === "fulfilled").map((r) => r.value);
+      if (!good.length) throw rs[0].reason;
+      return rr(...good);
     },
   },
 
@@ -275,6 +283,45 @@ async function translate(q, env, sl = "") {
   } catch {
     return q;
   }
+}
+
+// ---------- 고유명사 판별 (한글 검색어 전용, 선택 기능) ----------
+// "금강엑슬루타워" 같은 이름을 번역기에 넣으면 "금강(강)" + "타워"처럼 뜻풀이가 되어, 영어 소스에서 강·자연 사진이 올라옵니다.
+// 그래서 텍스트 AI 에게 "고유명사인지, 그렇다면 영어(로마자) 이름과 종류가 무엇인지"를 물어봅니다.
+// 같은 검색어는 7일 캐시되고, 실패·시간 초과면 기존 번역을 그대로 씁니다. 끄려면 TR_SMART=off, 모델은 TR_MODEL 로 지정.
+const NAME_SYS = "You prepare search words for an image search engine. The user message is a Korean search query. " +
+  'Reply with ONLY compact JSON: {"proper":true|false,"en":"...","type":"..."}. ' +
+  '"proper": true if the query is a specific name (a place, building, apartment complex, brand, shop, person, event); false for ordinary descriptive words. ' +
+  '"en": the English search words. If it is a proper name, give its romanized or official English name and do NOT translate its parts literally ' +
+  '(for example a name made of "gold" and "river" is probably a place name in romanization). If it is ordinary words, give a natural English translation. ' +
+  '"type": one or two English words for the kind of thing when it is a proper name (e.g. "apartment complex", "tower", "cafe", "temple"), otherwise "".';
+async function nameInfo(q, env) {
+  for (const model of [env.TR_MODEL, "@cf/meta/llama-3.1-8b-instruct", "@cf/meta/llama-3.2-3b-instruct"].filter(Boolean)) {
+    try {
+      const out = await env.AI.run(model, { messages: [{ role: "system", content: NAME_SYS }, { role: "user", content: q }], max_tokens: 90, temperature: 0 });
+      const m = String(out?.response ?? out?.result?.response ?? "").match(/\{[\s\S]*?\}/);
+      if (!m) continue;
+      const j = JSON.parse(m[0]);
+      const latin = (s, n) => String(s || "").replace(/[^A-Za-z0-9 '&.-]/g, " ").replace(/\s+/g, " ").trim().slice(0, n);
+      return { proper: j.proper === true, en: latin(j.en, 80), type: latin(j.type, 30) };
+    } catch { /* 다음 모델을 시도 */ }
+  }
+  return null;
+}
+// 번역 + 고유명사 판별. 반환: { t, proper?, type? } — proper 가 없으면 판별하지 못한 것(화면이 자체 규칙으로 판단)
+async function translateFull(q, env, sl = "") {
+  if (!sl) sl = HANGUL.test(q) ? "ko" : "";
+  if (sl !== "ko" || !env.AI || env.TR_SMART === "off") return { t: await translate(q, env, sl) };
+  const key = new Request("https://cache.local/trn?q=" + enc(q));
+  const [t, info] = await Promise.all([translate(q, env, sl), (async () => {
+    try { const hit = await caches.default.match(key); if (hit) return await hit.json(); } catch { /* 캐시가 없으면 새로 물어봄 */ }
+    const r = await Promise.race([nameInfo(q, env), new Promise((res) => setTimeout(() => res(null), 4000))]);
+    if (r) { try { await caches.default.put(key, new Response(JSON.stringify(r), { headers: { "cache-control": "max-age=604800" } })); } catch { /* 캐시 실패는 무시 */ } }
+    return r;
+  })()]);
+  if (!info) return { t };
+  if (info.proper && info.en) return { t: info.en, proper: true, type: info.type || "" };
+  return { t, proper: !!info.proper, type: info.type || "" };
 }
 
 // ---------- 이미지 설명 (비슷한 이미지 보강 / 사진으로 검색) ----------
@@ -458,7 +505,7 @@ export default {
 
     if (u.pathname === "/api/tr") {
       const q = (u.searchParams.get("q") || "").trim().slice(0, 100);
-      return json({ t: await translate(q, env, u.searchParams.get("sl") || "") });
+      return json(await translateFull(q, env, u.searchParams.get("sl") || ""));
     }
 
     if (u.pathname === "/api/img") return proxyImage(u);
@@ -478,9 +525,11 @@ export default {
       const orient = u.searchParams.get("orient") || "";
       // 색상: 이 소스가 해당 색을 서버에서 걸러 주면 sc=true. 아니면 색은 무시하고 화면이 불러온 뒤 대표 색으로 거릅니다.
       const sc = !!(color && COLOR[src.id]?.[color]);
+      // 고유명사(pr=1)를 한글로 입력했을 때, 영어 소스가 원문도 함께 쓸 수 있게 alt 로 넘깁니다.
+      const alt = u.searchParams.get("pr") === "1" && HANGUL.test(q) && qe !== q ? q : "";
       let items;
       try {
-        items = await src.run(src.en ? qe : q, page, safe ? 1 : 0, env, { color: sc ? color : "", orient });
+        items = await src.run(src.en ? qe : q, page, safe ? 1 : 0, env, { color: sc ? color : "", orient, alt });
       } catch (e) {
         // 502 대신 200 으로 사유를 함께 보내서 화면의 ⚠ 를 눌렀을 때 이유를 보여줄 수 있게 합니다.
         return json({ items: [], err: reasonOf(e), detail: String(e.message || e).slice(0, 120) });

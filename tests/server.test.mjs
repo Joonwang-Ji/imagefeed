@@ -97,4 +97,55 @@ ok(CATS.every((c) => c[2].length >= 5), "each category has >= 5 sub topics");
   ok(r.status === 415 && /text\/html/.test(j.error), "html (block page) reported with its type: " + j.error);
 }
 
+
+// ---- 번역 + 고유명사 판별 (/api/tr) ----
+{
+  globalThis.caches = { default: { match: async () => undefined, put: async () => {} } }; // Workers 의 캐시 흉내 (여기서는 항상 비어 있음)
+  const ai = (llm) => ({ calls: [], run(model, input) { this.calls.push(model); if (model === "@cf/meta/m2m100-1.2b") return Promise.resolve({ translated_text: "Gold River Exclusive Tower" }); return llm(model, input); } });
+  const trq = async (q, e, sl = "") => (await worker.fetch(req("/api/tr?q=" + encodeURIComponent(q) + (sl ? "&sl=" + sl : "")), e)).json();
+  let A = ai(async () => ({ response: '네 {"proper": true, "en": "Geumgang Exelu Tower", "type": "apartment tower"} ' }));
+  let j2 = await trq("금강엑슬루타워", { ...env, AI: A });
+  ok(j2.t === "Geumgang Exelu Tower" && j2.proper === true && j2.type === "apartment tower", "proper noun: romanized name replaces the literal translation: " + JSON.stringify(j2));
+  A = ai(async () => ({ response: '{"proper": false, "en": "rainy street", "type": ""}' }));
+  j2 = await trq("비 오는 거리", { ...env, AI: A });
+  ok(j2.t === "Gold River Exclusive Tower" && j2.proper === false, "ordinary words keep the normal translation, proper=false: " + JSON.stringify(j2));
+  A = ai(async () => { throw new Error("model gone"); });
+  j2 = await trq("금강엑슬루타워", { ...env, AI: A });
+  ok(j2.t === "Gold River Exclusive Tower" && !("proper" in j2), "AI failure falls back to the normal translation without a proper flag: " + JSON.stringify(j2));
+  ok(A.calls.length === 3, "tries the next model when one fails: " + A.calls.join(","));
+  A = ai(async () => ({ response: '{"proper": true, "en": "금강", "type": "타워"}' }));
+  j2 = await trq("금강엑슬루타워", { ...env, AI: A });
+  ok(j2.t === "Gold River Exclusive Tower", "non-Latin answer is discarded (no Hangul sent to English sources): " + JSON.stringify(j2));
+  A = ai(async () => ({ response: '{"proper": true, "en": "X", "type": ""}' }));
+  j2 = await trq("cat", { ...env, AI: A });
+  ok(j2.t === "cat" && A.calls.length === 0, "English query: AI is not called");
+  j2 = await trq("금강엑슬루타워", { ...env, AI: A, TR_SMART: "off" });
+  ok(j2.t === "Gold River Exclusive Tower" && !("proper" in j2) && !A.calls.includes("@cf/meta/llama-3.1-8b-instruct"), "TR_SMART=off skips the name check");
+  A = ai(() => new Promise(() => {})); // 응답이 영영 안 오는 모델
+  const t0 = Date.now(); j2 = await trq("금강엑슬루타워", { ...env, AI: A });
+  ok(j2.t === "Gold River Exclusive Tower" && Date.now() - t0 < 6000, "a hanging model is abandoned after ~4 s: " + (Date.now() - t0) + "ms");
+}
+
+// ---- 위키 저장소: 고유명사면 한글 원문도 함께 검색 ----
+{
+  const terms = [];
+  globalThis.fetch = async (url) => {
+    const u = String(url); if (!u.includes("commons.wikimedia.org")) return new Response("nf", { status: 404 });
+    const t = decodeURIComponent(u.match(/gsrsearch=([^&]+)/)[1]).replace(" filetype:bitmap", ""); terms.push(t);
+    if (/실패/.test(t)) return new Response("x", { status: 500 });
+    const mk = (n) => ({ index: n, title: `File:${t} ${n}.jpg`, imageinfo: [{ thumburl: `https://upload.wikimedia.org/${encodeURIComponent(t)}${n}t.jpg`, url: `https://upload.wikimedia.org/${encodeURIComponent(t)}${n}.jpg`, descriptionurl: "https://commons.wikimedia.org/x", width: 800, height: 600, mime: "image/jpeg" }] });
+    return jres({ query: { pages: { 1: mk(1), 2: mk(2) } } });
+  };
+  const sq = async (qs) => (await (await worker.fetch(req("/api/search?src=wikimedia&" + qs), env)).json());
+  let jw = await sq("q=" + encodeURIComponent("금강엑슬루타워") + "&qe=Geumgang%20Exelu%20Tower&page=1&pr=1");
+  ok(terms.length === 2 && terms.includes("금강엑슬루타워") && terms.includes("Geumgang Exelu Tower"), "proper noun: wikimedia searched with the English name and the Korean original: " + terms.join(" | "));
+  ok(jw.items.length === 4 && /Geumgang/.test(jw.items[0].title) && /금강/.test(jw.items[1].title), "results from both searches are interleaved: " + jw.items.map((i) => i.title.slice(0, 10)).join(", "));
+  terms.length = 0; jw = await sq("q=" + encodeURIComponent("금강엑슬루타워") + "&qe=Geumgang%20Exelu%20Tower&page=1");
+  ok(terms.length === 1 && terms[0] === "Geumgang Exelu Tower", "without pr=1 only the English search runs");
+  terms.length = 0; jw = await sq("q=" + encodeURIComponent("실패") + "&qe=Fine%20Name&page=1&pr=1");
+  ok(jw.items.length === 2 && !jw.err, "if the Korean search fails the English results are still returned");
+  terms.length = 0; jw = await sq("q=cat&qe=cat&page=1&pr=1");
+  ok(terms.length === 1, "English-only query never doubles the request");
+}
+
 console.log(fail ? `\n${fail} failed` : "\nall passed"); process.exit(fail ? 1 : 0);

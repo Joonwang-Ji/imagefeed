@@ -318,13 +318,16 @@ async function pump() {
 
 // ---------- 피드 (검색 한 번의 상태와 불러오기 로직) ----------
 // 메인 피드와 뷰어 아래 "비슷한 이미지" 피드가 같은 로직을 씁니다.
+// 받아 온 이미지는 바로 화면에 올리지 않고 대기열(pend)에 모아 두었다가 "관련도 점수"(relevance.js) 순으로 chunk 장씩만 보여 주고,
+// 더 보려면 [더 보기]를 누릅니다. 구체적인 검색어일 때 검색어와 안 맞는 이미지(weak)는 맨 아래의 [관련도 낮은 결과 보기] 뒤로 접어 둡니다.
 class Feed {
-  constructor(m, o = {}) { this.m = m; this.o = o; this.gen = 0; this.reset(); }
+  constructor(m, o = {}) { this.m = m; this.o = o; this.gen = 0; this.chunk = o.chunk || 60; this.reset(); }
   reset() {
     this.gen++;
     this.acs?.forEach((a) => a.abort()); // 진행 중이던 요청은 취소 (뷰어에서 빠르게 넘길 때 낭비 방지)
     Object.assign(this, { q: "", qe: "", sl: "", page: 0, loading: false, ended: false, blocked: false, acs: new Set(),
-      srcEnded: new Set(), stat: {}, items: [], keys: new Map(), tags: new Map(), trP: Promise.resolve() });
+      srcEnded: new Set(), stat: {}, items: [], keys: new Map(), tags: new Map(), trP: Promise.resolve(),
+      terms: null, pend: new Map(), weakOpen: false, limit: this.chunk, supply: 0, stall: 0, burst: 0, exhausted: false });
   }
   sources() {
     const on = (cfg?.sources || []).filter((s) => !S.off.has(s.id));
@@ -339,9 +342,15 @@ class Feed {
   begin(q, sl = "") {
     this.q = this.qe = q;
     this.sl = sl || (hasHangul(q) ? "ko" : "");
-    // 한글 등은 영어 소스용으로 번역해 둡니다
+    this.terms = Relevance.makeTerms({ q });
+    const gen = this.gen;
+    // 한글 등은 영어 소스용으로 번역해 둡니다. 서버가 고유명사인지(proper)와 종류(type)도 알려 주면 관련도 판단에 씁니다.
     this.trP = this.sl && this.sl !== "en" && cfg.ai
-      ? api(`/api/tr?q=${enc(q)}&sl=${this.sl}`).then((r) => r.json()).then((j) => { this.qe = j.t || q; }).catch(() => { this.qe = q; })
+      ? api(`/api/tr?q=${enc(q)}&sl=${this.sl}`).then((r) => r.json()).then((j) => {
+        if (gen !== this.gen) return;
+        this.qe = j.t || q;
+        this.terms = Relevance.makeTerms({ q, qe: this.qe, type: j.type, proper: j.proper });
+      }).catch(() => { if (gen === this.gen) this.qe = q; })
       : Promise.resolve();
   }
   fail(s, r) {
@@ -353,79 +362,151 @@ class Feed {
     if (!this.stat[s.id]?.n || IMGH[s.id]?.ok) return false;
     return this.m.all.some((c) => c._it?.src === s.id && !c._ok && !c.classList.contains("broken"));
   }
+  need() { return this.limit - this.m.cards.length; } // 지금 화면에 더 올려도 되는 장수 (필터·실패로 빠진 카드는 다시 채움)
   async next() {
-    if (this.loading || this.ended || !this.q) return;
+    if (this.loading || !this.q) return;
+    if (this.need() > 0) this.release(this.need());
+    if (this.need() <= 0) { this.o.onMore?.(); return; } // 보여 줄 만큼 찼음 → [더 보기]를 기다림
+    if (this.ended) { this.o.onAfter?.(); this.o.onMore?.(); return; }
+    if (this.exhausted) { this.o.onMore?.(); return; }
     const open = this.sources().filter((s) => !this.srcEnded.has(s.id));
-    if (!open.length) { this.ended = true; this.o.onAfter?.(); return; }
+    if (!open.length) { this.ended = true; this.o.onAfter?.(); this.o.onMore?.(); return; }
     // 이미 받은 이미지가 한 장도 안 열린 소스는, 첫 이미지가 열릴 때까지 다음 페이지를 더 불러오지 않습니다.
     // (안 열리는 소스에서 페이지만 끝없이 쌓여 조회 수가 계속 늘던 문제 방지. 첫 이미지가 열리면 onload 가 이어서 불러옴)
     const srcs = open.filter((s) => !this.holding(s));
     if (!srcs.length) return;
     this.loading = true;
-    const gen = this.gen, page = ++this.page, safe = S.blur ? 1 : 0;
+    const gen = this.gen, page = ++this.page, safe = S.blur ? 1 : 0, supply0 = this.supply;
     const color = this.o.filters ? S.color : "", orient = this.o.filters ? S.orient : "";
     const batch = []; let timer = null;
-    const flush = () => { clearTimeout(timer); timer = null; const arr = batch.splice(0); if (gen === this.gen && arr.length) this.merge(arr); };
+    const flush = (early) => {
+      clearTimeout(timer); timer = null;
+      const arr = batch.splice(0);
+      if (gen !== this.gen) return;
+      if (arr.length) this.merge(arr);
+      // 첫 페이지는 빠른 소스만 도착했을 수 있으니, 화면을 채울 최소한(12장, 휴대폰 한 화면 정도)만 먼저 올리고
+      // 나머지는 모든 소스가 도착한 뒤 점수순으로 올립니다. (늦게 온 관련도 높은 이미지가 아래로 밀리지 않게)
+      this.release(early && page === 1 ? Math.min(12, this.need()) : this.need());
+    };
     await Promise.all(srcs.map(async (s) => {
       const ac = new AbortController(); this.acs.add(ac);
       let timedOut = false; const tm = setTimeout(() => { timedOut = true; ac.abort(); }, 16000);
       try {
         if (s.en) await this.trP;
-        const r = await (await api(`/api/search?src=${s.id}&q=${enc(this.q)}&qe=${enc(this.qe)}&page=${page}&safe=${safe}&color=${color}&orient=${orient}`, { signal: ac.signal })).json();
+        const pr = this.terms?.proper ? "&pr=1" : ""; // 고유명사면 영어 소스(위키)도 한글 원문을 함께 씀
+        const r = await (await api(`/api/search?src=${s.id}&q=${enc(this.q)}&qe=${enc(this.qe)}&page=${page}&safe=${safe}&color=${color}&orient=${orient}${pr}`, { signal: ac.signal })).json();
         if (gen !== this.gen) return;
         if (r.blocked) { this.blocked = true; return; }
         if (r.err) { this.fail(s, r); return; }
-        const st = (this.stat[s.id] ||= { n: 0 }); st.n += r.items.length;
+        const st = (this.stat[s.id] ||= { n: 0 }), base = st.n; st.n += r.items.length;
         if (!r.items.length) this.srcEnded.add(s.id);
-        batch.push({ src: s, items: r.items });
-        if (!timer) timer = setTimeout(flush, page === 1 ? 600 : 300);
+        batch.push({ src: s, items: r.items, base }); // base: 이 소스에서 앞선 페이지로 이미 받은 장수 (순위를 이어서 매김)
+        if (!timer) timer = setTimeout(() => flush(true), page === 1 ? 600 : 300);
       } catch (e) {
         if (gen !== this.gen || e.message === "auth") return;
         this.fail(s, { err: timedOut || e.name === "TimeoutError" ? "timeout" : "network" });
       } finally { clearTimeout(tm); this.acs.delete(ac); }
     }));
-    flush();
+    flush(false);
     if (gen !== this.gen) return;
     this.loading = false;
+    // 이번 페이지에서 보여 줄 만한(약하지 않은) 이미지가 새로 생기지 않는 일이 연달아 2번이거나, [더 보기] 한 번에 6쪽 넘게 불러오면
+    // 자동 불러오기를 멈추고 사용자가 [더 보기]를 누르게 합니다. (엉뚱한 결과만 나오는 검색어에서 요청이 끝없이 나가는 것 방지)
+    this.stall = this.supply > supply0 ? 0 : this.stall + 1;
+    if (this.stall >= 2 || ++this.burst >= 6) this.exhausted = true;
     if (this.blocked) { this.blocked = false; this.ended = true; this.o.onBlocked?.(); this.o.onProgress?.(); return; }
     this.o.onProgress?.();
     if (this.srcEnded.size >= this.sources().length) this.ended = true;
     this.o.onAfter?.();
     this.o.reobserve?.();
+    this.o.onMore?.();
   }
+  // 받은 이미지에 관련도 점수를 매겨 대기열(pend)에 넣습니다. 이미 화면에 올린 이미지는 건드리지 않아 카드가 갑자기 움직이지 않습니다.
   merge(arr) {
-    const acc = new Map();
-    for (const { src, items } of arr) {
-      items.forEach((it, i) => {
-        const k = keyOf(it), sc = src.w / (60 + i), ex = this.keys.get(k);
-        if (ex) { ex.score = (ex.score || 0) + sc; return; }
-        const a = acc.get(k);
-        if (a) { a.score += sc; if (!a.tags.length && it.tags.length) a.tags = it.tags; if (!a.title && it.title) a.title = it.title; }
-        else acc.set(k, { ...it, id: hashId(k), key: k, score: sc });
-      });
+    const T = this.terms, fold = this.o.fold !== false && !!T?.specific, pinned = !!(this.o.filters && S.only.size);
+    for (const { src, items, base = 0 } of arr) {
+      const part = [];
+      items.forEach((it, i) => { const k = keyOf(it); if (!this.keys.has(k)) part.push({ it, k, i, j: Relevance.judge(it, T, src.id) }); });
+      // 이 소스의 이미지가 검색어와 대체로 안 맞으면(평균 관련도가 낮으면) 이 소스의 비중을 줄입니다.
+      const known = part.filter((p) => p.j.known);
+      const avg = known.length >= 8 ? known.reduce((t, p) => t + p.j.rel, 0) / known.length : 0.6;
+      const scale = 0.6 + 0.4 * Math.min(1, avg / 0.6), bias = Relevance.bias(src.id, T, pinned);
+      for (const { it, k, i, j } of part) {
+        const sc = src.w * bias * scale * Relevance.mul(j.tier) / (60 + base + i); // 소스 순위 × 소스 가중치 × 관련도 등급. 여러 소스에 나오면 점수가 합쳐짐
+        const ex = this.pend.get(k);
+        if (ex) {
+          ex.score += sc; if (j.rel > ex.rel) { ex.rel = j.rel; ex.tier = j.tier; }
+          if (!ex.it.tags.length && it.tags.length) ex.it.tags = it.tags;
+          if (!ex.it.title && it.title) ex.it.title = it.title;
+          if (!ex.counted && !(fold && ex.tier === "weak")) { ex.counted = true; this.supply++; }
+        } else {
+          const counted = !(fold && j.tier === "weak");
+          this.pend.set(k, { it: { ...it, id: hashId(k), key: k }, score: sc, rel: j.rel, tier: j.tier, counted });
+          if (counted) this.supply++;
+        }
+      }
     }
-    const list = [...acc.values()].sort((a, b) => b.score - a.score);
-    if (!list.length) return;
-    const cards = list.map((it) => {
-      this.keys.set(it.key, it); this.items.push(it);
+  }
+  // 대기열을 점수순으로 정렬해 보여 줄 것(strong)과 접어 둘 것(weak)으로 나눕니다.
+  view() {
+    const fold = this.o.fold !== false && !!this.terms?.specific && !this.weakOpen, strong = [], weak = [];
+    for (const e of this.pend.values()) (fold && e.tier === "weak" ? weak : strong).push(e);
+    strong.sort((a, b) => b.score - a.score);
+    return { strong, weak };
+  }
+  // 점수 높은 순서로 n 장을 화면에 올립니다.
+  release(n) {
+    if (n <= 0 || !this.pend.size) return 0;
+    const cards = this.view().strong.slice(0, n).map((e) => {
+      const it = e.it; it.rel = e.rel; it.tier = e.tier;
+      this.pend.delete(it.key); this.keys.set(it.key, it); this.items.push(it);
       for (const t of new Set([...it.tags.map((x) => String(x).toLowerCase()), ...tokens(it.title)])) this.tags.set(t, (this.tags.get(t) || 0) + 1);
       const c = makeCard(it, () => this.o.open(this, it));
       c._feed = this; c._m = this.m; // 이미지가 열리지 않을 때 어느 목록에서 뺄지 알기 위함
       return c;
     });
-    this.m.add(cards);
+    if (cards.length) this.m.add(cards);
+    return cards.length;
+  }
+  more() { this.limit = this.m.cards.length + this.chunk; this.stall = 0; this.burst = 0; this.exhausted = false; return this.next(); }
+  openWeak() { this.weakOpen = true; this.limit = Math.max(this.limit, this.m.cards.length + this.chunk); this.stall = 0; this.burst = 0; this.exhausted = false; return this.next(); }
+  hadResults() { return this.items.length > 0 || this.pend.size > 0; }
+  // 피드 아래 버튼·안내의 상태: [더 보기], [관련도 낮은 결과 N개 보기], 안내 문구
+  moreState() {
+    const { strong, weak } = this.view();
+    const full = this.need() <= 0, supplyDone = !strong.length && (this.ended || this.exhausted);
+    const more = (full && (strong.length > 0 || !this.ended)) || (this.exhausted && !this.ended);
+    const weakN = supplyDone ? weak.length : 0;
+    // 검색어와 실제로 맞는(strong·medium) 이미지가 적으면 알려 줍니다. (맞지 않는 건 아래 [관련도 낮은 결과 보기] 뒤에 있음)
+    const good = this.items.filter((x) => x.tier === "strong" || x.tier === "medium").length;
+    let note = "";
+    if (weakN && good < 10) note = good ? `검색어와 정확히 맞는 이미지는 ${good}개뿐이에요.` : "검색어와 정확히 맞는 이미지를 찾지 못했어요.";
+    return { more, weakN, note };
   }
 }
 
+// 피드 아래의 [더 보기] / [관련도 낮은 결과 보기] 버튼과 안내를 현재 상태에 맞게 보여 줍니다.
+function renderMore(box, f) {
+  if (!box) return;
+  const st = f.q ? f.moreState() : { more: false, weakN: 0, note: "" };
+  const mb = box.querySelector(".mbtn"), wb = box.querySelector(".wbtn"), nt = box.querySelector(".mnote");
+  mb.hidden = !st.more; wb.hidden = !st.weakN; wb.textContent = st.weakN ? `관련도 낮은 결과 ${st.weakN}개 보기` : "";
+  nt.textContent = st.note; nt.hidden = !st.note;
+  box.hidden = mb.hidden && wb.hidden && nt.hidden;
+}
+function bindMore(box, f) { box.querySelector(".mbtn").onclick = () => f.more(); box.querySelector(".wbtn").onclick = () => f.openWeak(); }
+
 // ---------- 메인 검색 ----------
 const M = new Feed(feedM, {
-  filters: true,
+  filters: true, chunk: 60, // 한 번에 60장씩 보여 주고 [더 보기]로 이어 봅니다
   open: (f, it) => openViewer(f.items, f.items.indexOf(it)),
+  onMore: () => renderMore($("#more"), M),
   onProgress: () => { renderStat(); renderChips(); },
   onAfter: () => checkEmpty(),
   onBlocked: () => showMsg("이 주제는 차단된 주제예요. (공포·잔혹 필터는 해제할 수 없어요)"),
   reobserve: () => { sio.unobserve($("#sentinel")); sio.observe($("#sentinel")); },
 });
+bindMore($("#more"), M);
 // 비율을 아직 모르는 이미지는 일단 통과시키고, 불러온 뒤 loadCard 가 다시 판정합니다.
 const predOrient = () => !S.orient ? null : (c) => {
   if (!c._it.w || !c._it.h) return true;
@@ -442,9 +523,9 @@ let kickT;
 feedM.onChange = () => {
   clearTimeout(kickT);
   kickT = setTimeout(() => {
-    if (!M.items.length) return;
+    if (!M.hadResults()) return;
     checkEmpty();
-    if (!M.ended) { sio.unobserve($("#sentinel")); sio.observe($("#sentinel")); }
+    if (!M.ended || M.pend.size) { sio.unobserve($("#sentinel")); sio.observe($("#sentinel")); }
   }, 250);
 };
 
@@ -456,7 +537,7 @@ async function startSearch(q, opts = {}) {
   setView("feed");
   M.reset(); M.begin(q, opts.sl);
   $("#q").value = q; syncQ(); $("#q").blur(); $("#home").hidden = true; $("#filters").hidden = true; if (!opts.keep) $("#srcPanel").hidden = true;
-  feedM.clear(); feedM.pred = feedPred(); markFilters(); $("#msg").hidden = true; $("#msg").textContent = ""; renderChips(); renderStat(); scrollTo(0, 0);
+  feedM.clear(); feedM.pred = feedPred(); markFilters(); $("#msg").hidden = true; $("#msg").textContent = ""; renderChips(); renderStat(); renderMore($("#more"), M); scrollTo(0, 0);
   await M.next();
 }
 
@@ -507,6 +588,7 @@ function checkEmpty() {
     else if (M.ended) showMsg("방향·색상 조건에 맞는 이미지를 찾지 못했어요. 필터를 바꾸거나 다른 말로 검색해 보세요.");
     return;
   }
+  if (M.pend.size) { $("#msg").hidden = true; return; } // 접어 둔 결과가 있음 → 아래 [관련도 낮은 결과 보기] 안내로 대신함
   const act = M.sources();
   const allErr = act.length && act.every((s) => M.stat[s.id]?.err);
   if (M.ended || allErr) showMsg(!act.length ? "켜져 있는 검색 소스가 없어요. 설정에서 켜 주세요." : allErr ? "검색 소스에 연결하지 못했어요. 상단의 [소스] 버튼에서 ⚠ 를 눌러 이유를 확인해 보세요." : "결과가 없어요. 다른 말로 검색해 보세요.");
@@ -543,7 +625,7 @@ $("#homeBack").onclick = () => { HOME.cat = null; renderHome(); };
 function goHome() {
   if (S.offline) return;
   if (V.stack.length) closeViewer();
-  M.reset(); feedM.clear(); feedM.pred = null;
+  M.reset(); feedM.clear(); feedM.pred = null; renderMore($("#more"), M);
   S.color = ""; S.orient = ""; S.only.clear(); markFilters();
   $("#q").value = ""; syncQ(); $("#q").blur(); $("#msg").hidden = true; $("#msg").textContent = ""; $("#filters").hidden = true; $("#srcPanel").hidden = true;
   HOME.cat = null;
@@ -578,7 +660,8 @@ function setView(v) {
   $("#grid").hidden = v !== "feed"; $("#bmgrid").hidden = v !== "bm"; $("#trends").hidden = v !== "tr"; $("#bmtools").hidden = v !== "bm";
   $("#srcBtn").hidden = v !== "feed"; $("#filterBtn").hidden = v !== "feed"; if (v !== "feed") { $("#filters").hidden = true; $("#srcPanel").hidden = true; }
   $("#home").hidden = !(v === "feed" && !M.q);
-  if (v === "feed") { feedM.check(); renderChips(); const m = $("#msg"); m.hidden = !(M.q && !M.items.length && m.textContent); }
+  if (v !== "feed") $("#more").hidden = true;
+  if (v === "feed") { feedM.check(); renderChips(); const m = $("#msg"); m.hidden = !(M.q && !M.items.length && m.textContent); renderMore($("#more"), M); }
   else if (v === "tr") { $("#msg").hidden = true; renderChips(); trM.check(); loadTrends(); scrollTo(0, 0); }
 }
 async function showBm() { setView("bm"); await renderBm(); }
@@ -626,17 +709,20 @@ const vio = new IntersectionObserver((es) => es.forEach((e) => {
 
 function newLevel(list, i) {
   const wrap = document.createElement("div"); wrap.className = "simlevel";
-  wrap.innerHTML = '<div class="grid"></div><div class="simmsg" hidden></div><div class="simsent"></div>';
+  wrap.innerHTML = '<div class="grid"></div><div class="simmsg" hidden></div>' +
+    '<div class="more simmore" hidden><p class="mnote" hidden></p><button type="button" class="mbtn pri" hidden>더 보기</button><button type="button" class="wbtn sm" hidden></button></div><div class="simsent"></div>';
   $("#vsimlevels").appendChild(wrap);
   const level = { list, cur: i, wrap, scrollTop: 0, simQ: "", cands: [], ci: 0 };
   level.m = new Masonry(wrap.querySelector(".grid"));
-  level.sent = wrap.querySelector(".simsent"); level.msg = wrap.querySelector(".simmsg");
+  level.sent = wrap.querySelector(".simsent"); level.msg = wrap.querySelector(".simmsg"); level.more = wrap.querySelector(".more");
   level.feed = new Feed(level.m, {
-    filters: false,
+    filters: false, chunk: 30, fold: false, // "비슷한" 이미지는 정확히 같은 단어가 없어도 되므로 접지 않고, 점수순으로만 보여 줍니다
+    onMore: () => renderMore(level.more, level.feed),
     open: (f, it) => pushLevel(f.items, f.items.indexOf(it)),
     onAfter: () => simAfter(level),
     reobserve: () => { vio.unobserve(level.sent); vio.observe(level.sent); },
   });
+  bindMore(level.more, level.feed);
   vio.observe(level.sent);
   return level;
 }
@@ -709,7 +795,7 @@ function showItem(keepSim) {
 let simT = null;
 function simSchedule(level) {
   clearTimeout(simT); clearTimeout(level.rrT);
-  level.feed.reset(); level.m.clear(); level.msg.hidden = true; level.simQ = ""; level.sig = null; level.cw = ""; level.rrDone = 0; updateSimHead();
+  level.feed.reset(); level.m.clear(); level.msg.hidden = true; renderMore(level.more, level.feed); level.simQ = ""; level.sig = null; level.cw = ""; level.rrDone = 0; updateSimHead();
   if (S.offline) return;
   const it = level.list[level.cur];
   simT = setTimeout(() => { if (V.stack.includes(level) && level.list[level.cur] === it) simBegin(level, it); }, 400);
@@ -770,7 +856,7 @@ function simStart(level, ci) {
   level.simQ = q || ""; updateSimHead();
   if (!q) { level.msg.textContent = "비슷한 이미지를 찾을 단서(태그·제목)가 없어요."; level.msg.hidden = false; return; }
   f.keys.set(keyOf(it), it); // 지금 보는 이미지는 목록에서 제외
-  f.begin(q); f.next();
+  f.begin(q); renderMore(level.more, f); f.next();
 }
 function simAfter(level) {
   const f = level.feed;
