@@ -50,7 +50,7 @@ w.fetch = async (url) => {
   if (u.startsWith("/api/img")) return res({});
   return { ok: false, status: 404, json: async () => ({}) };
 };
-for (const f of ["color.js", "relevance.js", "safety.js", "taste.js"]) run(fs.readFileSync(ROOT + f, "utf8").replace(/^"use strict";/, ""));
+for (const f of ["color.js", "relevance.js", "safety.js", "taste.js", "avoid.js"]) run(fs.readFileSync(ROOT + f, "utf8").replace(/^"use strict";/, ""));
 vm.runInContext(fs.readFileSync(ROOT + "app.js", "utf8"), ctx);
 // 가짜 AI 모델: 카드 제목에 따라 점수를 돌려줌
 const SCORES = { "Normal view": { Neutral: 0.95 }, "Explicit thing": { Porn: 0.9 }, "Marble statue": { Sexy: 0.95 }, "Bible with hand": { Sexy: 0.9, Neutral: 0.1 }, "beach photo": { Sexy: 0.92 }, "Saved bible": { Sexy: 0.9 }, "Saved normal": { Neutral: 0.9 } };

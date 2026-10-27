@@ -1,4 +1,6 @@
+import { offTopic } from "./topics.js";
 // 계절·기념일 주제: 날짜만으로 "곧 다가오는 때"의 이미지 검색어를 만듭니다. (외부 호출 없음)
+// 기독교 세계관에 맞춰 할로윈과 다른 종교의 행사(부처님오신날 등)는 넣지 않았고, topics.js 의 offTopic 으로 한 번 더 걸러 냅니다.
 // 핀터레스트도 사람들이 때가 되기 몇 주 전부터 검색한다고 알려져 있어서, 행사 며칠~몇 주 전부터 미리 보여 줍니다.
 //
 // 고치는 법
@@ -13,14 +15,12 @@ const FIXED = [
   ["어린이날", 5, 5, "어린이날 풍선", 14],
   ["어버이날·스승의날", 5, 8, "카네이션", 14],
   ["광복절", 8, 15, "태극기 하늘", 10],
-  ["할로윈", 10, 31, "할로윈 호박", 21],
   ["빼빼로데이", 11, 11, "빼빼로 선물", 12],
   ["크리스마스", 12, 25, "크리스마스 트리", 35],
   ["연말", 12, 31, "연말 불꽃놀이", 14],
 ];
 const LUNAR = [
   ["설날", "설날 한복", [[2026, 2, 17], [2027, 2, 6], [2028, 1, 26]], 18],
-  ["부처님오신날", "연등", [[2026, 5, 24], [2027, 5, 13], [2028, 5, 2]], 21],
   ["추석", "추석 보름달", [[2026, 9, 25], [2027, 9, 15], [2028, 10, 3]], 21],
 ];
 // 달마다 어울리는 계절 주제 (월 → [이름, 검색어])
@@ -71,12 +71,12 @@ export function seasonTopics(now = Date.now(), max = 6) {
   const k = new Date(now + 9 * 3600000); // 한국 시간의 날짜로 계산
   const y = k.getUTCFullYear(), today = utc(y, k.getUTCMonth() + 1, k.getUTCDate());
   const list = [];
-  for (const yy of [y, y + 1]) for (const e of events(yy)) {
+  for (const yy of [y, y + 1]) for (const e of events(yy).filter((x) => !offTopic(x.label, x.q))) {
     const days = Math.round((e.at - today) / DAY);
     if (days >= -1 && days <= e.lead) list.push({ label: e.label, q: e.q, days: Math.max(0, days), kind: "event" });
   }
   list.sort((a, b) => a.days - b.days);
   const out = list.slice(0, max);
-  for (const [label, q] of SEASON[k.getUTCMonth() + 1] || []) if (out.length < max + 2) out.push({ label, q, days: 0, kind: "season" });
+  for (const [label, q] of (SEASON[k.getUTCMonth() + 1] || []).filter(([l, qq]) => !offTopic(l, qq))) if (out.length < max + 2) out.push({ label, q, days: 0, kind: "season" });
   return out;
 }

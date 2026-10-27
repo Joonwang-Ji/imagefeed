@@ -16,28 +16,57 @@
 <title>이미지피드</title>
 </head>
 <body>
+<!-- 아이콘 모음 (선 그림). 아래 <svg class="i"><use href="#i-이름"/></svg> 로 불러 씁니다. 색은 글자색을 따라가요. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></symbol>
+    <symbol id="i-camera" viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></symbol>
+    <symbol id="i-layers" viewBox="0 0 24 24"><path d="M12 2l10 5-10 5L2 7z"/><path d="M2 17l10 5 10-5M2 12l10 5 10-5"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></symbol>
+    <symbol id="i-hide" viewBox="0 0 24 24"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24M1 1l22 22"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></symbol>
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="1.6"/><rect x="14" y="3" width="7" height="5" rx="1.6"/><rect x="14" y="12" width="7" height="9" rx="1.6"/><rect x="3" y="16" width="7" height="5" rx="1.6"/></symbol>
+    <symbol id="i-trend" viewBox="0 0 24 24"><path d="M23 6l-9.5 9.5-5-5L1 18"/><path d="M17 6h6v6"/></symbol>
+    <symbol id="i-bookmark" viewBox="0 0 24 24"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></symbol>
+    <symbol id="i-heart" viewBox="0 0 24 24"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></symbol>
+    <symbol id="i-shuffle" viewBox="0 0 24 24"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></symbol>
+    <symbol id="i-up" viewBox="0 0 24 24"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17"/></symbol>
+    <symbol id="i-crop" viewBox="0 0 24 24"><path d="M6.13 1L6 16a2 2 0 0 0 2 2h15"/><path d="M1 6.13L16 6a2 2 0 0 1 2 2v15"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5M12 15V3"/></symbol>
+    <symbol id="i-link" viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6M10 14L21 3"/></symbol>
+    <symbol id="i-ban" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M4.93 4.93l14.14 14.14"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></symbol>
+    <symbol id="i-left" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></symbol>
+    <symbol id="i-right" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></symbol>
+    <symbol id="i-down2" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
+    <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></symbol>
+  </defs>
+</svg>
+
 <header>
-  <div class="hrow">
-    <button id="homeBtn" class="ico" aria-label="처음으로" title="처음 화면으로">⌂</button>
+  <div class="hrow top">
+    <button id="homeBtn" class="ico" aria-label="처음으로" title="처음 화면으로"><svg class="i"><use href="#i-home"/></svg></button>
     <form id="sf" autocomplete="off">
+      <svg class="i sfi" aria-hidden="true"><use href="#i-search"/></svg>
       <input id="q" type="search" placeholder="어떤 이미지를 찾을까요?" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="search" name="nq">
-      <button type="button" id="qClear" class="clr" aria-label="입력 지우기" title="모두 지우기" hidden>✕</button>
-      <button type="button" id="upBtn" class="upbtn" aria-label="사진으로 검색" title="사진으로 검색" hidden>📷</button>
+      <button type="button" id="qClear" class="clr" aria-label="입력 지우기" title="모두 지우기" hidden><svg class="i"><use href="#i-x"/></svg></button>
+      <button type="button" id="upBtn" class="upbtn" aria-label="사진으로 검색" title="사진으로 검색" hidden><svg class="i"><use href="#i-camera"/></svg></button>
       <input type="file" id="upFile" accept="image/*" hidden>
-      <button type="submit" class="pri">검색</button>
+      <button type="submit" class="go" aria-label="검색"><svg class="i"><use href="#i-arrow"/></svg></button>
     </form>
   </div>
-  <div class="hrow tabs">
-    <nav class="seg">
-      <button id="tabFeed" class="on">피드</button>
-      <button id="tabTr">트렌드</button>
-      <button id="tabBm">북마크 <span id="bmc"></span></button>
-    </nav>
+  <div class="hrow tools">
+    <button id="srcBtn" class="tool"><svg class="i"><use href="#i-layers"/></svg>소스 <span id="srcBadge" class="badge"></span></button>
+    <button id="filterBtn" class="tool"><svg class="i"><use href="#i-sliders"/></svg>필터 <span id="filterBadge" class="badge"></span></button>
     <span class="grow"></span>
-    <button id="srcBtn" class="tool">소스 <span id="srcBadge" class="badge"></span></button>
-    <button id="filterBtn" class="tool">필터 <span id="filterBadge" class="badge"></span></button>
-    <button id="privBtn" class="tool" aria-label="비공개 모드" aria-pressed="false" title="비공개 모드: 북마크·취향이 화면에서 사라지고 학습도 멈춰요">🕶</button>
-    <button id="gear" class="tool" aria-label="설정">⚙</button>
+    <button id="privBtn" class="tool round" aria-label="비공개 모드" aria-pressed="false" title="비공개 모드: 북마크·취향이 화면에서 사라지고 학습도 멈춰요"><svg class="i"><use href="#i-hide"/></svg></button>
+    <button id="gear" class="tool round" aria-label="설정" title="설정"><svg class="i"><use href="#i-gear"/></svg></button>
   </div>
   <div id="srcPanel" class="panel" hidden>
     <div class="phead"><b>검색할 소스</b><span class="grow"></span><button id="srcAll" class="sm">전체 보기</button><button id="srcClose" class="sm">닫기</button></div>
@@ -64,20 +93,19 @@
   <div id="home" hidden>
     <h2 class="hh">무엇을 찾아볼까요?</h2>
     <p class="hint">위에서 검색하거나, 아래 주제를 눌러 보세요.</p>
-    <div class="hsubrow"><h3 class="hsub" id="homeTitle">추천 주제</h3><span class="grow"></span><button id="homeBack" class="sm" hidden>‹ 모든 주제</button><button id="homeShuffle" class="sm">🔀 다른 주제</button></div>
+    <div class="hsubrow"><h3 class="hsub" id="homeTitle">추천 주제</h3><span class="grow"></span><button id="homeBack" class="sm" hidden><svg class="i"><use href="#i-left"/></svg>모든 주제</button><button id="homeShuffle" class="sm"><svg class="i"><use href="#i-shuffle"/></svg>다른 주제</button></div>
     <div id="homeChips" class="chips"></div>
     <h3 class="hsub">둘러보기</h3>
     <div class="explore">
-      <button id="exRand" class="xbtn"><b>🎲 아무거나</b><small>세부 주제 중 하나를 무작위로 골라 바로 검색해요</small></button>
-      <button id="exTrend" class="xbtn"><b>🔥 트렌드</b><small>뜨는 주제 · 다가오는 행사 · 인기 사진 · 잘 찍은 사진</small></button>
-      <button id="exBm" class="xbtn"><b>⭐ 내 취향</b><small>북마크·학습한 취향의 태그로 찾아요</small></button>
+      <button id="exRand" class="xbtn"><span class="xic"><svg class="i"><use href="#i-shuffle"/></svg></span><b>아무거나</b><small>세부 주제 중 하나를 무작위로 골라 바로 검색해요</small></button>
+      <button id="exTrend" class="xbtn"><span class="xic"><svg class="i"><use href="#i-trend"/></svg></span><b>트렌드</b><small>뜨는 주제 · 다가오는 행사 · 인기 사진 · 잘 찍은 사진</small></button>
+      <button id="exBm" class="xbtn"><span class="xic"><svg class="i"><use href="#i-heart"/></svg></span><b>내 취향</b><small>북마크·학습한 취향의 태그로 찾아요</small></button>
     </div>
   </div>
   <div id="trends" hidden>
     <div class="trhead">
-      <nav class="seg" id="trSeg"><button data-g="rec" class="on">추천</button><button data-g="pop">인기 사진</button><button data-g="pick">잘 찍은 사진</button><button data-g="news">오늘의 화제</button></nav>
-      <span class="grow"></span>
-      <button id="trRefresh" class="sm">새로고침</button>
+      <nav class="seg" id="trSeg"><button data-g="rec" class="on">추천</button><button data-g="hot">뜨는</button><button data-g="pop">인기</button><button data-g="pick">잘 찍은</button><button data-g="news">화제</button></nav>
+      <button id="trRefresh" class="ico sm" aria-label="새로고침" title="새로고침"><svg class="i"><use href="#i-refresh"/></svg></button>
     </div>
     <div id="trTopics" class="chips" hidden></div>
     <p class="hint" id="trNote"></p>
@@ -88,16 +116,16 @@
     <div class="bmrow">
       <div class="inwrap">
         <input id="bmq" type="search" placeholder="북마크에서 찾기 (제목·태그·보드·메모)" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
-        <button type="button" id="bmClear" class="clr" aria-label="입력 지우기" hidden>✕</button>
+        <button type="button" id="bmClear" class="clr" aria-label="입력 지우기" hidden><svg class="i"><use href="#i-x"/></svg></button>
       </div>
       <select id="bmsort" aria-label="정렬"><option value="new">최근 저장순</option><option value="old">오래된 순</option><option value="title">제목순</option></select>
     </div>
     <div id="bmfil" hidden></div>
-    <div class="bmrow" id="bmrecRow" hidden><button type="button" id="bmrecBtn" class="sm">✨ 이 보드에 어울리는 이미지</button></div>
+    <div class="bmrow" id="bmrecRow" hidden><button type="button" id="bmrecBtn" class="sm"><svg class="i"><use href="#i-spark"/></svg>이 보드에 어울리는 이미지</button></div>
   </div>
   <div id="bmgrid" class="grid" hidden></div>
   <section id="bmrec" hidden>
-    <div class="rechead"><b>✨ 어울리는 이미지</b><span id="bmrecq"></span><span class="grow"></span><button type="button" id="bmrecClose" class="sm">닫기</button></div>
+    <div class="rechead"><b>어울리는 이미지</b><span id="bmrecq"></span><span class="grow"></span><button type="button" id="bmrecClose" class="sm">닫기</button></div>
     <div id="bmrecMsg" class="hint" hidden></div>
     <div id="bmrecGrid" class="grid"></div>
     <div id="bmrecMore" class="more" hidden><p class="mnote" hidden></p><button type="button" class="mbtn pri" hidden>더 보기</button><button type="button" class="wbtn sm" hidden></button></div>
@@ -111,6 +139,13 @@
   </div>
   <div id="sentinel"></div>
 </main>
+
+<!-- 아래 탭: 엄지손가락이 닿는 곳에 두었어요 -->
+<nav id="tabbar" aria-label="화면 전환">
+  <button id="tabFeed" class="on"><svg class="i"><use href="#i-grid"/></svg><span>피드</span></button>
+  <button id="tabTr"><svg class="i"><use href="#i-trend"/></svg><span>트렌드</span></button>
+  <button id="tabBm"><svg class="i"><use href="#i-bookmark"/></svg><span>북마크</span><em id="bmc"></em></button>
+</nav>
 
 <div id="toast" hidden></div>
 
@@ -127,44 +162,50 @@
 <div id="viewer" class="overlay" hidden>
   <div class="vtop">
     <div class="vmeta"><div id="vtitle"></div><small id="vsrc"></small><div id="vnote" hidden></div></div>
-    <button id="vclose" class="vx" aria-label="닫기">✕</button>
+    <button id="vclose" class="vx" aria-label="닫기"><svg class="i"><use href="#i-x"/></svg></button>
   </div>
   <div class="vstage">
-    <button id="vprev" class="nav" aria-label="이전">‹</button>
+    <button id="vprev" class="nav" aria-label="이전"><svg class="i"><use href="#i-left"/></svg></button>
     <div class="vwrap">
       <img id="vimg" alt="" referrerpolicy="no-referrer" draggable="false">
       <div id="vveil" class="veil" hidden>민감할 수 있는 이미지<br><small>탭하면 보기</small></div>
       <div id="vcropui" hidden>
-        <div id="vcr"></div>
-        <div class="vcbar"><span>손가락으로 찾을 부분을 그려 보세요</span><button type="button" id="vcgo" class="pri">이 부분으로 찾기</button><button type="button" id="vcno">취소</button></div>
+        <div id="vcr"><i class="h tl"></i><i class="h tr"></i><i class="h bl"></i><i class="h br"></i></div>
+        <div class="vcbar"><span>박스를 끌어 옮기고, 모서리를 끌어 크기를 바꿔요</span><button type="button" id="vcgo" class="pri">이 부분으로 찾기</button><button type="button" id="vcno">취소</button></div>
       </div>
     </div>
-    <button id="vnext" class="nav" aria-label="다음">›</button>
+    <button id="vnext" class="nav" aria-label="다음"><svg class="i"><use href="#i-right"/></svg></button>
     <button id="vzreset" class="zreset" hidden>원래 크기</button>
   </div>
   <div id="vinfo" class="vinfo" hidden><span id="vpal"></span><span id="vtone"></span></div>
-  <div class="vbar">
-    <button id="vstar">☆ 북마크</button>
-    <button id="vlike" class="tl" aria-label="이런 이미지 더 보기" title="이런 이미지 더 보기" hidden>👍</button>
-    <button id="vdis" class="tl" aria-label="이런 이미지 덜 보기" title="이런 이미지 덜 보기" hidden>👎</button>
-    <button id="vcrop" hidden>✂ 부분 검색</button>
-    <button id="vboard">보드·메모</button>
-    <button id="vdl">다운로드</button>
-    <button id="vsafe" hidden>블러 해제</button>
-    <button id="vopen">원본 페이지</button>
-    <button id="vsim" class="pri">비슷한 이미지 ↓</button>
+  <div class="vact">
+    <button id="vstar" class="act"><svg class="i"><use href="#i-bookmark"/></svg><span>북마크</span></button>
+    <button id="vboard" class="act"><svg class="i"><use href="#i-folder"/></svg><span>보드·메모</span></button>
+    <button id="vcrop" class="act" hidden><svg class="i"><use href="#i-crop"/></svg><span>부분 검색</span></button>
+    <button id="vdl" class="act"><svg class="i"><use href="#i-download"/></svg><span>저장</span></button>
+    <button id="vlike" class="act" aria-label="이런 이미지 더 보기" title="이런 이미지 더 보기" hidden><svg class="i"><use href="#i-up"/></svg><span>더 보기</span></button>
+    <button id="vdis" class="act" aria-label="이런 이미지 덜 보기" title="이런 이미지 덜 보기" hidden><svg class="i"><use href="#i-down"/></svg><span>덜 보기</span></button>
+    <button id="vhide" class="act" aria-label="이 이미지를 추천하지 않기" title="이 이미지를 다시 추천하지 않기"><svg class="i"><use href="#i-ban"/></svg><span>추천 안 함</span></button>
+    <button id="vsafe" class="act" hidden><svg class="i"><use href="#i-eye"/></svg><span>블러 해제</span></button>
+    <button id="vopen" class="act"><svg class="i"><use href="#i-link"/></svg><span>원본 페이지</span></button>
   </div>
+  <div class="vsimgo"><button id="vsim" class="pri wide">비슷한 이미지<svg class="i"><use href="#i-down2"/></svg></button></div>
   <section id="vsimbox">
     <div class="simhead">
       <b>비슷한 이미지</b><span id="vsimq"></span>
       <span class="grow"></span>
       <button id="vsimtone" class="sm" hidden>같은 톤만</button>
-      <button id="vsimai" class="sm" title="AI가 이미지를 설명해 그 말로 다시 찾아요">AI로 다시 찾기</button>
-      <button id="vsimgo" class="sm">피드로 보기</button>
+      <button id="vsimai" class="sm" title="AI가 이미지를 설명해 그 말로 다시 찾아요"><svg class="i"><use href="#i-spark"/></svg>AI로 다시</button>
+      <button id="vsimgo" class="sm">피드로</button>
+    </div>
+    <div id="vcw" class="vcw" hidden>
+      <span class="lbl">AI가 본 것 · 눌러서 빼거나 넣어요</span>
+      <div id="vcwChips" class="chips"></div>
+      <form id="vcwForm"><input id="vcwIn" type="search" placeholder="직접 입력해서 다시 찾기" maxlength="60" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"><button type="submit" class="sm">찾기</button></form>
     </div>
     <div id="vsimlevels"></div>
   </section>
-  <button id="vfab" class="fab" aria-label="닫기">✕ 닫기</button>
+  <button id="vfab" class="fab" aria-label="닫기"><svg class="i"><use href="#i-x"/></svg>닫기</button>
 </div>
 
 <div id="bmSheet" class="overlay wrap" hidden>
@@ -182,20 +223,41 @@
   </form>
 </div>
 
+<div id="hideSheet" class="overlay wrap" hidden>
+  <div class="sheet bsheet">
+    <div class="grab" aria-hidden="true"><i></i></div>
+    <div class="shead"><h2>이 이미지를 추천하지 않기</h2></div>
+    <div class="sbody">
+      <p class="note">고르면 이 이미지는 바로 사라지고, 다시는 나오지 않아요. 같은 종류를 몇 번 알려 주시면 비슷한 이미지도 덜 나오거나 블러로 가려져요. 이 기기에만 저장돼요.</p>
+      <button type="button" id="hidePref" class="opt"><b>관심 없어요</b><small>이 이미지를 숨기고, 겹치는 태그를 덜 보여 드려요</small></button>
+      <button type="button" id="hideBad" class="opt"><b>보기 불편해요</b><small>숨기고, 비슷한 이미지는 블러로 가려 드려요 (탭하면 볼 수 있어요)</small></button>
+    </div>
+    <div class="sfoot"><button type="button" id="hideCancel" class="wide">취소</button></div>
+  </div>
+</div>
+
 <div id="settings" class="overlay wrap" hidden>
   <div class="sheet bsheet">
     <div class="grab" aria-hidden="true"><i></i></div>
     <div class="shead"><h2>설정</h2></div>
     <div class="sbody">
+      <h3>안전</h3>
       <label class="row"><input type="checkbox" id="sBlur"> 선정적일 수 있는 이미지 블러 (권장)</label>
       <label class="row"><input type="checkbox" id="sMl"> 브라우저 AI로 이미지 직접 검사 <small>(켜면 더 안전, 처음 한 번 준비하는 동안 화면이 잠깐 느려질 수 있어요)</small></label>
+      <div id="avoidBox">
+        <div class="row between"><span>추천 안 함 <small id="avoidCount"></small></span><button id="avoidClear" class="sm" hidden>모두 지우기</button></div>
+        <div id="avoidView" class="chips" hidden></div>
+        <p class="note" id="avoidNote">이미지 화면의 [추천 안 함]으로 숨긴 것이 여기에 쌓여요. 태그를 누르면 그 태그만 되돌려요.</p>
+      </div>
+      <p class="note">공포·잔혹 주제는 해제할 수 없어요. 검색 기록은 저장하지 않아요. 상단의 눈 모양 비공개 모드를 켜면 북마크와 취향이 화면에서 사라지고 학습도 멈춰요.</p>
+      <h3>AI</h3>
       <label class="row" id="capRow" hidden><input type="checkbox" id="sCap"> AI 이미지 설명으로 비슷한 이미지 찾기 <small>(작게 줄인 이미지를 Cloudflare Workers AI에 보내요. 무료 사용량을 쓰고, 같은 이미지는 저장해 두었다가 다시 써요)</small></label>
       <div id="tasteBox">
         <label class="row"><input type="checkbox" id="sTaste"> 내 취향 학습 <small>(북마크하거나 오래 본 이미지의 태그·색·톤을 ‘점수’로만 이 기기에 기억해서, 결과의 순서를 살짝 맞춰 줘요. 검색어·본 이미지 목록은 저장하지 않고, 서버나 검색 소스로 보내지 않아요. 45일이 지나면 절반씩 잊어요)</small></label>
         <div id="tasteView" class="chips" hidden></div>
-        <div class="btns"><button id="tasteClear" hidden>취향 지우기</button></div>
+        <p class="note" id="tasteNote" hidden>태그를 누르면 그 항목만 지워져요.</p>
+        <div class="btns"><button id="tasteClear" hidden>취향 모두 지우기</button></div>
       </div>
-      <p class="note">공포·잔혹 주제는 해제할 수 없어요. 검색 기록은 저장하지 않아요. 상단의 🕶 비공개 모드를 켜면 북마크와 취향이 화면에서 사라지고 학습도 멈춰요.</p>
       <h3>검색 소스</h3>
       <div id="srcList"></div>
       <div id="lockBox" hidden>
@@ -219,6 +281,7 @@
 <script src="/relevance.js"></script>
 <script src="/safety.js"></script>
 <script src="/taste.js"></script>
+<script src="/avoid.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

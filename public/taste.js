@@ -19,7 +19,7 @@
   // 이미지 하나에서 취향 단어를 뽑습니다: 태그가 충분하면 태그, 부족하면 제목의 단어(위키 화제 사진은 인물·사건 이름이라 제외)
   function keysOf(it) {
     const tags = [...new Set((it.tags || []).map(norm).filter(okKey))];
-    if (tags.length >= 2 || it.grp === "news") return tags.slice(0, 8);
+    if (tags.length >= 2 || it.grp === "news" || it.grp === "hot") return tags.slice(0, 8); // 위키 화제(인물·사건)와 네이버 웹 이미지(제목이 잡다함)는 제목에서 배우지 않음
     const title = (norm(it.title).match(/[\p{L}\p{N}]{2,}/gu) || []).filter(okKey);
     return [...new Set([...tags, ...title])].slice(0, 6);
   }
@@ -57,6 +57,8 @@
       top: (n = 8) => rank(data.tags, n, true).map((x) => x.k),
       view: () => ({ tags: rank(data.tags, 14, true), less: rank(data.tags, 6, false), colors: rank(data.colors, 4, true), tones: rank(data.tones, 3, true) }),
       isEmpty: () => { const v = [rank(data.tags, 1, true), rank(data.tags, 1, false), rank(data.colors, 1, true), rank(data.tones, 1, true)]; return v.every((a) => !a.length); },
+      // 학습된 항목 하나를 지웁니다. kind: "tags" | "tones" | "colors"
+      forget: (kind, k) => { if (data[kind] && k in data[kind]) { delete data[kind][k]; save(); return true; } return false; },
       clear: () => { data = { v: 1, tags: {}, colors: {}, tones: {} }; save(); },
       reload: () => { data = read(); },
     };

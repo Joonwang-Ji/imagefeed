@@ -118,6 +118,10 @@ globalThis.fetch = saved;
       const b = JSON.parse(opt.body); const grow = { 벚꽃: 40, 한옥: 20, 캠핑: 2 };
       return jres(dlBody(b.keywordGroups.map((g) => g.groupName), grow));
     }
+    if (u.startsWith("https://naverapihub.apigw.ntruss.com/search/v1/image")) { // 뜨는 주제의 네이버 이미지
+      const q = decodeURIComponent(u.match(/query=([^&]+)/)[1]);
+      return jres({ items: Array.from({ length: 20 }, (_, i) => ({ title: `<b>${q}</b> 사진 ${i}`, link: `https://blog.test/${encodeURIComponent(q)}${i}.jpg`, thumbnail: `http://search.pstatic.net/common/?src=${i}&type=b150`, sizewidth: "800", sizeheight: "600" })) });
+    }
     return keep(url, opt);
   };
   const E = { ...env, NAVER_ID: "id", NAVER_SECRET: "sec" };
@@ -152,17 +156,28 @@ globalThis.fetch = saved;
   ok(jt.rising.filter((x) => x.kind === "rising").every((x) => x.note.startsWith("▲")), "rising topics carry a growth note");
   ok(!jt.rising.some((x) => x.q === "캠핑" && x.kind === "rising"), "flat topic (growth below 15%) is not 'rising'");
   ok(jt.rising.length === 6 && jt.rising.slice(2).every((x) => x.kind === "hot"), "list filled up to 6 with high-volume topics: " + jt.rising.map((x) => x.q + ":" + x.kind));
+  // 뜨는 주제의 네이버 이미지 (grp hot): 뜨는 주제 앞 3개로 이미지 검색, 주제당 14장
+  {
+    const hot = jt.items.filter((i) => i.grp === "hot"), imgCalls = seen.filter((c) => c.u.includes("search/v1/image"));
+    const top3 = jt.rising.slice(0, 3).map((x) => x.label);
+    ok(imgCalls.length === 3 && imgCalls.every((c) => c.opt.headers["X-NCP-APIGW-API-KEY-ID"] === "id"), "hot photos: exactly 3 naver image searches: " + imgCalls.length);
+    ok(hot.length === 42 && hot.every((i) => i.src === "naver" && i.thumb.startsWith("https://")), "hot photos: 3 topics x 14 images, https: " + hot.length);
+    ok(new Set(hot.map((i) => i.topic)).size === 3 && hot.every((i) => top3.includes(i.topic)), "hot photos come from the top-3 rising topics: " + [...new Set(hot.map((i) => i.topic))]);
+    ok(hot.every((i) => !/<b>/.test(i.title)) && hot.every((i) => !i.alt || i.alt.startsWith("https://")), "naver html stripped from titles, alt upgraded to https");
+    ok(jt.items.slice(0, 6).some((i) => i.grp === "hot"), "hot photos are mixed into the round-robin near the top: " + jt.items.slice(0, 6).map((i) => i.grp));
+  }
   // 12시간 캐시
   seen.length = 0; await worker.fetch(req("/api/trends"), E);
   ok(seen.filter((c) => c.u.includes("search-trend")).length === 0, "datalab result cached (no second round of requests)");
   // 권한 없음 → 이유를 알림, 다른 구성은 그대로
-  caches.default.store.clear(); dlMode = "denied";
+  caches.default.store.clear(); dlMode = "denied"; seen.length = 0;
   rt = await worker.fetch(req("/api/trends"), E); jt = await rt.json();
+  ok(!jt.items.some((i) => i.grp === "hot") && !seen.some((c) => c.u.includes("search/v1/image")), "no topics (datalab denied) -> no hot photos and no image searches");
   ok(rt.status === 200 && jt.dl.state === "err" && jt.dl.why === "denied" && jt.dl.status === 403 && jt.rising.length === 0, "datalab denied: reason reported, rest still works: " + JSON.stringify(jt.dl));
   ok(jt.season.length > 0 && jt.items.some((i) => i.grp === "pick"), "season topics and photos unaffected by datalab failure");
   // 키가 없으면 호출 안 함
   seen.length = 0; rt = await worker.fetch(req("/api/trends"), env); jt = await rt.json();
-  ok(jt.dl.state === "off" && !seen.some((c) => c.u.includes("search-trend")), "no naver key -> datalab off, never called");
+  ok(jt.dl.state === "off" && !seen.some((c) => c.u.includes("search-trend")) && !seen.some((c) => c.u.includes("search/v1/image")), "no naver key -> datalab off, never called, no hot photos");
   // 끄기
   seen.length = 0; rt = await worker.fetch(req("/api/trends"), { ...E, TREND_TOPICS: "off" }); jt = await rt.json();
   ok(jt.dl.state === "off" && !seen.some((c) => c.u.includes("search-trend")), "TREND_TOPICS=off skips datalab");
@@ -262,6 +277,27 @@ ok(CATS.every((c) => c[2].length >= 5), "each category has >= 5 sub topics");
   ok(jw.items.length === 2 && !jw.err, "if the Korean search fails the English results are still returned");
   terms.length = 0; jw = await sq("q=cat&qe=cat&page=1&pr=1");
   ok(terms.length === 1, "English-only query never doubles the request");
+}
+
+// ---- 기독교 세계관: 할로윈·다른 종교 주제는 추천에서 뺌 ----
+{
+  const { offTopic } = await import("../src/topics.js");
+  ok(["할로윈 호박", "핼러윈 파티", "Halloween costume", "부처님오신날 연등", "Buddhism", "이슬람 모스크", "Islam", "라마단", "타로 카드", "사주 보는 법", "마녀 빗자루"].every((t) => offTopic(t)), "other-faith / halloween / occult phrases are caught");
+  ok(["크리스마스 트리", "부활절 달걀", "대림절 촛불", "고딕 성당", "스테인드글라스", "교회 첨탑", "Islamabad skyline", "추석 보름달", "설날 한복", "수능 응원"].every((t) => !offTopic(t)), "Christian and ordinary Korean holiday topics are not caught");
+  const keep = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes("pageviews/top/ko")) return new Response("x", { status: 500 });
+    if (u.includes("pageviews/top/en")) return jres({ items: [{ articles: [{ article: "Halloween" }, { article: "Ramadan" }, { article: "Mount_Fuji" }, { article: "Buddhism" }] }] });
+    if (u.includes("en.wikipedia.org/w/api.php")) {
+      const pg = (id, t) => ({ [id]: { title: t, thumbnail: { source: `https://upload.wikimedia.org/${id}.jpg`, width: 640, height: 400 }, original: { source: `https://upload.wikimedia.org/${id}_o.jpg` } } });
+      return jres({ query: { pages: { ...pg(1, "Halloween"), ...pg(2, "Ramadan"), ...pg(3, "Mount Fuji"), ...pg(4, "Buddhism") } } });
+    }
+    return new Response("nf", { status: 404 });
+  };
+  const rx = await worker.fetch(req("/api/trends"), env), jx = await rx.json();
+  ok(jx.items.map((i) => i.title).join() === "Mount Fuji", "trend photos: Halloween / Ramadan / Buddhism pages dropped: " + jx.items.map((i) => i.title));
+  globalThis.fetch = keep;
 }
 
 console.log(fail ? `\n${fail} failed` : "\nall passed"); process.exit(fail ? 1 : 0);

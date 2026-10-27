@@ -64,4 +64,16 @@ ok(T.isEmpty() && JSON.stringify(JSON.parse(mem.taste).tags) === "{}", "clear wi
 mem.taste = JSON.stringify({ v: 99, junk: 1 });
 ok(create(store, clock).isEmpty(), "unknown stored format ignored");
 
+// ---- 학습된 항목 하나씩 지우기 ----
+{
+  const T2 = create({ get: (k, d) => d, set: () => {} }, clock);
+  T2.learn(["alpha", "beta"], 3, { colors: ["red"], tone: "vivid" }); T2.learn(["gamma"], -3);
+  ok(T2.forget("tags", "alpha") === true && !T2.view().tags.some((x) => x.k === "alpha") && T2.view().tags.some((x) => x.k === "beta"), "forget one tag leaves the others");
+  ok(T2.affinity(["alpha"]) === 0, "forgotten tag no longer influences ranking");
+  ok(T2.forget("tags", "gamma") === true && T2.view().less.length === 0, "a 'less' tag can be removed too");
+  ok(T2.forget("tones", "vivid") === true && T2.forget("colors", "red") === true && T2.view().tones.length === 0 && T2.view().colors.length === 0, "tones and colors can be removed");
+  ok(T2.forget("tags", "nope") === false, "unknown item: nothing happens");
+  ok(keysOf({ tags: [], title: "블로그 후기 맛집", grp: "hot" }).length === 0, "naver hot-photo titles are not learned");
+}
+
 console.log(fail ? `\n${fail} failed` : "\nall passed"); process.exit(fail ? 1 : 0);

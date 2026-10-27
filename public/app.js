@@ -22,7 +22,7 @@ const CATS = [
   ["🏞️", "풍경", ["바다 수평선", "안개 낀 산", "숲길", "노을 하늘", "호수 반영", "폭포", "사막 모래언덕", "초원"]],
   ["🌆", "도시", ["도시 야경", "비 오는 거리", "골목길", "고층 빌딩", "지하철역", "다리 야경", "옥상 전망"]],
   ["🛋️", "인테리어", ["미니멀 거실", "아늑한 침실", "북유럽 주방", "작은 서재", "호텔 욕실", "카페 인테리어", "빈티지 소품"]],
-  ["🏛️", "건축", ["한옥 처마", "고딕 성당", "현대 건축", "나선 계단", "전통 사원", "스테인드글라스", "노출 콘크리트"]],
+  ["🏛️", "건축", ["한옥 처마", "고딕 성당", "현대 건축", "나선 계단", "아치 회랑", "스테인드글라스", "노출 콘크리트"]],
   ["🍜", "음식", ["한식 한 상", "디저트", "브런치", "라떼아트", "갓 구운 빵", "길거리 음식", "과일 접시"]],
   ["🌸", "꽃과 식물", ["벚꽃", "들꽃", "다육식물", "온실 정원", "이끼", "단풍잎", "해바라기 밭"]],
   ["🐈", "동물", ["고양이", "강아지", "새", "바다 생물", "야생동물", "곤충 접사", "말"]],
@@ -38,7 +38,7 @@ const CATS = [
   ["🌊", "물과 불", ["파도", "물방울", "폭우", "불꽃", "모닥불", "얼음", "연기"]],
   ["🎵", "음악", ["기타", "피아노 건반", "콘서트 무대", "LP 레코드", "첼로", "합창", "버스킹"]],
   ["📚", "책과 문구", ["도서관", "손글씨 노트", "만년필", "작은 서점", "펜과 잉크", "책상 위", "종이 공예"]],
-  ["🧪", "교실과 과학", ["칠판 수식", "교실 풍경", "수학 도형", "지구본과 지도", "과학 실험", "현미경", "별자리 지도"]],
+  ["🧪", "교실과 과학", ["칠판 수식", "교실 풍경", "수학 도형", "지구본과 지도", "과학 실험", "현미경", "천체 지도"]],
   ["🎒", "배움", ["책가방", "운동장", "도서관 열람실", "스케치북", "블록 장난감", "퍼즐"]],
   ["⚽", "스포츠", ["축구장", "농구 코트", "새벽 러닝", "서핑", "클라이밍", "자전거", "수영장"]],
   ["🚆", "탈것", ["기차", "비행기 창밖", "클래식 카", "범선", "버스 정류장", "열기구"]],
@@ -46,7 +46,7 @@ const CATS = [
   ["💻", "기술", ["코딩 화면", "회로기판", "서버실", "로봇", "드론", "스마트폰 목업", "미래 도시"]],
   ["🏡", "가족과 일상", ["놀이터", "가족 소풍", "생일 파티", "집밥", "산책길", "빨래 널린 마당"]],
   ["🍂", "계절", ["봄 새순", "여름 소나기", "가을 단풍길", "눈 내린 마을", "첫눈", "장마"]],
-  ["🇰🇷", "한국", ["한옥마을", "전통시장", "서울 야경", "제주 바다", "사찰 풍경", "골목 벽화", "한강 노을"]],
+  ["🇰🇷", "한국", ["한옥마을", "전통시장", "서울 야경", "제주 바다", "고궁 풍경", "골목 벽화", "한강 노을"]],
   ["🧑", "사람", ["흑백 인물 사진", "거리 스냅", "손", "실루엣", "군중 속 한 사람", "뒷모습", "웃음"]],
   ["📷", "사진 스타일", ["미니멀 구도", "광각 풍경", "접사", "항공 사진", "장노출", "하이앵글", "대칭 구도"]],
   ["☕", "카페와 공간", ["북카페", "루프탑", "작업실", "동네 빵집", "창가 자리", "벽돌 골목 카페"]],
@@ -82,6 +82,17 @@ const S = {
 };
 // 취향 저장소(이 기기 안에서만): 비공개 모드이거나 설정에서 꺼져 있으면 쓰지도, 배우지도 않습니다.
 const Taste = TasteStore.create(LS);
+// "추천 안 함" 저장소(이 기기 안에서만): 숨긴 이미지의 주소 키와 태그 횟수만 기억합니다. 비공개 모드·취향 학습 설정과 상관없이 늘 동작합니다(안전 기능).
+const Avoid = AvoidStore.create(LS);
+const avoidKeys = (it) => [...new Set([...(it.tags || []).map((t) => String(t).toLowerCase()), ...(it.grp === "news" || it.grp === "hot" ? [] : tokens(it.title || ""))])];
+// 이미지에 "추천 안 함" 판정을 적용합니다: 0 그대로, 1 순위 낮춤, 2 블러(탭하면 보기). 블러는 선정성 블러와 같은 방식으로 가립니다.
+function applyAvoid(it) {
+  const v = Avoid.isEmpty() ? 0 : Avoid.verdict(avoidKeys(it));
+  if (v === 2 && !it.safe) { it.adult = true; it.ai = true; it.avoidBlur = true; }
+  return v;
+}
+// 버튼 안의 글자(span)만 바꿉니다 (아이콘은 그대로)
+const setLbl = (btn, t) => { const s = btn.querySelector("span"); if (s) s.textContent = t; else btn.textContent = t; };
 const tasteOn = () => S.taste && !S.priv;
 const toneMatch = (an, t) => !!an && (t === "warm" || t === "cool" ? an.temp === t : an.tone === t);
 const TONE_LIST = [["", "전체"], ["pastel", "파스텔"], ["vivid", "비비드"], ["bright", "밝은"], ["muted", "차분한"], ["dark", "어두운"], ["mono", "흑백"], ["warm", "따뜻한"], ["cool", "차가운"]];
@@ -149,7 +160,7 @@ async function toggleBookmark(it) {
 }
 function refreshStars() {
   document.querySelectorAll(".card").forEach((c) => { const b = c.querySelector(".star"); if (b && c._it) b.textContent = S.bmIds.has(c._it.id) ? "★" : "☆"; });
-  const it = curItem(); if (it) $("#vstar").textContent = S.bmIds.has(it.id) ? "★ 북마크됨" : "☆ 북마크";
+  const it = curItem(); if (it) { const on = S.bmIds.has(it.id); setLbl($("#vstar"), on ? "북마크됨" : "북마크"); $("#vstar").classList.toggle("on", on); }
 }
 
 // ---------- 메이슨리 ----------
@@ -201,10 +212,11 @@ function makeCard(it, open) {
   const img = document.createElement("img"); img.alt = it.title || ""; img.decoding = "async"; el.appendChild(img);
   const star = document.createElement("button"); star.className = "star"; star.setAttribute("aria-label", "북마크"); star.textContent = S.bmIds.has(it.id) ? "★" : "☆"; el.appendChild(star);
   const veil = document.createElement("div"); veil.className = "veil"; veil.innerHTML = "민감할 수 있는 이미지<br><small>탭하면 보기</small>"; el.appendChild(veil);
-  const tag = document.createElement("span"); tag.className = "tag"; tag.textContent = srcName(it.src); el.appendChild(tag);
+  const tag = document.createElement("span"); tag.className = "tag"; tag.textContent = it.grp === "hot" && it.topic ? it.topic : srcName(it.src); el.appendChild(tag);
+  if (it.avoidBlur) el.classList.add("avoid");
   el.addEventListener("click", (e) => {
     if (e.target === star) { e.stopPropagation(); toggleBookmark(it); return; }
-    if (el.dataset.st === "flag" && !it.revealed && S.blur) { it.revealed = true; el.classList.add("reveal"); return; }
+    if (el.dataset.st === "flag" && !it.revealed && (S.blur || it.avoidBlur)) { it.revealed = true; el.classList.add("reveal"); return; }
     open();
   });
   io.observe(el);
@@ -471,7 +483,7 @@ class Feed {
     const T = this.terms, fold = this.o.fold !== false && !!T?.specific, pinned = !!(this.o.filters && S.only.size);
     for (const { src, items, base = 0 } of arr) {
       const part = [];
-      items.forEach((it, i) => { const k = keyOf(it); if (!this.keys.has(k)) part.push({ it, k, i, j: Relevance.judge(it, T, src.id) }); });
+      items.forEach((it, i) => { const k = keyOf(it); if (!this.keys.has(k) && !Avoid.isHidden(k)) part.push({ it, k, i, j: Relevance.judge(it, T, src.id) }); });
       // 이 소스의 이미지가 검색어와 대체로 안 맞으면(평균 관련도가 낮으면) 이 소스의 비중을 줄입니다.
       const known = part.filter((p) => p.j.known);
       const avg = known.length >= 8 ? known.reduce((t, p) => t + p.j.rel, 0) / known.length : 0.6;
@@ -479,7 +491,8 @@ class Feed {
       for (const { it, k, i, j } of part) {
         // 취향 학습을 켰을 때만: 이 기기의 취향 점수로 순서를 최대 ±50% 조정 (검색어·요청은 그대로, 받아 온 결과를 다시 줄 세울 뿐)
         const aff = this.o.taste && tasteOn() && it.grp !== "news" ? Taste.affinity(TasteStore.keysOf(it)) : 0;
-        const sc = src.w * bias * scale * Relevance.mul(j.tier) / (60 + base + i) * (1 + 0.5 * aff); // 소스 순위 × 소스 가중치 × 관련도 등급. 여러 소스에 나오면 점수가 합쳐짐
+        const av = applyAvoid(it); // "추천 안 함"으로 배운 태그와 겹치면 순위를 낮추거나(1) 블러로 가림(2)
+        const sc = src.w * bias * scale * Relevance.mul(j.tier) / (60 + base + i) * (1 + 0.5 * aff) * (av ? 0.3 : 1); // 소스 순위 × 소스 가중치 × 관련도 등급. 여러 소스에 나오면 점수가 합쳐짐
         const ex = this.pend.get(k);
         if (ex) {
           ex.score += sc; if (j.rel > ex.rel) { ex.rel = j.rel; ex.tier = j.tier; }
@@ -497,7 +510,7 @@ class Feed {
   // 대기열을 점수순으로 정렬해 보여 줄 것(strong)과 접어 둘 것(weak)으로 나눕니다.
   view() {
     const fold = this.o.fold !== false && !!this.terms?.specific && !this.weakOpen, strong = [], weak = [];
-    for (const e of this.pend.values()) (fold && e.tier === "weak" ? weak : strong).push(e);
+    for (const e of this.pend.values()) { if (Avoid.isHidden(e.it.key)) continue; (fold && e.tier === "weak" ? weak : strong).push(e); }
     strong.sort((a, b) => b.score - a.score);
     return { strong, weak };
   }
@@ -871,7 +884,7 @@ function newLevel(list, i) {
   level.m = new Masonry(wrap.querySelector(".grid"));
   level.sent = wrap.querySelector(".simsent"); level.msg = wrap.querySelector(".simmsg"); level.more = wrap.querySelector(".more");
   level.feed = new Feed(level.m, {
-    filters: false, chunk: 30, fold: false, // "비슷한" 이미지는 정확히 같은 단어가 없어도 되므로 접지 않고, 점수순으로만 보여 줍니다
+    filters: false, chunk: 30, // 비슷한 이미지도 검색어와 거의 안 맞는 것(weak)은 [관련도 낮은 결과 보기] 뒤로 접어, 엉뚱한 이미지가 섞이지 않게 합니다
     onMore: () => renderMore(level.more, level.feed),
     open: (f, it) => pushLevel(f.items, f.items.indexOf(it)),
     onAfter: () => simAfter(level),
@@ -931,12 +944,13 @@ function showItem(keepSim) {
   dwellT = setTimeout(() => { if (lv() && curItem() === it) learnFrom(it, 1); }, 7000); // 7초 넘게 보면 관심이 있는 것으로 보고 약하게 배움
   $("#vlike").hidden = $("#vdis").hidden = !tasteOn(); $("#vcrop").hidden = !captionOn() || (it.adult && !it.safe);
   renderVInfo(it);
-  const hide = it.adult && S.blur && !it.revealed;
+  const hide = it.adult && (S.blur || it.avoidBlur) && !it.revealed;
   img.classList.toggle("blur", hide); $("#vveil").hidden = !hide;
-  $("#vsafe").hidden = !(it.adult && S.blur); // 블러가 걸린 이미지에서만 "블러 해제" 버튼
+  $("#vsafe").hidden = !(it.adult && (S.blur || it.avoidBlur)); // 블러가 걸린 이미지에서만 "블러 해제" 버튼
+  $("#vhide").hidden = !!it.fromBm; // 북마크는 내가 직접 담은 것이라 "추천 안 함" 대상이 아님
   $("#vtitle").textContent = it.title || srcName(it.src);
   $("#vsrc").textContent = srcName(it.src) + (it.w ? ` · ${it.w}×${it.h}` : "");
-  refreshStars(); $("#vboard").textContent = it.board ? "보드: " + it.board : "보드·메모";
+  refreshStars(); setLbl($("#vboard"), it.board ? "보드: " + it.board : "보드·메모");
   $("#vnote").textContent = it.note || ""; $("#vnote").hidden = !it.note;
   img.referrerPolicy = "no-referrer";
   img.src = it.blob ? URL.createObjectURL(it.blob) : it.thumb;
@@ -955,7 +969,7 @@ function showItem(keepSim) {
 let simT = null;
 function simSchedule(level) {
   clearTimeout(simT); clearTimeout(level.rrT);
-  level.feed.reset(); level.m.clear(); level.msg.hidden = true; renderMore(level.more, level.feed); level.simQ = ""; level.sig = null; level.cw = ""; level.rrDone = 0; level.toneOnly = false; level.m.pred = null; level.crop = false; updateSimHead();
+  level.feed.reset(); level.m.clear(); level.msg.hidden = true; renderMore(level.more, level.feed); level.simQ = ""; level.sig = null; level.cw = ""; level.rrDone = 0; level.toneOnly = false; level.m.pred = null; level.crop = false; level.fixed = false; level.cap = ""; level.capWords = []; level.cwOn = null; updateSimHead();
   if (S.offline) return;
   const it = level.list[level.cur];
   simT = setTimeout(() => { if (V.stack.includes(level) && level.list[level.cur] === it) simBegin(level, it); }, 400);
@@ -974,12 +988,18 @@ async function simBegin(level, it, force) {
     if (!same()) return;
     level.msg.hidden = true;
   }
-  level.cap = cap; level.cw = window.ColorTools.topColor(level.sig);
+  level.cap = cap; level.capWords = capWordsOf(cap); level.cwOn = null; level.cw = window.ColorTools.topColor(level.sig);
   simStart(level, 0);
 }
 // 비슷한 이미지 검색어 후보 (앞에서부터 시도하고, 결과가 없으면 다음 후보):
 // AI 설명 → 태그(+색 이름) → 태그 → 제목 키워드(+색 이름) → 제목 키워드 → 현재 검색어
-function simCandidates(it, cap, cw) {
+// crop=true(부분 검색)이면 이미지 전체의 태그·제목·현재 검색어로 돌아가지 않고, 선택한 부분의 AI 설명 조각만 씁니다. (스피커를 골랐는데 전체 이미지의 가방이 나오던 문제 방지)
+function simCandidates(it, cap, cw, crop) {
+  if (crop) {
+    const w = capWordsOf(cap), c = [];
+    if (w.length) { c.push(w.join(" ")); if (w.length > 3) c.push(w.slice(0, 3).join(" ")); if (w.length > 2) c.push(w.slice(0, 2).join(" ")); c.push(w[0]); }
+    return [...new Set(c)];
+  }
   const tags = (it.tags || []).map((t) => String(t).toLowerCase().trim()).filter((t) => t.length > 1);
   const tt = [...new Set(tokens(it.title || ""))];
   // 색 이름은 검색어에 이미 색이 없을 때만 덧붙임 (한글 검색어면 한글 색 이름)
@@ -1009,7 +1029,7 @@ function simRerank(level) {
 }
 function simStart(level, ci) {
   const it = level.list[level.cur]; if (!it) return;
-  if (ci === 0) level.cands = simCandidates(it, level.cap, level.cw);
+  if (ci === 0 && !level.fixed) level.cands = simCandidates(it, level.cap, level.cw, level.crop);
   const q = level.cands[ci]; level.ci = ci;
   level.m.clear(); level.msg.hidden = true;
   const f = level.feed; f.reset();
@@ -1024,15 +1044,49 @@ function simAfter(level) {
   if (!f.ended) return;
   const act = f.sources(), allErr = act.length && act.every((s) => f.stat[s.id]?.err);
   if (!allErr && level.ci + 1 < level.cands.length) return simStart(level, level.ci + 1);
-  level.msg.textContent = allErr ? "비슷한 이미지를 불러오지 못했어요. 잠시 뒤 다시 시도해 주세요." : "비슷한 이미지를 찾지 못했어요.";
+  level.msg.textContent = allErr ? "비슷한 이미지를 불러오지 못했어요. 잠시 뒤 다시 시도해 주세요." : level.cap ? "비슷한 이미지를 찾지 못했어요. 위의 단어를 빼거나 직접 입력해 보세요." : "비슷한 이미지를 찾지 못했어요.";
   level.msg.hidden = false;
 }
 function updateSimHead() {
   const l = lv(); $("#vsimq").textContent = l?.simQ ? `${l.crop ? "✂ " : ""}‘${l.simQ}’` : "";
   const it = l?.list[l.cur], b = $("#vsimtone");
   b.hidden = !it?.an?.tone || !!l?.crop; b.classList.toggle("on", !!l?.toneOnly);
+  renderCw(l);
   if (!b.hidden) b.textContent = `${l.toneOnly ? "✓ " : ""}같은 톤만 (${window.ColorTools.TONE_KO[it.an.tone]})`;
 }
+// ----- AI가 본 것 보정: 단어 칩을 눌러 빼거나 넣고, 직접 입력해서 다시 찾습니다 -----
+const capWordsOf = (cap) => [...new Set(String(cap || "").toLowerCase().split(/[\s,]+/).filter((w) => w.length > 1))].slice(0, 8);
+function renderCw(l) {
+  const box = $("#vcw"), show = !!l && (l.crop || !!l.cap) && (l.capWords || []).length > 0;
+  box.hidden = !show;
+  if (!show) return;
+  const on = l.cwOn || (l.cwOn = new Set(l.capWords));
+  const chips = $("#vcwChips"); chips.textContent = "";
+  l.capWords.forEach((w) => {
+    const b = document.createElement("button"); b.type = "button"; b.textContent = w; b.className = on.has(w) ? "on" : "off"; b.setAttribute("aria-pressed", String(on.has(w)));
+    b.onclick = () => {
+      if (on.has(w) && on.size === 1) return toast("단어가 하나는 남아 있어야 해요");
+      on.has(w) ? on.delete(w) : on.add(w);
+      simRetry(l, l.capWords.filter((x) => on.has(x)).join(" "));
+    };
+    chips.appendChild(b);
+  });
+}
+// 검색어를 지정해서 다시 찾습니다 (AI 설명 후보 목록 대신 이 검색어 하나만 씀)
+function simRetry(level, q) {
+  q = String(q || "").trim().slice(0, 60);
+  if (!q || !V.stack.includes(level)) return;
+  clearTimeout(simT); clearTimeout(level.rrT);
+  level.fixed = true; level.cands = [q]; level.rrDone = 0; level.toneOnly = false; level.m.pred = null; level.msg.hidden = true;
+  simStart(level, 0);
+}
+$("#vcwForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const l = lv(), v = $("#vcwIn").value.trim(); if (!l || !v) return;
+  l.capWords = [...new Set(v.toLowerCase().split(/[\s,]+/).filter((w) => w.length > 1))].slice(0, 8); l.cwOn = new Set(l.capWords); l.cap = v;
+  $("#vcwIn").value = ""; $("#vcwIn").blur();
+  simRetry(l, v);
+});
 // 현재 이미지의 팔레트(대표 색)와 톤을 보여 줍니다. 색 점을 누르면 그 색 필터로 같은 주제를 다시 찾아요.
 function renderVInfo(it) {
   const box = $("#vinfo"), pal = $("#vpal"), a = it?.an; pal.textContent = ""; $("#vtone").textContent = "";
@@ -1059,30 +1113,57 @@ $("#vsimtone").onclick = () => {
 $("#vlike").onclick = () => { const it = curItem(); if (it) { learnFrom(it, 2); toast("이런 이미지를 더 보여 드릴게요"); } };
 $("#vdis").onclick = () => { const it = curItem(); if (it) { learnFrom(it, -3); toast("이런 이미지는 덜 보여 드릴게요"); } };
 
-// ----- 부분 검색: 이미지에서 찾고 싶은 영역을 그려서, 그 부분만 AI로 설명해 비슷한 이미지를 찾습니다 -----
-const CR = { r: { x: 0.2, y: 0.2, w: 0.6, h: 0.6 }, drag: null };
+// ----- 부분 검색: 이미지에서 찾고 싶은 영역을 상자로 고르고, 그 부분만 AI로 설명해 비슷한 이미지를 찾습니다 -----
+// 상자는 처음부터 이미지 가운데에 떠 있고, 안쪽을 끌면 옮기고, 네 모서리를 끌면 크기가 바뀝니다. (이미지 밖으로는 나가지 않음)
+// 상자 밖의 빈 곳을 끌어 새로 그릴 수도 있어요.
+// 좌표는 모두 #vcropui(이미지가 놓인 틀)에 대한 0~1 비율입니다.
+const CR = { r: { x: 0.2, y: 0.2, w: 0.6, h: 0.6 }, drag: null, b: { x: 0, y: 0, w: 1, h: 1 } };
+const CR_MIN = 0.07, CR_HIT = 32;
 function setCr(r) { CR.r = r; const e = $("#vcr").style; e.left = r.x * 100 + "%"; e.top = r.y * 100 + "%"; e.width = r.w * 100 + "%"; e.height = r.h * 100 + "%"; }
+// 이미지가 화면에서 차지하는 영역 (상자가 이 안에서만 움직이도록)
+function crBounds() {
+  const ib = $("#vimg").getBoundingClientRect(), ub = $("#vcropui").getBoundingClientRect();
+  if (!ub.width || !ub.height || !ib.width || !ib.height) return { x: 0, y: 0, w: 1, h: 1 };
+  const x0 = clamp((ib.left - ub.left) / ub.width, 0, 1), y0 = clamp((ib.top - ub.top) / ub.height, 0, 1), x1 = clamp((ib.right - ub.left) / ub.width, 0, 1), y1 = clamp((ib.bottom - ub.top) / ub.height, 0, 1);
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
 function cropOpen() {
   const it = curItem(); if (!it) return;
   if (!captionOn()) return toast("AI 설명을 쓸 수 없어요. 설정에서 켜져 있는지 확인해 주세요.");
   if (it.adult && !it.safe) return toast("민감할 수 있는 이미지는 부분 검색을 쓸 수 없어요");
-  zReset(); $("#vcropui").hidden = false; setCr({ x: 0.2, y: 0.2, w: 0.6, h: 0.6 });
+  zReset(); $("#vcropui").hidden = false;
+  const b = CR.b = crBounds();
+  setCr({ x: b.x + b.w * 0.2, y: b.y + b.h * 0.2, w: b.w * 0.6, h: b.h * 0.6 });
 }
 function cropClose() { $("#vcropui").hidden = true; CR.drag = null; }
+// 한 축(가로 또는 세로)에서 고정점 a 와 움직이는 점 c 로 [시작, 길이]를 만듭니다. 너무 작아지지 않게 최소 길이를 지킴.
+function crSeg(a, c, lo, hi) {
+  let p = Math.min(a, c), q = Math.max(a, c);
+  if (q - p < CR_MIN) { if (c >= a) { q = Math.min(hi, p + CR_MIN); p = q - CR_MIN; } else { p = Math.max(lo, q - CR_MIN); q = p + CR_MIN; } }
+  return [p, q - p];
+}
 (() => {
   const ui = $("#vcropui");
   ui.addEventListener("pointerdown", (e) => {
-    if (e.target.closest(".vcbar")) return;
+    if (e.target.closest(".vcbar")) { e.stopPropagation(); return; } // 아래 버튼을 누를 때 확대·넘기기 처리(wrap)가 포인터를 가로채 버튼이 안 눌리는 일 방지
     e.stopPropagation(); try { ui.setPointerCapture(e.pointerId); } catch { /* 무시 */ }
-    const b = ui.getBoundingClientRect(), fx = (e.clientX - b.left) / b.width, fy = (e.clientY - b.top) / b.height, r = CR.r;
+    const bb = ui.getBoundingClientRect(), px = e.clientX - bb.left, py = e.clientY - bb.top, fx = px / bb.width, fy = py / bb.height, r = CR.r;
+    // 모서리 근처(손가락 크기만큼)를 눌렀는지: 가장 가까운 모서리를 잡음
+    let best = null;
+    for (const [nx, ny] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
+      const d = Math.hypot(px - (r.x + nx * r.w) * bb.width, py - (r.y + ny * r.h) * bb.height);
+      if (d < CR_HIT && (!best || d < best.d)) best = { d, nx, ny };
+    }
     const inside = fx > r.x && fx < r.x + r.w && fy > r.y && fy < r.y + r.h;
-    CR.drag = inside ? { mode: "move", fx, fy, r: { ...r } } : { mode: "new", fx, fy };
+    if (best) CR.drag = { mode: "size", ax: r.x + (1 - best.nx) * r.w, ay: r.y + (1 - best.ny) * r.h }; // 반대쪽 모서리는 고정
+    else if (inside) CR.drag = { mode: "move", fx, fy, r: { ...r } };
+    else { const b = CR.b; CR.drag = { mode: "new", ax: clamp(fx, b.x, b.x + b.w), ay: clamp(fy, b.y, b.y + b.h) }; }
   });
   ui.addEventListener("pointermove", (e) => {
     const d = CR.drag; if (!d) return; e.stopPropagation();
-    const b = ui.getBoundingClientRect(), fx = clamp((e.clientX - b.left) / b.width, 0, 1), fy = clamp((e.clientY - b.top) / b.height, 0, 1);
-    if (d.mode === "new") setCr({ x: Math.min(d.fx, fx), y: Math.min(d.fy, fy), w: Math.abs(fx - d.fx), h: Math.abs(fy - d.fy) });
-    else setCr({ ...d.r, x: clamp(d.r.x + fx - d.fx, 0, 1 - d.r.w), y: clamp(d.r.y + fy - d.fy, 0, 1 - d.r.h) });
+    const bb = ui.getBoundingClientRect(), b = CR.b, fx = clamp((e.clientX - bb.left) / bb.width, b.x, b.x + b.w), fy = clamp((e.clientY - bb.top) / bb.height, b.y, b.y + b.h);
+    if (d.mode === "move") setCr({ ...d.r, x: clamp(d.r.x + fx - d.fx, b.x, b.x + b.w - d.r.w), y: clamp(d.r.y + fy - d.fy, b.y, b.y + b.h - d.r.h) });
+    else { const [x, w] = crSeg(d.ax, fx, b.x, b.x + b.w), [y, h] = crSeg(d.ay, fy, b.y, b.y + b.h); setCr({ x, y, w, h }); }
   });
   const end = (e) => { if (CR.drag) { e.stopPropagation(); CR.drag = null; } };
   ui.addEventListener("pointerup", end); ui.addEventListener("pointercancel", end);
@@ -1115,12 +1196,43 @@ async function cropGo() {
     if (!cap.q) return cap.why === "auth" ? 0 : toast(cap.why === "blocked" ? "이 부분은 검색할 수 없는 주제로 보여요." : "이 부분을 설명하지 못했어요. 다른 부분을 골라 보세요.", 5000);
     if (!V.stack.includes(l) || curItem() !== it) return;
     clearTimeout(simT); clearTimeout(l.rrT); l.feed.reset(); l.m.clear(); l.m.pred = null; l.toneOnly = false; l.crop = true;
-    l.cap = cap.q; l.sig = inf?.sh || null; l.cw = window.ColorTools.topColor(l.sig); l.rrDone = 0;
+    l.cap = cap.q; l.capWords = capWordsOf(cap.q); l.cwOn = null; l.fixed = false; l.sig = inf?.sh || null; l.cw = window.ColorTools.topColor(l.sig); l.rrDone = 0;
     simStart(l, 0);
     $("#viewer").scrollTo({ top: $("#vsimbox").offsetTop - 56, behavior: "smooth" });
   } catch (e) { if (e.message !== "auth") toast("부분 검색에 실패했어요. 잠시 뒤 다시 시도해 주세요."); }
 }
 $("#vcrop").onclick = cropOpen; $("#vcno").onclick = cropClose; $("#vcgo").onclick = cropGo;
+
+// ----- 추천 안 함: "다음부터 이 이미지를 추천하지 마" -----
+// 관심 없어요(pref): 이 이미지를 숨기고, 취향 학습을 켜 두었다면 비슷한 태그를 덜 보여 줍니다.
+// 보기 불편해요(bad): 이 이미지를 숨기고, 같은 태그가 여러 번 겹치는 이미지는 블러로 가립니다. 안전을 위한 기능이라 취향 학습 설정과 상관없이 동작해요.
+// 저장하는 것은 이미지 주소 키와 태그 횟수뿐이고, 이 기기에만 남습니다.
+function closeHide() { $("#hideSheet").hidden = true; }
+// 화면에 떠 있는 카드에서 숨긴 이미지를 치우고, 새로 배운 내용으로 블러가 필요한 카드를 다시 가립니다. (북마크 목록은 건드리지 않음)
+function refreshAvoidCards(hiddenKey) {
+  document.querySelectorAll(".card").forEach((c) => {
+    const it = c._it; if (!it || c.closest("#bmgrid")) return;
+    if (hiddenKey && keyOf(it) === hiddenKey) { io.unobserve(c); const m = c._m || (c.closest("#trGrid") ? trM : null); m ? m.drop(c) : c.remove(); return; }
+    if (it.safe || it.avoidBlur || it.fromBm) return;
+    if (applyAvoid(it) === 2) { c.classList.add("avoid", "loaded"); c.classList.remove("reveal"); c.dataset.st = "flag"; }
+  });
+}
+function hideItem(kind) {
+  const l = lv(), it = curItem(); if (!l || !it) return closeHide();
+  Avoid.hide(keyOf(it), avoidKeys(it), kind);
+  if (kind === "pref" && tasteOn()) learnFrom(it, -3);
+  closeHide();
+  const idx = l.list.indexOf(it); if (idx >= 0) l.list.splice(idx, 1);
+  refreshAvoidCards(keyOf(it));
+  toast(kind === "bad" ? "숨겼어요. 비슷한 이미지는 블러로 가릴게요" : "이 이미지는 다시 추천하지 않을게요");
+  if (!l.list.length) return closeViewer();
+  l.cur = clamp(idx, 0, l.list.length - 1); showItem(false); $("#viewer").scrollTop = 0;
+}
+bindSheet($("#hideSheet"), closeHide);
+$("#vhide").onclick = () => { if (curItem()) $("#hideSheet").hidden = false; };
+$("#hidePref").onclick = () => hideItem("pref");
+$("#hideBad").onclick = () => hideItem("bad");
+$("#hideCancel").onclick = closeHide;
 
 // 이 이미지는 선정적이지 않다고 알려 주면 블러를 풉니다. (북마크한 이미지는 북마크에 기억)
 function markSafe(it) {
@@ -1133,6 +1245,7 @@ $("#vveil").parentElement.addEventListener("click", () => { const it = curItem()
 const step = (d) => { const l = lv(); if (!l) return; const n = l.cur + d; if (n >= 0 && n < l.list.length) { l.cur = n; showItem(false); $("#viewer").scrollTop = 0; } };
 $("#vprev").onclick = () => step(-1); $("#vnext").onclick = () => step(1); $("#vclose").onclick = closeViewer; $("#vfab").onclick = closeViewer;
 addEventListener("keydown", (e) => {
+  if (!$("#hideSheet").hidden) { if (e.key === "Escape") closeHide(); return; }
   if (!$("#bmSheet").hidden) { if (e.key === "Escape") closeSheet(); return; }
   if (!$("#settings").hidden) { if (e.key === "Escape") closeSettings(); return; }
   if ($("#viewer").hidden || e.target.closest?.("input,textarea,select")) return;
@@ -1234,7 +1347,7 @@ $("#vdl").onclick = async () => {
 
 // ---------- 트렌드 ----------
 // 서버가 주는 것: 요즘 뜨는 주제(rising: 네이버 데이터랩 검색량 변화), 다가오는 행사·계절(season), 이미지(items).
-// 이미지 grp: pop = Pixabay·Unsplash 인기 사진, pick = 위키미디어 커먼즈 우수 사진, news = 위키백과 화제 문서(참고용, 추천에는 안 섞음)
+// 이미지 grp: hot = 뜨는 주제를 네이버에서 찾은 이미지, pop = Pixabay·Unsplash 인기 사진, pick = 위키미디어 커먼즈 우수 사진, news = 위키백과 화제 문서(참고용, 추천에는 안 섞음)
 const TR = { g: "rec", at: 0, items: [], date: "", loading: false, rising: [], season: [], dl: { state: "off" } };
 const DL_WHY = { denied: "네이버 API HUB에서 ‘검색어트렌드’ 이용 신청이 필요해요", limit: "요청 한도를 넘었어요", timeout: "응답이 늦어요", gone: "주소를 찾을 수 없어요 (NAVER_TREND_BASE 확인)", network: "연결하지 못했어요" };
 async function loadTrends(force) {
@@ -1252,20 +1365,23 @@ async function loadTrends(force) {
 function renderTrTopics() {
   const box = $("#trTopics"); box.textContent = "";
   const chip = (label, q, cls) => { const b = document.createElement("button"); b.textContent = label; b.className = cls; b.onclick = () => startSearch(q); box.appendChild(b); };
-  TR.season.forEach((x) => chip(`${x.kind === "event" ? "🗓" : "🍂"} ${x.label}${x.kind === "event" ? (x.days > 0 ? ` D-${x.days}` : " 오늘") : ""}`, x.q, "season"));
-  TR.rising.forEach((x) => chip(`🔥 ${x.label || x.q}${x.note ? " " + x.note : ""}`, x.q, "rising"));
+  TR.season.forEach((x) => chip(`${x.label}${x.kind === "event" ? (x.days > 0 ? ` D-${x.days}` : " 오늘") : ""}`, x.q, "season"));
+  TR.rising.forEach((x) => chip(`${x.label || x.q}${x.note ? " " + x.note : ""}`, x.q, "rising"));
   box.hidden = !box.children.length;
 }
 function renderTrends() {
-  let list = TR.items.filter((it) => !it.dropped && (TR.g === "rec" ? it.grp !== "news" : it.grp === TR.g));
+  let list = TR.items.filter((it) => !it.dropped && !Avoid.isHidden(it.key) && (TR.g === "rec" ? it.grp !== "news" : it.grp === TR.g));
   // 취향 학습을 켰으면 내 취향에 맞는 사진을 위로 (그 밖의 순서는 그대로)
   if (tasteOn() && !Taste.isEmpty() && TR.g !== "news") list = list.map((it, i) => ({ it, i, a: Taste.affinity(TasteStore.keysOf(it)) })).sort((x, y) => (y.a - x.a) || (x.i - y.i)).map((x) => x.it);
+  // "추천 안 함"으로 배운 태그와 겹치는 사진은 뒤로 보내거나(1) 블러로 가립니다(2)
+  const avd = new Map(list.map((it) => [it, applyAvoid(it)]));
+  list = [...list.filter((it) => !avd.get(it)), ...list.filter((it) => avd.get(it))];
   trM.clear();
   document.querySelectorAll("#trSeg button").forEach((b) => b.classList.toggle("on", b.dataset.g === TR.g));
   renderTrTopics();
   const dl = TR.dl.state === "err" ? ` ‘뜨는 주제’는 가져오지 못했어요 (${DL_WHY[TR.dl.why] || TR.dl.why || "오류"}).` : TR.dl.state === "off" ? " (네이버 데이터랩 키를 등록하면 ‘뜨는 주제’가 나와요.)" : "";
-  const info = { rec: "인기 사진과 잘 찍은 사진을 모았어요.", pop: "Pixabay·Unsplash에서 많이 찾는 인기 사진이에요.", pick: "위키미디어 커먼즈 우수 사진 중에서 골랐어요. 날마다 다른 사진이 나와요.", news: "위키백과에서 많이 본 문서의 대표 사진이에요. 사람들의 취향보다는 화제성을 보여 줘요." }[TR.g];
-  $("#trNote").textContent = !list.length ? "이 분류에 보여 줄 이미지가 없어요. (인기 사진은 Pixabay·Unsplash 키가 있어야 나와요)" : `${TR.date ? TR.date + " 기준 · " : ""}${info}${TR.g === "rec" ? dl : ""}`;
+  const info = { rec: "뜨는 주제·인기 사진·잘 찍은 사진을 모았어요.", hot: "요즘 검색이 늘어난 주제를 네이버 이미지에서 찾았어요. 사진 아래 이름표가 주제예요.", pop: "Pixabay·Unsplash에서 많이 찾는 인기 사진이에요.", pick: "위키미디어 커먼즈 우수 사진 중에서 골랐어요. 날마다 다른 사진이 나와요.", news: "위키백과에서 많이 본 문서의 대표 사진이에요. 사람들의 취향보다는 화제성을 보여 줘요." }[TR.g];
+  $("#trNote").textContent = !list.length ? TR.g === "hot" ? "아직 보여 줄 ‘뜨는’ 이미지가 없어요. (네이버 키와 데이터랩 이용 신청이 있어야 나와요)" : "이 분류에 보여 줄 이미지가 없어요. (인기 사진은 Pixabay·Unsplash 키가 있어야 나와요)" : `${TR.date ? TR.date + " 기준 · " : ""}${info}${TR.g === "rec" ? dl : ""}`;
   trM.add(list.map((it) => makeCard(it, () => openViewer(list, list.indexOf(it)))));
 }
 document.querySelectorAll("#trSeg button").forEach((b) => { b.onclick = () => { TR.g = b.dataset.g; renderTrends(); }; });
@@ -1354,7 +1470,7 @@ $("#bmForm").addEventListener("submit", async (e) => {
   it.board = rec.board; it.note = rec.note;
   const ok = await DB.put(rec); closeSheet();
   if (!ok) return toast("저장하지 못했어요");
-  $("#vboard").textContent = rec.board ? "보드: " + rec.board : "보드·메모";
+  setLbl($("#vboard"), rec.board ? "보드: " + rec.board : "보드·메모");
   $("#vnote").textContent = rec.note; $("#vnote").hidden = !rec.note;
   toast(rec.board ? `'${rec.board}' 보드에 저장했어요` : "저장했어요");
 });
@@ -1411,7 +1527,7 @@ $("#upFile").onchange = async (e) => {
 function renderSettings() {
   $("#sBlur").checked = S.blur; $("#sMl").checked = S.ml;
   $("#capRow").hidden = !cfg?.caption; $("#sCap").checked = LS.get("cap", true);
-  $("#sTaste").checked = S.taste; renderTasteView();
+  $("#sTaste").checked = S.taste; renderTasteView(); renderAvoidView();
   const box = $("#srcList"); box.textContent = "";
   (cfg?.sources || []).forEach((s) => {
     const l = document.createElement("label"); l.className = "row src";
@@ -1428,11 +1544,32 @@ function renderSettings() {
 }
 function renderTasteView() {
   const box = $("#tasteView"), v = Taste.view(), KO = window.ColorTools.TONE_KO; box.textContent = "";
-  const add = (t, cls) => { const s = document.createElement("span"); s.textContent = t; if (cls) s.className = cls; box.appendChild(s); };
-  v.tags.slice(0, 10).forEach((x) => add(x.k)); v.tones.forEach((x) => add(KO[x.k] || x.k, "t")); v.colors.forEach((x) => add(KO_COLOR[x.k] || x.k, "t"));
-  v.less.slice(0, 4).forEach((x) => add(`덜 · ${x.k}`, "less"));
-  const empty = Taste.isEmpty(); box.hidden = !S.taste || empty; $("#tasteClear").hidden = empty;
+  // 칩을 누르면 그 항목만 지워집니다 (kind: tags | tones | colors)
+  const add = (label, kind, k, cls) => {
+    const b = document.createElement("button"); b.type = "button"; b.className = "tchip" + (cls ? " " + cls : ""); b.setAttribute("aria-label", `${label} 지우기`);
+    const t = document.createElement("span"); t.textContent = label; const x = document.createElement("i"); x.textContent = "✕"; x.setAttribute("aria-hidden", "true"); b.append(t, x);
+    b.onclick = () => { Taste.forget(kind, k); renderTasteView(); toast(`‘${label}’을(를) 취향에서 지웠어요`); };
+    box.appendChild(b);
+  };
+  v.tags.slice(0, 10).forEach((x) => add(x.k, "tags", x.k));
+  v.tones.forEach((x) => add(KO[x.k] || x.k, "tones", x.k, "t"));
+  v.colors.forEach((x) => add(KO_COLOR[x.k] || x.k, "colors", x.k, "t"));
+  v.less.slice(0, 4).forEach((x) => add(`덜 · ${x.k}`, "tags", x.k, "less"));
+  const empty = Taste.isEmpty(); box.hidden = !S.taste || empty; $("#tasteNote").hidden = box.hidden; $("#tasteClear").hidden = empty;
 }
+// 설정의 "추천 안 함": 숨긴 이미지 수와, 비슷한 이미지에 영향을 주는 태그. 태그를 누르면 그 태그만 되돌립니다.
+function renderAvoidView() {
+  const v = Avoid.view(), box = $("#avoidView"); box.textContent = "";
+  $("#avoidCount").textContent = v.n ? `· 숨긴 이미지 ${v.n}장` : "";
+  v.tags.forEach((x) => {
+    const b = document.createElement("button"); b.type = "button"; b.className = "tchip" + (x.bad ? " bad" : ""); b.setAttribute("aria-label", `${x.k} 되돌리기`);
+    const t = document.createElement("span"); t.textContent = x.k; const i = document.createElement("i"); i.textContent = "✕"; i.setAttribute("aria-hidden", "true"); b.append(t, i);
+    b.onclick = () => { Avoid.forget(x.k); renderAvoidView(); toast(`‘${x.k}’은(는) 이제 영향을 주지 않아요`); };
+    box.appendChild(b);
+  });
+  box.hidden = !v.tags.length; $("#avoidClear").hidden = Avoid.isEmpty();
+}
+$("#avoidClear").onclick = () => { Avoid.clear(); renderAvoidView(); toast("추천 안 함 목록을 모두 지웠어요. 숨겼던 이미지가 다시 나올 수 있어요", 4500); };
 $("#sTaste").onchange = (e) => {
   S.taste = e.target.checked; LS.set("tasteOn", S.taste); renderTasteView();
   toast(S.taste ? "이 기기에서만 취향을 기억해요 (다음 검색부터 반영)" : "취향 학습을 껐어요. 저장된 점수는 [취향 지우기]로 지울 수 있어요", 4500);

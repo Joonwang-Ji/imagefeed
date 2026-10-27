@@ -1,6 +1,6 @@
 // 화면 파일만 캐시합니다. /api/ (검색·이미지)는 절대 캐시하지 않습니다.
-const NAME = "imagefeed-shell-v10";
-const SHELL = ["/", "/style.css", "/app.js", "/color.js", "/relevance.js", "/safety.js", "/taste.js", "/manifest.webmanifest", "/icon-192.png"];
+const NAME = "imagefeed-shell-v11";
+const SHELL = ["/", "/style.css", "/app.js", "/color.js", "/relevance.js", "/safety.js", "/taste.js", "/avoid.js", "/manifest.webmanifest", "/icon-192.png"];
 self.addEventListener("install", (e) => { e.waitUntil(caches.open(NAME).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener("activate", (e) => { e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== NAME).map((k) => caches.delete(k)))).then(() => self.clients.claim())); });
 self.addEventListener("fetch", (e) => {

@@ -1,6 +1,6 @@
 import { hardBlocked, isAdult, isExplicit, isNude, hasArtContext } from "./filters.js";
 import { seasonTopics } from "./season.js";
-import { TOPIC_POOL, ANCHOR } from "./topics.js";
+import { TOPIC_POOL, ANCHOR, offTopic } from "./topics.js";
 
 const UA = "Mozilla/5.0 (compatible; ImageFeed/1.0; personal use)";
 const enc = encodeURIComponent;
@@ -512,7 +512,7 @@ async function datalabTopics(env, now) {
     try { await caches.default.put(key, new Response(JSON.stringify(out), { headers: { "cache-control": "max-age=1800" } })); } catch { /* 캐시 실패는 무시 */ }
     return out;
   }
-  const ok = rows.filter((x) => !hardBlocked(x.label) && !isAdult(x.label));
+  const ok = rows.filter((x) => !hardBlocked(x.label) && !isAdult(x.label) && !offTopic(x.label, x.q));
   const rising = ok.filter((x) => x.vol >= 0.02 && x.growth >= 0.15).sort((a, b) => b.growth - a.growth).slice(0, 8)
     .map((x) => ({ label: x.label, q: x.q, kind: "rising", note: `▲${Math.round(x.growth * 100)}%` }));
   const hot = ok.filter((x) => !rising.some((r) => r.q === x.q)).sort((a, b) => b.vol - a.vol).slice(0, Math.max(0, 6 - rising.length))
@@ -522,27 +522,39 @@ async function datalabTopics(env, now) {
   return out;
 }
 
+// ---- 뜨는 주제의 이미지: 데이터랩이 가려낸 주제(‘뜨는’ 것 우선) 몇 개로 네이버 이미지를 찾아 grp "hot" 으로 돌려줍니다 ----
+// 네이버 이미지 검색은 이미 등록한 키를 그대로 쓰고, 주제는 최대 3개·주제당 14장만 받아서 호출을 아낍니다. (결과는 Cloudflare 가 1시간 캐시)
+async function hotPhotos(env, topics) {
+  const naver = SOURCES.find((s) => s.id === "naver");
+  if (!naver?.ok(env) || !topics.length) return [];
+  const picked = topics.slice(0, 3);
+  const rs = await Promise.allSettled(picked.map((t) => naver.run(t.q, 1, 1, env)));
+  return rr(...rs.map((r, i) => (r.status === "fulfilled" ? r.value.slice(0, 14).map((it) => ({ ...it, src: "naver", grp: "hot", topic: picked[i].label })) : [])));
+}
+
 async function trends(env) {
   const now = Date.now(), day = Math.floor(now / 86400000);
-  const [ko, en, pop, pick, dl] = await Promise.all([wikiTrend("ko").catch(() => null), wikiTrend("en").catch(() => null), popularPhotos(env, day).catch(() => []),
-    featuredPicks(day).catch(() => []), datalabTopics(env, now).catch((e) => ({ state: "err", why: e?.code || "error", list: [] }))]);
+  const dlP = datalabTopics(env, now).catch((e) => ({ state: "err", why: e?.code || "error", list: [] }));
+  const [ko, en, pop, pick, dl, hot] = await Promise.all([wikiTrend("ko").catch(() => null), wikiTrend("en").catch(() => null), popularPhotos(env, day).catch(() => []),
+    featuredPicks(day).catch(() => []), dlP, dlP.then((d) => hotPhotos(env, d.list || [])).catch(() => [])]);
   const seen = new Set();
   // 트렌드는 훑어 올리다 놀라지 않게 더 엄격하게 거릅니다.
   //  - 성행위·성기 표현이 제목·태그·짧은 설명·파일 이름에 있으면 미술·역사 자료라도 뺍니다.
   //  - 나체 표현은 미술·역사 맥락(조각·그림·유물 등)이 있으면 남기되 블러, 맥락이 없으면 뺍니다.
+  //  - 할로윈·다른 종교의 행사·상징 같은 기독교 세계관에 맞지 않는 주제는 뺍니다. (topics.js 의 OFF_TOPIC)
   const verdict = (it) => {
     const t = `${it.title} ${it.tags.join(" ")} ${it.ctx || ""}`;
-    if (hardBlocked(t) || isExplicit(t)) return "drop";
+    if (hardBlocked(t) || isExplicit(t) || offTopic(it.title, it.tags.join(" "))) return "drop";
     if (isNude(t)) return hasArtContext(t) ? "blur" : "drop";
     return isAdult(t) ? "blur" : "ok";
   };
-  const items = rr(ko?.items || [], en?.items || [], pop, pick)
+  const items = rr(ko?.items || [], en?.items || [], pop, pick, hot)
     .filter((it) => it.thumb && it.full)
     .map((it) => ({ it, v: verdict(it) })).filter((x) => x.v !== "drop")
-    .map(({ it, v }) => { const { ctx, ...rest } = it; return { ...rest, thumb: https(it.thumb), full: https(it.full), page: https(it.page || it.full), adult: it.adult || v === "blur" }; })
+    .map(({ it, v }) => { const { ctx, ...rest } = it; return { ...rest, thumb: https(it.thumb), full: https(it.full), alt: it.alt ? https(it.alt) : "", page: https(it.page || it.full), adult: it.adult || v === "blur" }; })
     .filter((it) => (seen.has(it.thumb) ? false : seen.add(it.thumb)))
-    .slice(0, 160);
-  // 화면 구성: rising(데이터랩이 가려낸 뜨는 주제) / season(곧 다가오는 기념일·계절 주제) / items(사진: grp "pop" 인기, "pick" 잘 찍은 사진, "news" 오늘의 화제)
+    .slice(0, 200);
+  // 화면 구성: rising(데이터랩이 가려낸 뜨는 주제) / season(곧 다가오는 기념일·계절 주제) / items(사진: grp "pop" 인기, "pick" 잘 찍은 사진, "hot" 뜨는 주제의 네이버 이미지, "news" 오늘의 화제)
   // dl: 데이터랩 상태("ok" | "off"=키 없음 | "err"=사용할 수 없음, why=이유)
   // 사진이 하나도 없어도 주제는 보여 줄 수 있으므로 502 가 아니라 빈 목록으로 응답합니다.
   return json({ date: ko?.date || en?.date || "", rising: dl.list || [], season: seasonTopics(now), items, dl: { state: dl.state, why: dl.why || "", status: dl.status || 0 } });

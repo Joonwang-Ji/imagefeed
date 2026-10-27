@@ -40,7 +40,7 @@ w.fetch = async (url) => {
   if (u.startsWith("/api/img")) return res({});
   return { ok: false, status: 404, json: async () => ({}) };
 };
-run(fs.readFileSync(ROOT + "color.js", "utf8").replace(/^"use strict";/, "")); run(fs.readFileSync(ROOT + "relevance.js", "utf8").replace(/^"use strict";/, "")); run(fs.readFileSync(ROOT + "safety.js", "utf8").replace(/^"use strict";/, "")); run(fs.readFileSync(ROOT + "taste.js", "utf8").replace(/^"use strict";/, ""));
+run(fs.readFileSync(ROOT + "color.js", "utf8").replace(/^"use strict";/, "")); run(fs.readFileSync(ROOT + "relevance.js", "utf8").replace(/^"use strict";/, "")); run(fs.readFileSync(ROOT + "safety.js", "utf8").replace(/^"use strict";/, "")); run(fs.readFileSync(ROOT + "taste.js", "utf8").replace(/^"use strict";/, "")); run(fs.readFileSync(ROOT + "avoid.js", "utf8").replace(/^"use strict";/, ""));
 vm.runInContext(fs.readFileSync(ROOT + "app.js", "utf8"), ctx);
 await tick(150);
 const $ = (s) => w.document.querySelector(s), $$ = (s) => [...w.document.querySelectorAll(s)];
@@ -152,7 +152,7 @@ ok($$("#grid .card").length > 0, "folded results can still be opened");
 // ======== 6) 뷰어의 비슷한 이미지 피드: 접지 않고 30장씩 ========
 run('startSearch("cat")'); await tick(1500);
 $("#grid .card").click(); await tick(100);
-ok(run("lv().feed.chunk") === 30 && run("lv().feed.o.fold") === false, "similar-image feed: 30 per view, nothing folded");
+ok(run("lv().feed.chunk") === 30 && run("lv().feed.o.fold") !== false, "similar-image feed: 30 per view, weak results folded (fewer unrelated images)");
 ok(!!$(".simlevel .more"), "similar-image feed has its own 더 보기 area");
 $("#vclose").click(); await tick(50);
 

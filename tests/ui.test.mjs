@@ -41,9 +41,9 @@ w.fetch = async (url) => {
 };
 trendsPayload = { date: "2026-10-24", season: [{ label: "할로윈", q: "할로윈 호박", days: 4, kind: "event" }], rising: [{ label: "벚꽃", q: "벚꽃", kind: "rising", note: "▲40%" }, { label: "한옥", q: "한옥", kind: "hot", note: "" }], dl: { state: "ok" }, items: [
   { ...mk(1, "wiki", [], "손흥민"), grp: "news" }, { ...mk(2, "wiki", [], "Mount Fuji"), grp: "news" }, { ...mk(3, "wiki", [], "서울 야경"), grp: "news" },
-  { ...mk(4, "pixabay", ["lake"], ""), grp: "pop" }, { ...mk(5, "pixabay", ["tree"], ""), grp: "pop" }, { ...mk(6, "wikimedia", ["sunset"], "Sunset"), grp: "pick" } ] };
+  { ...mk(4, "pixabay", ["lake"], ""), grp: "pop" }, { ...mk(5, "pixabay", ["tree"], ""), grp: "pop" }, { ...mk(6, "wikimedia", ["sunset"], "Sunset"), grp: "pick" }, { ...mk(7, "naver", ["hanok"], "한옥 마을 풍경"), grp: "hot", topic: "한옥" } ] };
 
-run(fs.readFileSync(ROOT + "color.js", "utf8").replace(/^"use strict";/, "")); run(fs.readFileSync(ROOT + "relevance.js", "utf8").replace(/^"use strict";/, "")); run(fs.readFileSync(ROOT + "safety.js", "utf8").replace(/^"use strict";/, "")); run(fs.readFileSync(ROOT + "taste.js", "utf8").replace(/^"use strict";/, ""));
+run(fs.readFileSync(ROOT + "color.js", "utf8").replace(/^"use strict";/, "")); run(fs.readFileSync(ROOT + "relevance.js", "utf8").replace(/^"use strict";/, "")); run(fs.readFileSync(ROOT + "safety.js", "utf8").replace(/^"use strict";/, "")); run(fs.readFileSync(ROOT + "taste.js", "utf8").replace(/^"use strict";/, "")); run(fs.readFileSync(ROOT + "avoid.js", "utf8").replace(/^"use strict";/, ""));
 vm.runInContext(fs.readFileSync(ROOT + "app.js", "utf8"), ctx);
 await tick(150);
 const $ = (s) => w.document.querySelector(s), $$ = (s) => [...w.document.querySelectorAll(s)];
@@ -197,17 +197,19 @@ $("#vclose").click(); await tick(60);
 
 // ---- 트렌드: 이미지 그리드 ----
 $("#tabTr").click(); await tick(100);
-ok(!$("#trends").hidden && $$("#trGrid .card").length === 3, `trends tab (추천) shows popular+featured photos but not the wiki news: ${$$("#trGrid .card").length} cards`);
+ok(!$("#trends").hidden && $$("#trGrid .card").length === 4, `trends tab (추천) shows hot+popular+featured photos but not the wiki news: ${$$("#trGrid .card").length} cards`);
+ok($$("#trSeg button").map((b) => b.textContent).join(",") === "추천,뜨는,인기,잘 찍은,화제" && !!$("#trRefresh .i") && $("#trRefresh").getAttribute("aria-label") === "새로고침", "trend header: 5 short tabs + icon-only refresh button");
 ok(!$("#trLang") && !$("#trChips"), "no country/language selector or word chips");
 ok(/2026-10-24/.test($("#trNote").textContent), "trend note shows date");
 ok($$("#trTopics button").length === 3 && /할로윈 D-4/.test($("#trTopics").textContent) && /벚꽃 ▲40%/.test($("#trTopics").textContent), "trend topic chips: season/event + rising with growth: " + $("#trTopics").textContent);
 ok(/가져오지 못했어요 \(네이버 API HUB/.test($("#trNote").textContent) === false, "dl ok -> no error note");
-$$("#trSeg button")[1].click(); ok($$("#trGrid .card").length === 2, "인기 사진 filter shows only popular photos");
-$$("#trSeg button")[2].click(); ok($$("#trGrid .card").length === 1, "잘 찍은 사진 filter shows featured pictures");
-$$("#trSeg button")[3].click(); ok($$("#trGrid .card").length === 3, "오늘의 화제 filter shows only wiki news photos");
-$$("#trSeg button")[0].click(); ok($$("#trGrid .card").length === 3, "추천 excludes news");
+$$("#trSeg button")[1].click(); ok($$("#trGrid .card").length === 1 && $$("#trGrid .card .tag")[0].textContent === "한옥", "뜨는 tab shows naver hot-topic images, labelled with the topic");
+$$("#trSeg button")[2].click(); ok($$("#trGrid .card").length === 2, "인기 사진 filter shows only popular photos");
+$$("#trSeg button")[3].click(); ok($$("#trGrid .card").length === 1, "잘 찍은 사진 filter shows featured pictures");
+$$("#trSeg button")[4].click(); ok($$("#trGrid .card").length === 3, "오늘의 화제 filter shows only wiki news photos");
+$$("#trSeg button")[0].click(); ok($$("#trGrid .card").length === 4, "추천 excludes news");
 $$("#trTopics button")[0].click(); await tick(100); ok($("#q").value === "할로윈 호박" && searchCalls.some((u) => u.includes(encodeURIComponent("할로윈 호박"))), "topic chip starts a search");
-$("#tabTr").click(); await tick(60); $$("#trSeg button")[3].click();
+$("#tabTr").click(); await tick(60); $$("#trSeg button")[4].click();
 ok($$("#trGrid .card .tag").some((t) => t.textContent === "위키백과"), "wiki items labelled 위키백과");
 $("#trGrid .card").click(); await tick(60); ok(!$("#viewer").hidden && /손흥민/.test($("#vtitle").textContent), "trend image opens in viewer");
 $("#vfab").click(); await tick(60);
@@ -333,6 +335,76 @@ $("#vsimtone").click(); ok(run("lv().toneOnly") === true && /✓/.test($("#vsimt
 ok(!$("#vlike").hidden && !$("#vdis").hidden, "👍/👎 shown while taste learning is on");
 const aff0 = run("Taste.affinity(['sunset'])"); run("curItem().tags = ['sunset']"); $("#vlike").click(); ok(run("Taste.affinity(['sunset'])") > aff0, "👍 teaches taste");
 $("#vdis").click(); run("S.taste = false"); $("#vfab").click(); await tick(60);
+
+// ======== 10차: 종교 주제 제외 · 부분 검색 상자 · 보정 칩 · 취향/추천 안 함 지우기 ========
+const { offTopic } = await import("../src/topics.js");
+ok(!run("CATS.flatMap((c) => [c[1], ...c[2]])").some((t) => offTopic(t)), "home topic chips contain no other-religion / occult topics");
+
+// 부분 검색 상자: 처음부터 떠 있고, 옮기고, 모서리로 크기를 바꾸고, 이미지 밖으로 못 나가고, 너무 작아지지 않는다
+run("S.taste = true; cfg.caption = true; capOff = false");
+$("#tabFeed").click(); run('startSearch("sunset")'); await tick(900); $("#grid .card").click(); await tick(120);
+$("#vcrop").click();
+const ui = $("#vcropui"), CRr = () => run("CR.r"), near = (a, b) => Math.abs(a - b) < 0.005;
+ok(!ui.hidden && $$("#vcr .h").length === 4, "crop box starts as a visible box with 4 corner handles");
+ptr("pointerdown", 7, 320, 240, ui); ptr("pointermove", 7, 360, 270, ui); ptr("pointerup", 7, 360, 270, ui);
+ok(near(CRr().x, 0.2) && near(CRr().y, 0.2) && near(CRr().w, 0.7) && near(CRr().h, 0.7), "dragging the bottom-right corner resizes the box (opposite corner stays): " + JSON.stringify(CRr()));
+ptr("pointerdown", 7, 200, 150, ui); ptr("pointermove", 7, 220, 165, ui); ptr("pointerup", 7, 220, 165, ui);
+ok(near(CRr().x, 0.25) && near(CRr().y, 0.25) && near(CRr().w, 0.7), "dragging inside the box moves it without resizing: " + JSON.stringify(CRr()));
+ptr("pointerdown", 7, 200, 150, ui); ptr("pointermove", 7, 900, 900, ui); ptr("pointerup", 7, 900, 900, ui);
+ok(near(CRr().x + CRr().w, 1) && near(CRr().y + CRr().h, 1), "the box cannot leave the image: " + JSON.stringify(CRr()));
+{ const r = CRr(); ptr("pointerdown", 7, r.x * 400, r.y * 300, ui); ptr("pointermove", 7, 395, 295, ui); ptr("pointerup", 7, 395, 295, ui); }
+ok(CRr().w >= 0.07 - 1e-9 && CRr().h >= 0.07 - 1e-9 && near(CRr().x + CRr().w, 1), "the box keeps a minimum size when a corner is dragged past the other: " + JSON.stringify(CRr()));
+run("setCr({ x: 0.1, y: 0.1, w: 0.3, h: 0.3 })"); ptr("pointerdown", 7, 300, 250, ui); ptr("pointermove", 7, 380, 290, ui); ptr("pointerup", 7, 380, 290, ui);
+ok(near(CRr().x, 0.75) && near(CRr().w, 0.2), "dragging an empty spot still draws a new box: " + JSON.stringify(CRr()));
+
+// 보정: 부분 검색 결과는 전체 이미지의 태그·현재 검색어로 돌아가지 않고, AI 단어 칩과 직접 입력으로 고칠 수 있다
+const capCalls = []; const oldF2 = w.fetch;
+w.fetch = async (url, opt) => { if (String(url).startsWith("/api/caption")) { capCalls.push(1); return { ok: true, status: 200, json: async () => ({ q: "speaker wooden shelf" }) }; } return oldF2(url, opt); };
+run("setCr({ x: 0.1, y: 0.2, w: 0.5, h: 0.5 })"); await run("cropGo()"); await tick(300);
+ok(JSON.stringify(run("lv().cands")) === JSON.stringify(["speaker wooden shelf", "speaker wooden", "speaker"]), "crop search tries only pieces of the AI caption (never the whole image's tags / old query): " + run("lv().cands"));
+ok(!$("#vcw").hidden && $$("#vcwChips button").map((b) => b.textContent).join(",") === "speaker,wooden,shelf" && $$("#vcwChips button.on").length === 3, "AI-seen words are shown as chips");
+searchCalls.length = 0; $$("#vcwChips button")[2].click(); await tick(900);
+ok(searchCalls.some((u) => u.includes("q=speaker%20wooden")) && !searchCalls.some((u) => u.includes("shelf")) && $$("#vcwChips button.off").length === 1, "tapping a word removes it and searches again without it");
+$$("#vcwChips button")[1].click(); $$("#vcwChips button")[0].click(); await tick(100);
+ok($$("#vcwChips button.on").length === 1, "at least one word always stays on");
+searchCalls.length = 0; $("#vcwIn").value = "bluetooth speaker"; $("#vcwForm").dispatchEvent(new w.Event("submit", { cancelable: true, bubbles: true })); await tick(900);
+ok(searchCalls.some((u) => u.includes("q=bluetooth%20speaker")) && $$("#vcwChips button").map((b) => b.textContent).join(",") === "bluetooth,speaker", "typing your own words searches by them and shows them as chips");
+w.fetch = oldF2;
+
+// 취향 칩은 하나씩 지울 수 있다
+run("Taste.clear(); Taste.learn(['zebra','stripe'], 4, { colors: ['black'], tone: 'mono' })"); run("S.taste = true"); $("#vfab").click(); await tick(60);
+$("#gear").click();
+const tc = () => $$("#tasteView .tchip").map((b) => b.querySelector("span").textContent);
+ok(tc().includes("zebra") && tc().includes("stripe") && $("#tasteNote") && !$("#tasteNote").hidden, "taste chips are listed with a delete hint: " + tc());
+$$("#tasteView .tchip").find((b) => b.querySelector("span").textContent === "zebra").click();
+ok(!tc().includes("zebra") && tc().includes("stripe") && run("Taste.affinity(['zebra'])") === 0 && run("Taste.affinity(['stripe'])") > 0, "tapping one taste chip deletes only that one");
+$$("#tasteView .tchip").filter((b) => /검정|흑백/.test(b.textContent)).forEach((b) => b.click()); ok(!tc().some((t) => /검정|흑백/.test(t)), "color / tone chips can be deleted too: " + tc());
+$("#closeSet").click();
+
+// 추천 안 함
+$("#tabFeed").click(); run('startSearch("sunset")'); await tick(900);
+const n0 = $$("#grid .card").length; $("#grid .card").click(); await tick(120);
+const k0 = run("keyOf(curItem())"), t0 = $("#vtitle").textContent;
+ok(!$("#vhide").hidden && $("#hideSheet").hidden, "viewer has a 추천 안 함 button; sheet starts closed");
+$("#vhide").click(); ok(!$("#hideSheet").hidden && !!$("#hidePref") && !!$("#hideBad"), "추천 안 함 opens a sheet with two choices");
+$("#hideCancel").click(); ok($("#hideSheet").hidden && !run("Avoid.isHidden(keyOf(curItem()))"), "cancel hides nothing");
+$("#vhide").click(); $("#hidePref").click(); await tick(120);
+ok(run(`Avoid.isHidden(${JSON.stringify(k0)})`) && $$("#grid .card").length === n0 - 1 && !$$("#grid .card").some((c) => run("keyOf") && c._it && run("keyOf")(c._it) === k0), "hidden image is gone from the feed");
+ok(!$("#viewer").hidden && !run("lv().list").some((x) => run("keyOf")(x) === k0), "viewer moves on to another image");
+ok(!/https?:/.test(w.localStorage.getItem("avoid")) && !/"sunset"\s*:\s*\{/.test(w.localStorage.getItem("avoid")) && !w.localStorage.getItem("avoid").includes("q="), "avoid store keeps only address keys and tag counts (no URLs, no search words)");
+// 같은 종류를 '불편'으로 두 번 알려 주면 비슷한 이미지는 블러
+$("#vhide").click(); $("#hideBad").click(); await tick(80); $("#vhide").click(); $("#hideBad").click(); await tick(80);
+ok(run("Avoid.view().tags.length") >= 1 && run("Avoid.verdict(['sunset','beach','sea'])") === 2, "after two 'uncomfortable' answers, the same kind is judged for blur");
+const bl = run(`(() => { M.reset(); M.begin("zz"); M.merge([{ src: { id: "pixabay", w: 1 }, items: [{ title: "x", tags: ["sunset","beach","sea"], thumb: "https://x.test/zz1.jpg", full: "https://x.test/zz1_full.jpg", page: "p", src: "pixabay", w: 400, h: 300 }, { title: "y", tags: ["dog","park"], thumb: "https://x.test/zz2.jpg", full: "https://x.test/zz2_full.jpg", page: "p", src: "pixabay", w: 400, h: 300 }, { title: "h", tags: ["dog"], thumb: "${k0}", full: "https://${k0}", page: "p", src: "pixabay", w: 400, h: 300 }], base: 0 }]); return [...M.pend.values()].map((e) => [e.it.title, !!e.it.avoidBlur, !!e.it.adult]); })()`);
+ok(JSON.stringify(bl) === JSON.stringify([["x", true, true], ["y", false, false]]), "matching new results are blurred (flagged), others untouched, hidden image never returns: " + JSON.stringify(bl));
+ok(run(`makeCard({ ...${JSON.stringify(item("av1", ["a"]))}, avoidBlur: true, adult: true }, () => {}).classList.contains("avoid")`), "blurred card gets .avoid (blur works even if the sexual-content blur setting is off)");
+ok(/\.card\.avoid\[data-st=flag\]:not\(\.reveal\) img\{filter:blur/.test(css.replace(/\s+/g, "")) || /\.card\.avoid\[data-st=flag\]:not\(\.reveal\)\s+img\s*\{[^}]*blur/.test(css), "CSS blurs .avoid cards regardless of body.noblur");
+// 설정에서 확인·되돌리기
+$("#gear").click(); ok(/숨긴 이미지 \d+장/.test($("#avoidCount").textContent) && !$("#avoidClear").hidden, "settings shows how many images are hidden: " + $("#avoidCount").textContent);
+const av = $$("#avoidView .tchip"); ok(av.length >= 1, "settings lists tags that affect similar images");
+const tag0 = av[0].querySelector("span").textContent; av[0].click(); ok(!$$("#avoidView .tchip").some((b) => b.querySelector("span").textContent === tag0), "tapping a tag lifts only that tag");
+$("#avoidClear").click(); ok(run("Avoid.isEmpty()") && $("#avoidClear").hidden, "모두 지우기 empties the avoid list");
+$("#closeSet").click();
 
 ok(errors.length === 0, "no script errors" + (errors.length ? ": " + errors.slice(0, 3).join(" ; ") : ""));
 console.log(fail ? `\n${fail} failed` : "\nall passed"); process.exit(fail ? 1 : 0);

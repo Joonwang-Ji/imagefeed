@@ -9,3 +9,8 @@ export const TOPIC_POOL = [
   "제주도", "바다", "단풍", "벚꽃", "캠핑", "등산", "베이커리", "반려식물",
   "홈카페", "조명", "수채화", "레트로", "스티커", "다꾸", "배경화면", "북유럽 인테리어",
 ];
+
+// 기독교 세계관에 맞지 않는 추천 주제는 시즌·뜨는 주제 칩과 트렌드 사진에서 뺍니다. (할로윈, 다른 종교의 행사·상징, 점·오컬트 등)
+// 기간이어도 나오지 않게 하는 용도이고, 검색창에 직접 입력해서 찾는 것은 막지 않습니다. 필요하면 단어를 더하거나 빼세요.
+export const OFF_TOPIC = /할로윈|핼러윈|할로우인|halloween|잭오랜턴|jack.?o.?lantern|부처님|불교|buddhis|buddha|사찰|연등|석가|이슬람|(^|\\W)islam(ic)?(\\W|$)|무슬림|라마단|ramadan|모스크|mosque|힌두|hindu|디왈리|diwali|점성술|별자리\s*운세|사주|타로|tarot|무당|굿판|샤머니즘|오컬트|occult|마녀|witch|악마|좀비/i;
+export const offTopic = (...s) => OFF_TOPIC.test(s.filter(Boolean).join(" "));
