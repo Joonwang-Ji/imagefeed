@@ -43,7 +43,7 @@ w.fetch = async (url) => {
 const trCalls = []; let trDl = { state: "ok" }, trEmptyHot = false;
 function trendsFn(u) {
   const p = new URL(u, "https://app.test").searchParams, g = p.get("g") || "all", page = +p.get("page") || 1, topic = p.get("topic") || "";
-  trCalls.push({ g, page, topic, pc: p.get("pc") || "" });
+  trCalls.push({ g, page, topic, pc: p.get("pc") || "", mine: p.get("mine") || "" });
   const mkp = (n, grp, src, ex = {}) => ({ ...mk(page * 100 + n, src, ["t" + (page * 100 + n)], ""), grp, ...ex });
   if (topic) return { items: [1, 2, 3].map((n) => mkp(n, "hot", "naver", { topic })), topics: [], more: page < 5, pc: "", dl: trDl };
   const items = g === "hot" ? (trEmptyHot ? [] : [1, 2, 3, 4].map((n) => mkp(n, "hot", "naver", { topic: "한옥" }))) : g === "best" ? [1, 2, 3].map((n) => mkp(n, "best", "pixabay"))
@@ -207,7 +207,7 @@ $("#vclose").click(); await tick(60);
 $("#tabTr").click(); await tick(100);
 const trCards = () => $$("#trGrid .card");
 ok(!$("#trends").hidden && trCards().length === 4 && trCalls[0].g === "all" && trCalls[0].page === 1, `trends tab (모두) loads page 1 of the mixed feed: ${trCards().length} cards`);
-ok($$("#trSeg button").map((b) => b.textContent).join(",") === "모두,지금 인기,베스트,에디터 픽" && !!$("#trRefresh .i") && $("#trRefresh").getAttribute("aria-label") === "새로고침", "trend header: 4 plain-word pills + icon-only refresh button");
+ok($$("#trSeg button").map((b) => b.textContent).join(",") === "모두,내 취향,인기,베스트,에디터 픽" && !!$("#trRefresh .i") && $("#trRefresh").getAttribute("aria-label") === "새로고침", "trend header: 5 plain-word pills + icon-only refresh button");
 ok(!/사진/.test($$("#trSeg button").map((b) => b.textContent).join()), "pill names avoid the word 사진");
 ok($$("#trSeg button")[0].classList.contains("on"), "모두 is selected first");
 ok(!$("#trLang") && !$("#trChips") && $("#trNote").hidden, "no country selector, and no date / description line");
@@ -215,15 +215,15 @@ ok($$("#trTopics button").map((b) => b.textContent).join() === "수능,벚꽃,�
 ok($$("#trTopics button").every((b) => !b.classList.contains("on")), "no topic chip selected at first");
 ok(!w.document.body.textContent.includes("위키") && trCards().every((c) => c._it.grp !== "news"), "wiki 'what is hot' is gone");
 // 알약
-$$("#trSeg button")[1].click(); await tick(60);
+$$("#trSeg button")[2].click(); await tick(60);
 ok(trCards().length === 4 && trCards().every((c) => c.dataset.g === "hot") && trCalls.at(-1).g === "hot" && trCalls.at(-1).page === 1, "지금 인기 shows the naver topic photos (page 1 of g=hot)");
 ok($("#trGrid").classList.contains("tags"), "topic labels on cards are allowed in 지금 인기");
-$$("#trSeg button")[2].click(); await tick(60);
-ok(trCards().length === 3 && trCalls.at(-1).g === "best", "베스트 shows popular photos");
 $$("#trSeg button")[3].click(); await tick(60);
+ok(trCards().length === 3 && trCalls.at(-1).g === "best", "베스트 shows popular photos");
+$$("#trSeg button")[4].click(); await tick(60);
 ok(trCards().length === 2 && trCalls.at(-1).g === "pick", "에디터 픽 shows editor picks");
 // 무한 피드: 스크롤(sentinel)로 이어 받다가 3쪽에서 멈추고 [더 보기]
-const trN0 = trCalls.length; $$("#trSeg button")[2].click(); await tick(60);
+const trN0 = trCalls.length; $$("#trSeg button")[3].click(); await tick(60);
 ok(trCards().length === 3 && $("#trMore").hidden && trCalls.length === trN0, "best view is cached: re-selecting within 30 min makes no new request");
 run("trAuto()"); await tick(60); ok(trCards().length === 6 && trCalls.at(-1).page === 2, "scrolling loads page 2 and appends (6 cards)");
 run("trAuto()"); await tick(60); ok(trCards().length === 9 && trCalls.at(-1).page === 3 && !$("#trMore").hidden, "after 3 pages the auto-loading stops and 더 보기 appears");
@@ -239,7 +239,7 @@ run("trAuto()"); await tick(60); ok(trCalls.at(-1).topic === "벚꽃" && trCalls
 $$("#trTopics button")[1].click(); await tick(60);
 ok(trCards().length === 4 && trCards().every((c) => !c._it.topic || c._it.topic === "한옥"), "tapping the chip again returns to the pill that was selected before (cached 모두 view, no refetch)");
 ok($$("#trSeg button")[0].classList.contains("on") && !$$("#trTopics button")[1].classList.contains("on"), "back to 모두, chip off");
-$$("#trTopics button")[2].click(); await tick(60); $$("#trSeg button")[2].click(); await tick(60);
+$$("#trTopics button")[2].click(); await tick(60); $$("#trSeg button")[3].click(); await tick(60);
 ok(run("TR.topic") === "" && run("TR.g") === "best" && $$("#trTopics button").every((b) => !b.classList.contains("on")), "choosing a pill clears the topic");
 // 새로고침: 현재 피드를 첫 쪽부터 다시
 const nr = trCalls.length; $("#trRefresh").click(); await tick(60);
@@ -248,7 +248,7 @@ ok(trCalls.length === nr + 1 && trCalls.at(-1).page === 1 && trCalls.at(-1).g ==
 trCards()[0].click(); await tick(60); ok(!$("#viewer").hidden && run("lv().list.length") === 3, "trend image opens in viewer with the whole loaded list");
 $("#vfab").click(); await tick(60);
 // 안내 문구: 비어 있을 때만 짧게
-trEmptyHot = true; trDl = { state: "off" }; $$("#trSeg button")[0].click(); $$("#trSeg button")[1].click(); run("TR.views.delete('g:hot')"); $("#trRefresh").click(); await tick(60);
+trEmptyHot = true; trDl = { state: "off" }; $$("#trSeg button")[0].click(); $$("#trSeg button")[2].click(); run("TR.views.delete('g:hot')"); $("#trRefresh").click(); await tick(60);
 ok(trCards().length === 0 && /네이버 키/.test($("#trNote").textContent) && !$("#trNote").hidden, "empty 지금 인기 explains why in one short line: " + $("#trNote").textContent);
 trDl = { state: "err", why: "denied", status: 403 }; $("#trRefresh").click(); await tick(60);
 ok(/이용 신청/.test($("#trNote").textContent), "datalab error reason is shown when 지금 인기 is empty");
@@ -258,6 +258,19 @@ $$("#trSeg button")[0].click(); await tick(40);
 $("#tabFeed").click(); $("#homeBtn").click(); await tick(60);
 $("#exTrend").click(); await tick(60); ok(!$("#trends").hidden, "home 트렌드 button opens trends tab");
 ok(!/요즘 화제|위키|뜨는 주제|잘 찍은/.test($("#exTrend").textContent) && /지금 인기/.test($("#exTrend").textContent), "home trend button text matches the new names: " + $("#exTrend").textContent);
+
+// ---- 12차: 내 취향 (여러 주제어를 종합) ----
+$("#tabFeed").click(); $("#homeBtn").click(); await tick(60);
+run("S.priv = false"); run("S.taste = true"); run("Taste.learn(['sunset','cat','coffee','sunset'], 3)"); run("Taste.learn(['sunset','cat'], 3)");
+trCalls.length = 0; $("#exBm").click(); await tick(150);
+ok(!$("#trends").hidden && run("TR.g") === "mine" && $$("#trSeg button")[1].classList.contains("on"), "home 내 취향 opens the trends tab on the 내 취향 pill");
+const mc = trCalls.find((c) => c.g === "mine");
+ok(mc && mc.mine.split(",").length >= 2 && mc.mine.includes("sunset"), "내 취향 sends several taste words, not just one: " + (mc && mc.mine));
+run("TR.views.delete('g:all')"); $$("#trSeg button")[0].click(); await tick(100);
+ok(trCalls.at(-1).g === "all" && trCalls.at(-1).mine.length > 0, "모두 also mixes in taste words");
+run("S.priv = true"); $$("#trSeg button")[1].click(); await tick(60);
+ok($$("#trSeg button")[1].hidden || run("TR.g") !== "mine", "private mode hides the 내 취향 pill");
+run("S.priv = false"); run("Taste.clear()"); run("S.taste = false"); run("TR.g = 'all'");
 
 // ---- 홈으로 ----
 $("#homeBtn").click(); await tick(60); ok(!$("#home").hidden && $("#q").value === "" && $("#qClear").hidden, "⌂ returns to home and clears the box");
@@ -513,7 +526,8 @@ run("S.bmIds.add('b1')");
   ok(run("DB._m.find((x) => x.id === " + JSON.stringify(cards[1]._it.id) + ").boards.length") === 0, "last board that no longer exists is ignored");
   run("LS.set('lastBoard', '여행')"); star(cards[2]).click(); await tick(100);
   r0 = run("DB._m.find((x) => x.id === " + JSON.stringify(cards[2]._it.id) + ")");
-  ok(r0 && r0.boards.join() === "여행" && r0.board === "여행" && /‘여행’ 보드에 담았어요/.test($("#toast").textContent), "☆ short tap saves into the last used board and says which: " + $("#toast").textContent);
+  ok(r0 && (r0.boards || []).length === 0 && /북마크에 담았어요/.test($("#toast").textContent) && !!$("#toast button") && /보드 선택/.test($("#toast button").textContent), "☆ short tap never picks a board on its own (even with a last-used board) and offers [보드 선택]: " + $("#toast").textContent);
+  $("#toast button").click(); await tick(60); ok(!$("#bmSheet").hidden, "[보드 선택] opens the board sheet for that image"); $("#bmCancel").click(); await tick(40);
   star(cards[2]).click(); await tick(60); ok(!run("S.bmIds.has(" + JSON.stringify(cards[2]._it.id) + ")"), "☆ again removes the bookmark");
   // 길게
   const c3 = cards[3], before = run("S.bmIds.size");

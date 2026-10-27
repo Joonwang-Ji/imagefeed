@@ -12,7 +12,12 @@ function hashId(s) { let h = 5381; for (let i = 0; i < s.length; i++) h = ((h <<
 function keyOf(it) { try { const u = new URL(it.full); return (u.host + u.pathname).toLowerCase(); } catch { return it.full || it.thumb; } }
 const STOP = new Set(["이미지", "사진", "블로그", "네이버", "다음", "티스토리", "photo", "image", "images", "stock", "free", "무료", "the", "and", "for", "with", "from", "jpg", "png"]);
 function tokens(s) { return (String(s).toLowerCase().match(/[\p{L}\p{N}]{2,}/gu) || []).filter((w) => !STOP.has(w) && !/^\d+$/.test(w)); }
-function toast(t, ms = 2800) { const el = $("#toast"); el.textContent = t; el.hidden = false; clearTimeout(toast._t); toast._t = setTimeout(() => (el.hidden = true), ms); }
+// act: { label, fn } 을 주면 알림 옆에 버튼이 붙습니다 (예: 북마크 직후 [보드 선택])
+function toast(t, ms = 2800, act = null) {
+  const el = $("#toast"); el.textContent = t; el.hidden = false; el.classList.toggle("withbtn", !!act);
+  if (act) { const b = document.createElement("button"); b.type = "button"; b.textContent = act.label; b.onclick = () => { el.hidden = true; clearTimeout(toast._t); act.fn(); }; el.appendChild(b); }
+  clearTimeout(toast._t); toast._t = setTimeout(() => (el.hidden = true), act ? Math.max(ms, 5000) : ms);
+}
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const idle = (ms = 3000) => new Promise((r) => (window.requestIdleCallback ? requestIdleCallback(r, { timeout: ms }) : setTimeout(r, 300)));
 const pick = (a) => a[Math.floor(Math.random() * a.length)];
@@ -157,12 +162,14 @@ async function toggleBookmark(it, board) {
     let an = it.an && it.an.tone ? it.an : null;
     if (!an && blob) { try { an = (await blobInfo(blob))?.an || null; if (an) it.an = an; } catch { /* 분석 없이 저장 */ } } // 톤·팔레트를 저장 때 한 번 분석해 둠
     let boards = [];
-    if (board === undefined) { const last = LS.get("lastBoard", ""); if (last && boardNames(await DB.all()).includes(last)) boards = [last]; }
-    else if (board) boards = [board];
+    if (board) boards = [board]; // 보드를 직접 고르지 않으면 보드 없이 담습니다 (나중에 [보드 선택]이나 선택 모드로 정리)
     const ok = await DB.put({ an, boards, board: boards[0] || "", id: it.id, title: it.title, thumb: it.thumb, alt: it.alt, full: it.full, page: it.page, src: it.src, w: it.w, h: it.h, tags: it.tags, adult: !!it.adult && !it.safe, adultSrc: it.safe ? "" : it.ai ? "ai" : it.adult ? "kw" : "", safe: !!it.safe, ts: Date.now(), blob });
     if (!ok) return toast("이 브라우저에서는 북마크를 저장할 수 없어요");
     it.boards = boards; it.board = boards[0] || "";
-    S.bmIds.add(it.id); toast(boards.length ? `‘${boards[0]}’ 보드에 담았어요` : "북마크에 담았어요"); learnFrom(it, 3);
+    S.bmIds.add(it.id); learnFrom(it, 3);
+    if (boards.length) toast(`‘${boards[0]}’ 보드에 담았어요`);
+    else if (board === undefined) toast("북마크에 담았어요", 4000, { label: "보드 선택", fn: () => openBoardSheet(it) });
+    else toast("북마크에 담았어요");
   }
   refreshStars(); updateCount();
   if (S.view === "bm" && $("#viewer").hidden) renderBm();
@@ -209,7 +216,7 @@ class Masonry {
     }
   }
   balLater() { clearTimeout(this._bt); this._bt = setTimeout(() => this.balance(), 250); clearTimeout(this._bt2); this._bt2 = setTimeout(() => this.balance(), 1500); }
-  place(c) { let k = 0; for (let i = 1; i < this.n; i++) if (this.hs[i] < this.hs[k]) k = i; this.cols[k].appendChild(c); this.hs[k] += 1 / c._r + 0.04; }
+  place(c) { let k = 0; for (let i = 1; i < this.n; i++) if (this.hs[i] < this.hs[k]) k = i; c._m = this; this.cols[k].appendChild(c); this.hs[k] += 1 / c._r + 0.04; }
   add(cards) {
     this.all.push(...cards);
     const ok = this.pred ? cards.filter(this.pred) : cards;
@@ -361,7 +368,7 @@ async function loadCard(el) {
     // 비율을 모르는 소스(미술관 등)는 불러온 뒤 실제 비율로 맞춤
     if ((!it.w || !it.h) && img.naturalWidth && img.naturalHeight) {
       it.w = img.naturalWidth; it.h = img.naturalHeight;
-      el._r = clamp(it.w / it.h, 0.5, 2.2); el.style.aspectRatio = String(el._r);
+      el._r = clamp(it.w / it.h, 0.5, 2.2); el.style.aspectRatio = String(el._r); el._m?.balLater();
     }
     if (wantColor) { const inf = altInfo || (it.blob ? pixelInfo(img) : null); if (!it.cols || inf?.cols) it.cols = inf?.cols || null; it.sh = inf?.sh || it.sh; it.an = inf?.an || it.an; }
     if (wantSh && it.blob) {
@@ -793,9 +800,10 @@ $("#exRand").onclick = () => { const c = pick(CATS); startSearch(pick(c[2])); };
 $("#exTrend").onclick = () => setView("tr");
 $("#exBm").onclick = async () => {
   if (S.priv) return;
-  const top = tasteOn() && !Taste.isEmpty() ? Taste.top(8) : await bmTopTags(8);
-  if (!top.length) { toast("북마크·취향 정보가 아직 없어서 아무 주제로 찾아요"); const c = pick(CATS); return startSearch(pick(c[2])); }
-  startSearch(pick(top));
+  // 한 주제어만 검색하지 않고, 취향·북마크를 종합한 추천 피드(트렌드 탭의 ‘내 취향’)로 갑니다.
+  const has = (tasteOn() && !Taste.isEmpty()) || (await bmTopTags(1)).length;
+  if (!has) toast("북마크·취향 정보가 아직 없어요. 마음에 드는 이미지를 북마크하면 여기서 추천해 드려요", 4200);
+  TR.g = has ? "mine" : "all"; TR.topic = ""; TR.views.delete(trKey()); TR.v = null; setView("tr");
 };
 
 // ---------- 탭/북마크 보기 ----------
@@ -1442,14 +1450,21 @@ const TR = { g: "all", topic: "", views: new Map(), v: null, topics: [], dl: { s
 const TR_AUTO = 3; // [더 보기] 없이 자동으로 이어 받는 쪽 수
 const DL_WHY = { denied: "네이버 API HUB에서 ‘검색어트렌드’ 이용 신청이 필요해요", limit: "요청 한도를 넘었어요", timeout: "응답이 늦어요", gone: "주소를 찾을 수 없어요 (NAVER_TREND_BASE 확인)", network: "연결하지 못했어요" };
 const trKey = () => (TR.topic ? "t:" + TR.topic : "g:" + TR.g);
-const newView = () => ({ g: TR.g, topic: TR.topic, items: [], keys: new Set(), page: 0, pc: "", more: true, burst: 0, stall: 0, at: 0, loading: false, err: false });
+const newView = () => ({ g: TR.g, topic: TR.topic, mine: undefined, topics: null, items: [], keys: new Set(), page: 0, pc: "", more: true, burst: 0, stall: 0, at: 0, loading: false, err: false });
 // 보는 피드(알약·주제)가 바뀌었을 때: 이미 받아 둔 것(30분 안)이 있으면 그대로, 없으면 첫 쪽부터
 function trSwitch() {
+  if (S.priv && TR.g === "mine") TR.g = "all";
   const k = trKey(); let v = TR.views.get(k);
   if (!v || Date.now() - v.at > 30 * 60000) { v = newView(); TR.views.set(k, v); }
-  TR.v = v; trM.clear(); renderTrControls(); renderTrends();
+  TR.v = v; if (!TR.topic && v.topics) TR.topics = v.topics; trM.clear(); renderTrControls(); renderTrends();
   if (!v.items.length && !v.loading) trLoad(); else trReobserve();
   scrollTo(0, 0);
+}
+// 내 취향 주제어: 학습한 취향과 북마크에서 자주 나온 말을 모아, 비슷한 말은 하나로 합치고 위쪽 4개 + 나머지 중 무작위 2개를 섞습니다 (매번 같은 말만 나오지 않게).
+async function mineTopics() {
+  const pool = [];
+  for (const k of [...(tasteOn() ? Taste.top(12) : []), ...(await bmTopTags(10))]) { const t = String(k).trim(); if (t.length >= 2 && !pool.some((p) => p === t || p.includes(t) || t.includes(p))) pool.push(t); }
+  return [...pool.slice(0, 4), ...shuffle(pool.slice(4)).slice(0, 2)];
 }
 function trEnter() { if (!TR.v || Date.now() - TR.v.at > 30 * 60000) trSwitch(); else { trM.check(); renderTrControls(); renderTrFoot(); trReobserve(); } }
 async function trLoad() {
@@ -1457,10 +1472,16 @@ async function trLoad() {
   v.loading = true; v.err = false; renderTrNote();
   try {
     const qs = new URLSearchParams({ g: v.g, page: String(v.page + 1) }); if (v.topic) qs.set("topic", v.topic); if (v.pc) qs.set("pc", v.pc);
+    // 내 취향 주제어(여러 개)는 이 피드를 처음 열 때 한 번 정해 두고 쪽마다 같은 것을 씁니다. 서버에는 저장되지 않습니다.
+    if (!v.topic && !S.priv && (v.g === "mine" || v.g === "all")) {
+      if (v.mine === undefined) v.mine = (await mineTopics()).join(",");
+      if (v.mine) qs.set("mine", v.mine);
+      else if (v.g === "mine") { v.more = false; v.empty = true; v.at = Date.now(); return; }
+    }
     const j = await (await api("/api/trends?" + qs)).json();
     if (!v.page) v.at = Date.now();
     v.page++; v.pc = j.pc || ""; v.more = !!j.more; v.burst++;
-    if (j.topics?.length) TR.topics = j.topics;
+    if (j.topics?.length) { if (!v.topic) v.topics = j.topics; TR.topics = j.topics; }
     if (j.dl) TR.dl = j.dl;
     const fresh = [];
     for (const raw of j.items || []) {
@@ -1488,6 +1509,7 @@ function renderTrends() { // 지금 보는 피드를 처음부터 다시 그림 
   renderTrTopics(); renderTrNote(); renderTrFoot();
 }
 function renderTrControls() {
+  const mb = document.querySelector('#trSeg button[data-g="mine"]'); if (mb) mb.hidden = S.priv;
   document.querySelectorAll("#trSeg button").forEach((b) => b.classList.toggle("on", !TR.topic && b.dataset.g === TR.g));
   $("#trGrid").classList.toggle("tags", !TR.topic);
   renderTrTopics();
@@ -1505,6 +1527,7 @@ function renderTrNote() { // 비어 있거나 실패했을 때만 짧게 알림
   const v = TR.v; let t = "";
   if (v && !v.items.length) {
     if (v.loading) t = "불러오는 중…";
+    else if (v.empty) t = "아직 취향을 알 수 없어요. 마음에 드는 이미지를 북마크하거나 오래 살펴보면, 그것을 종합해서 보여 드려요.";
     else if (v.err) t = "불러오지 못했어요. 새로고침을 눌러 주세요.";
     else if (v.g === "hot" && !v.topic) t = TR.dl.state === "off" ? "네이버 키를 등록하면 나와요." : TR.dl.state === "err" ? `가져오지 못했어요 (${DL_WHY[TR.dl.why] || "오류"}).` : "아직 보여 줄 이미지가 없어요.";
     else t = "보여 줄 이미지가 없어요.";

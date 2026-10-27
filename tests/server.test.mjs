@@ -297,4 +297,56 @@ ok(CATS.every((c) => c[2].length >= 5), "each category has >= 5 sub topics");
 }
 
 
+// ---- 12차: 실제 인기 검색어(구글 트렌드 RSS) + 내 취향 피드 ----
+{
+  globalThis.caches = { default: { store: new Map(), match: async function (k) { const v = this.store.get(k.url); return v ? new Response(v) : undefined; }, put: async function (k, r) { this.store.set(k.url, await r.text()); } } };
+  const rss = `<?xml version="1.0"?><rss xmlns:ht="https://trends.google.com/trending/rss"><channel>
+  <item><title>제주 감귤</title><ht:approx_traffic>2,000+</ht:approx_traffic><ht:news_item><ht:news_item_title>감귤 수확 한창</ht:news_item_title></ht:news_item></item>
+  <item><title>홍길동</title><ht:approx_traffic>50,000+</ht:approx_traffic><ht:news_item><ht:news_item_title>배우 홍길동 열애 인정</ht:news_item_title></ht:news_item></item>
+  <item><title>단풍 명소</title><ht:approx_traffic>10,000+</ht:approx_traffic><ht:news_item><ht:news_item_title>설악산 단풍 절정</ht:news_item_title></ht:news_item></item>
+  <item><title>할로윈 파티</title><ht:approx_traffic>5,000+</ht:approx_traffic></item>
+  <item><title>누드 사진</title><ht:approx_traffic>5,000+</ht:approx_traffic></item>
+  </channel></rss>`;
+  const base = globalThis.fetch, seen2 = [];
+  globalThis.fetch = async (url, opt) => { const u = String(url); seen2.push(u); if (u.includes("trends.google.com")) return new Response(rss, { status: 200 }); return base(url, opt); };
+  const E2 = { ...env, NAVER_ID: "id", NAVER_SECRET: "sec", PIXABAY_KEY: "pk", UNSPLASH_KEY: "uk", KAKAO_KEY: "kk" };
+  let jr = await (await worker.fetch(req("/api/trends"), E2)).json();
+  const live = jr.topics.filter((t) => t.kind === "live").map((t) => t.q);
+  ok(live.includes("제주 감귤") && live.includes("단풍 명소"), "real trending keywords appear as chips: " + live);
+  ok(!live.includes("홍길동") && !live.includes("할로윈 파티") && !live.includes("누드 사진"), "news/gossip, off-topic and adult keywords are filtered out: " + live);
+  ok(jr.dl.state === "ok", "state ok when live keywords exist");
+  ok(seen2.some((c) => c.includes("search/v1/image") && c.includes(encodeURIComponent("제주 감귤"))), "지금 인기 photos search the real keyword on naver");
+  // AI 로 한 번 더 거르기
+  caches.default.store.clear();
+  const E3 = { ...E2, AI: { run: async () => ({ response: "[0]" }) } };
+  jr = await (await worker.fetch(req("/api/trends"), E3)).json();
+  const live3 = jr.topics.filter((t) => t.kind === "live").map((t) => t.q);
+  ok(live3.length === 1 && live3[0] === "제주 감귤", "AI keeps only the visual keyword: " + live3);
+  // AI 가 엉뚱하게 답하면 규칙 걸러내기 결과를 그대로 씀
+  caches.default.store.clear();
+  jr = await (await worker.fetch(req("/api/trends"), { ...E2, AI: { run: async () => ({ response: "sorry" }) } })).json();
+  ok(jr.topics.filter((t) => t.kind === "live").length === 2, "bad AI answer falls back to rule-filtered list");
+  // 가져오기 실패해도 나머지는 동작
+  caches.default.store.clear();
+  globalThis.fetch = async (url, opt) => { if (String(url).includes("trends.google.com")) throw new Error("blocked"); return base(url, opt); };
+  jr = await (await worker.fetch(req("/api/trends"), E2)).json();
+  ok(Array.isArray(jr.items) && jr.topics.some((t) => t.kind === "season") && !jr.topics.some((t) => t.kind === "live"), "google trends unreachable: response still fine, season chips remain, no live chips");
+  globalThis.fetch = base;
+  // 내 취향 피드: 여러 주제어를 섞음
+  seen2.length = 0; globalThis.fetch = async (url, opt) => { const u = String(url); seen2.push(u);
+    if (u.startsWith("https://naverapihub.apigw.ntruss.com/search/v1/image")) { const q = decodeURIComponent(u.match(/query=([^&]+)/)[1]), n = +u.match(/display=(\d+)/)[1];
+      return jres({ items: Array.from({ length: n }, (_, i) => ({ title: `${q} 사진 ${i}`, link: `https://blog.test/${encodeURIComponent(q)}${i}.jpg`, thumbnail: `http://search.pstatic.net/common/?src=${encodeURIComponent(q)}${i}&type=b150`, sizewidth: "800", sizeheight: "600" })) }); }
+    return base(url, opt); };
+  const m = await (await worker.fetch(req("/api/trends?g=mine&mine=" + encodeURIComponent("노을,고양이,카페 인테리어,누드,할로윈")), E2)).json();
+  const qs2 = ["노을", "고양이", "카페 인테리어"].map((t) => seen2.some((c) => c.includes("search/v1/image") && c.includes("query=" + encodeURIComponent(t))));
+  ok(qs2.every(Boolean), "mine feed searches every topic, not just one: " + qs2);
+  ok(!seen2.some((c) => c.includes(encodeURIComponent("누드")) || c.includes(encodeURIComponent("할로윈"))), "adult/off-topic taste words are never searched");
+  ok(!seen2.some((c) => c.includes("Featured_pictures") || c.includes("trends.google.com")), "mine feed does not call commons or google trends");
+  ok(m.items.length > 6 && new Set(m.items.map((i) => i.topic)).size >= 3, "mine items are interleaved across topics: " + [...new Set(m.items.map((i) => i.topic))]);
+  ok(m.topics.length === 3 && m.topics.every((t) => t.kind === "mine"), "mine chips are the taste topics: " + m.topics.map((t) => t.q));
+  const m0 = await (await worker.fetch(req("/api/trends?g=mine"), E2)).json();
+  ok(m0.items.length === 0, "mine without topics is empty");
+  globalThis.fetch = base;
+}
+
 console.log(fail ? `\n${fail} failed` : "\nall passed"); process.exit(fail ? 1 : 0);

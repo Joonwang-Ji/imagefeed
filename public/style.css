@@ -334,3 +334,9 @@ html,body{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-
 input,textarea,select,[contenteditable],.selectable{-webkit-user-select:text;user-select:text;-webkit-touch-callout:default}
 img,svg,button,.card,#cardMenu{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
 img{-webkit-user-drag:none}
+/* 12차: 북마크 직후 알림의 [보드 선택] 버튼 */
+#toast.withbtn{display:flex;align-items:center;gap:12px;padding-right:8px}
+#toast.withbtn button{border:none;border-radius:999px;background:var(--acc,#8c7cff);color:#fff;font-weight:600;padding:6px 12px;font-size:13px;white-space:nowrap}
+.seg button{padding:6px 8px}
+#toast[hidden]{display:none}
+#toast.withbtn{white-space:nowrap;width:max-content;max-width:92vw;flex-wrap:nowrap}

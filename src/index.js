@@ -484,6 +484,57 @@ async function datalabTopics(env, now) {
   return out;
 }
 
+
+// ---- 실제 인기 검색어: 구글 트렌드(한국) 일일 인기 검색어 RSS ----
+// 40개 후보를 직접 정하는 대신, 지금 사람들이 실제로 많이 찾는 말을 가져옵니다. 다만 인기 검색어는 연예인·경기 결과·사건 소식이 많아서
+//  1) 사건·정치·경기 같은 뉴스 제목이 붙은 말은 걸러내고(NEWSY),
+//  2) Workers AI 가 있으면 "이미지로 볼 만한 말"(장소·음식·동물·자연·행사·물건·취미)만 한 번 더 고릅니다.
+// 1시간 캐시. 못 가져오면(차단·형식 변경) 빈 목록을 주고, 화면은 기존 방식(데이터랩·계절 주제)으로 채웁니다.
+const NEWSY = /사망|숨져|사고|체포|구속|검찰|경찰|재판|판결|선거|대통령|의원|정당|국회|탄핵|총격|테러|전쟁|미사일|확진|감염|실종|화재|폭행|살인|논란|사과|이혼|열애|결별|승|패배|우승|득점|골|홈런|경기|리그|주가|환율|코스피|금리|폭락|급등|배우|가수|아이돌|감독|선수/;
+function parseGoogleTrends(xml) {
+  const out = [];
+  for (const m of String(xml || "").matchAll(/<item>([\s\S]*?)<\/item>/g)) {
+    const b = m[1], t = clean((b.match(/<title>([\s\S]*?)<\/title>/) || [])[1] || "").replace(/<!\[CDATA\[|\]\]>/g, "").trim();
+    if (!t || t.length > 30) continue;
+    const news = [...b.matchAll(/<ht:news_item_title>([\s\S]*?)<\/ht:news_item_title>/g)].map((x) => clean(x[1]).replace(/<!\[CDATA\[|\]\]>/g, "")).slice(0, 3);
+    const tr = parseInt(((b.match(/<ht:approx_traffic>([\s\S]*?)<\/ht:approx_traffic>/) || [])[1] || "0").replace(/[^0-9]/g, ""), 10) || 0;
+    out.push({ label: t, q: t, news, traffic: tr });
+  }
+  return out;
+}
+async function aiPickVisual(env, rows) {
+  if (!env.AI || env.TREND_AI === "off" || !rows.length) return null;
+  const list = rows.map((r, i) => `${i}: ${r.label}${r.news[0] ? " (" + r.news[0].slice(0, 40) + ")" : ""}`).join("\n");
+  const sys = "You pick trending Korean search keywords that people would enjoy browsing as PICTURES: places, travel, food, drinks, animals, plants, nature, weather, seasonal events and holidays, products, fashion items, interiors, hobbies, art and design. " +
+    "Exclude: names of people (celebrities, athletes, politicians), sports match results, crime, accidents, politics, finance, lawsuits, gossip, anything violent or sexual. " +
+    'Reply with ONLY a JSON array of the chosen numbers, e.g. [0,3,7]. If none fit, reply [].';
+  for (const model of [env.TR_MODEL, "@cf/meta/llama-3.1-8b-instruct", "@cf/meta/llama-3.2-3b-instruct"].filter(Boolean)) {
+    try {
+      const out = await env.AI.run(model, { messages: [{ role: "system", content: sys }, { role: "user", content: list }], max_tokens: 80, temperature: 0 });
+      const m = String(out?.response ?? out?.result?.response ?? "").match(/\[[\d,\s]*\]/);
+      if (!m) continue;
+      const ids = JSON.parse(m[0]).filter((n) => Number.isInteger(n) && n >= 0 && n < rows.length);
+      return ids.map((i) => rows[i]);
+    } catch { /* 다음 모델을 시도 */ }
+  }
+  return null;
+}
+async function realTrends(env, now) {
+  if (env.REAL_TRENDS === "off") return [];
+  const key = new Request(`https://cache.local/gt1?h=${Math.floor(now / 3600000)}`);
+  try { const hit = await caches.default.match(key); if (hit) return await hit.json(); } catch { /* 캐시가 없으면 새로 가져옴 */ }
+  let list = [];
+  try {
+    const r = await fetch(env.REAL_TRENDS_URL || "https://trends.google.com/trending/rss?geo=KR", { headers: { "user-agent": UA, accept: "application/rss+xml,text/xml,*/*" }, signal: AbortSignal.timeout(6000) });
+    if (r.ok) list = parseGoogleTrends(await r.text());
+  } catch { /* 네트워크 오류는 빈 목록 */ }
+  list = list.filter((x) => !hardBlocked(x.label) && !isAdult(x.label) && !isExplicit(x.label) && !offTopic(x.label, ...x.news) && !NEWSY.test(x.news.join(" ")) && !NEWSY.test(x.label));
+  const picked = await aiPickVisual(env, list.slice(0, 30));
+  const out = (picked || list).slice(0, 12).map((x) => ({ label: x.label, q: x.q, kind: "live" }));
+  try { await caches.default.put(key, new Response(JSON.stringify(out), { headers: { "cache-control": `max-age=${out.length ? 3600 : 600}` } })); } catch { /* 캐시 실패는 무시 */ }
+  return out;
+}
+
 // ---- 지금 인기: 데이터랩이 가려낸 주제(‘뜨는’ 것 우선) 몇 개로 네이버 이미지를 쪽 단위로 찾아 grp "hot" 으로 돌려줍니다 ----
 // 네이버 이미지 검색은 이미 등록한 키를 그대로 쓰고, 주제는 앞의 4개만 씁니다. 주제마다 n 장씩, 쪽 번호만큼 뒤로 이어서 받습니다. (결과는 Cloudflare 가 캐시)
 async function hotPhotos(env, topics, page, n) {
@@ -501,26 +552,40 @@ async function topicPhotos(env, q, page, n) {
   return rr(...rs.map((r) => (r.status === "fulfilled" ? r.value : [])));
 }
 
+// ---- 내 취향: 화면이 알려 준 내 주제어 여러 개를 한꺼번에 찾아 번갈아 섞습니다 (한 주제어만 반복해서 보이지 않게) ----
+// 주제어는 요청 주소로만 오고 서버에 저장하지 않습니다.
+async function minePhotos(env, topics, page, n) {
+  const per = Math.max(3, Math.ceil(n / Math.max(1, topics.length)));
+  const rs = await Promise.allSettled(topics.map((t) => topicPhotos(env, t, page, per * 3).then((l) => l.slice(0, per + 2).map((it) => ({ ...it, topic: t })))));
+  return rr(...rs.map((r) => (r.status === "fulfilled" ? r.value : [])));
+}
+const cleanTopics = (v) => [...new Set(String(v || "").split(",").map((x) => x.trim().slice(0, 40)).filter(Boolean))]
+  .filter((t) => !(hardBlocked(t) || isAdult(t) || isExplicit(t) || offTopic(t))).slice(0, 6);
+
 // 한 쪽에 몇 장씩 받을지: all 은 세 갈래를 번갈아 섞어 약 40장, 한 갈래만 보면 그 갈래를 넉넉히
-const TR_N = { all: { hot: 4, best: 7, pick: 12 }, hot: { hot: 12, best: 0, pick: 0 }, best: { hot: 0, best: 20, pick: 0 }, pick: { hot: 0, best: 0, pick: 40 } };
+const TR_N = { all: { hot: 4, best: 7, pick: 12, mine: 10 }, mine: { mine: 30 }, hot: { hot: 12, best: 0, pick: 0 }, best: { hot: 0, best: 20, pick: 0 }, pick: { hot: 0, best: 0, pick: 40 } };
 
 async function trends(env, u) {
   const now = Date.now(), day = Math.floor(now / 86400000);
-  const g = ["all", "hot", "best", "pick"].includes(u.searchParams.get("g")) ? u.searchParams.get("g") : "all";
+  const g = ["all", "mine", "hot", "best", "pick"].includes(u.searchParams.get("g")) ? u.searchParams.get("g") : "all";
   const page = clampInt(u.searchParams.get("page"), 1, 40, 1);
   const topic = (u.searchParams.get("topic") || "").trim().slice(0, 60);
   const pc = (u.searchParams.get("pc") || "").slice(0, 300); // 에디터 픽의 이어 받기 표
-  const N = TR_N[g];
+  const N = TR_N[g], mineT = cleanTopics(u.searchParams.get("mine"));
   // 주제 칩은 첫 쪽(과 지금 인기)에서만 필요합니다. 데이터랩 결과는 12시간 캐시되어 있어 부담이 작습니다.
-  const needDl = !topic && (page === 1 || g === "all" || g === "hot");
-  const dlP = needDl ? datalabTopics(env, now).catch((e) => ({ state: "err", why: e?.code || "error", list: [] })) : Promise.resolve({ state: "skip", list: [] });
+  const needDl = !topic && g !== "mine" && (page === 1 || g === "all" || g === "hot");
+  const dlP = needDl ? Promise.all([
+    datalabTopics(env, now).catch((e) => ({ state: "err", why: e?.code || "error", list: [] })),
+    realTrends(env, now).catch(() => []),
+  ]).then(([d, live]) => ({ ...d, live, state: live.length ? "ok" : d.state, list: [...live, ...(d.list || []).filter((x) => !live.some((l) => l.q === x.q))] })) : Promise.resolve({ state: "skip", list: [], live: [] });
   let pickNext = "";
   const topicOk = !topic || !(hardBlocked(topic) || isAdult(topic) || isExplicit(topic) || offTopic(topic));
-  const [dl, hot, best, pick] = await Promise.all([
+  const [dl, hot, best, pick, mine] = await Promise.all([
     dlP,
     !topicOk ? [] : topic ? topicPhotos(env, topic, page, 36).catch(() => []) : N.hot ? dlP.then((d) => hotPhotos(env, d.list || [], page, N.hot)).catch(() => []) : [],
     !topic && N.best ? popularPhotos(env, page, N.best).catch(() => []) : [],
     !topic && N.pick && (page === 1 || pc) ? featuredPicks(day, pc, N.pick).then((r) => { pickNext = r.next; return r.items; }).catch(() => []) : [],
+    !topic && N.mine && mineT.length ? minePhotos(env, mineT, page, N.mine).catch(() => []) : [],
   ]);
   const seen = new Set();
   // 트렌드는 훑어 올리다 놀라지 않게 더 엄격하게 거릅니다.
@@ -533,7 +598,7 @@ async function trends(env, u) {
     if (isNude(t)) return hasArtContext(t) ? "blur" : "drop";
     return isAdult(t) ? "blur" : "ok";
   };
-  const raw = rr(hot, best, pick);
+  const raw = rr(hot, best, pick, mine);
   const items = raw
     .filter((it) => it.thumb && it.full)
     .map((it) => ({ it, v: verdict(it) })).filter((x) => x.v !== "drop")
@@ -543,7 +608,9 @@ async function trends(env, u) {
   const topics = [];
   if (!topic && page === 1) {
     const tp = new Set();
-    for (const x of rr(seasonTopics(now).map((s) => ({ label: s.label, q: s.q, kind: "season" })), (dl.list || []).map((x) => ({ label: x.label || x.q, q: x.q, kind: "rising" })))) if (!tp.has(x.q)) { tp.add(x.q); topics.push(x); }
+    const src = g === "mine" ? [mineT.map((t) => ({ label: t, q: t, kind: "mine" }))]
+      : [(dl.live || []).map((x) => ({ label: x.label, q: x.q, kind: "live" })), seasonTopics(now).map((s) => ({ label: s.label, q: s.q, kind: "season" })), (dl.list || []).filter((x) => x.kind !== "live").map((x) => ({ label: x.label || x.q, q: x.q, kind: "rising" }))];
+    for (const x of rr(...src)) if (!tp.has(x.q)) { tp.add(x.q); topics.push(x); }
   }
   // 사진이 하나도 없어도 주제는 보여 줄 수 있으므로 502 가 아니라 빈 목록으로 응답합니다.
   // more: 다음 쪽을 더 받아 볼 만한지. 원본이 비었거나 쪽이 너무 깊으면 끝입니다. (걸러져서 비었을 뿐이면 계속 이어 받음)
