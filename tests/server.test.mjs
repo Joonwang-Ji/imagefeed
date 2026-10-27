@@ -349,31 +349,45 @@ ok(CATS.every((c) => c[2].length >= 5), "each category has >= 5 sub topics");
   globalThis.fetch = base;
 }
 
-// ---- 14차: 뉴스 필터(NEWSY) 오탐 수정 + 연예·유행 허용 ----
+// ---- 14차: 뉴스 필터(NEWSY) 오탐 수정 + 연예인·인물 이름 거르기 ----
 {
   const item = (t, n) => `<item><title>${t}</title><ht:approx_traffic>1,000+</ht:approx_traffic><ht:news_item><ht:news_item_title>${n}</ht:news_item_title></ht:news_item></item>`;
   const rows = [
     ["골목 카페", "골목 카페 거리 인기", true], ["사과 농장", "사과 따기 체험 인기", true], ["승마 체험", "주말 승마 체험 인기", true],
-    ["단풍 장관", "설악산 단풍 장관", true], ["폭발적 디저트", "폭발적 인기 끄는 디저트", true], ["신작 드라마", "배우 김아무개 주연 새 드라마 인기", true],
-    ["아이돌 컴백", "아이돌 그룹 컴백 앨범 공개", true], ["경기도 단풍", "경기도 단풍 명소 인기", true],
-    ["국회의사당 벚꽃", "국회의사당 벚꽃길 개방", true],
+    ["단풍 장관", "설악산 단풍 장관", true], ["폭발적 디저트", "폭발적 인기 끄는 디저트", true], ["경기도 단풍", "경기도 단풍 명소 인기", true],
+    ["국회의사당 벚꽃", "국회의사당 벚꽃길 개방", true], ["가수원동 맛집", "가수원동 맛집 거리", true], ["선수촌 아파트", "선수촌 아파트 단풍", true],
     ["대통령 연설", "대통령 국회 연설", false], ["고속도로 소식", "고속도로 추돌 사고 발생", false], ["야구 결과", "한국시리즈 우승 확정", false],
     ["가수 소식", "가수 A 공식 사과", false], ["배우 소식", "배우 B 이혼 발표", false], ["여당 소식", "여당 대표 기자회견", false],
+    ["신작 드라마", "배우 김아무개 주연 새 드라마 인기", false], ["아이돌 컴백", "아이돌 그룹 컴백 앨범 공개", false],
+    ["사미자", "사미자 근황 화제", false], ["단풍 명소", "내장산 단풍 절정", true],
   ];
   const rss = `<?xml version="1.0"?><rss xmlns:ht="https://trends.google.com/trending/rss"><channel>${rows.map((r) => item(r[0], r[1])).join("")}</channel></rss>`;
-  const base = globalThis.fetch; caches.default.store.clear();
-  globalThis.fetch = async (url, opt) => { if (String(url).includes("trends.google.com")) return new Response(rss, { status: 200 }); return base(url, opt); };
+  const wiki = { query: { normalized: [], pages: {
+    1: { title: "사미자", categories: [{ title: "분류:1941년 출생" }, { title: "분류:살아 있는 사람" }, { title: "분류:대한민국의 여자 배우" }] },
+    2: { title: "단풍 명소", categories: [{ title: "분류:관광" }] },
+    3: { title: "사과 농장", missing: "" },
+  } } };
+  const base = globalThis.fetch; let wikiCalls = 0, wikiTitles = "";
+  const mock = (wikiMode) => async (url, opt) => { const u = String(url);
+    if (u.includes("trends.google.com")) return new Response(rss, { status: 200 });
+    if (u.includes("ko.wikipedia.org")) { wikiCalls++; wikiTitles = decodeURIComponent(u.match(/titles=([^&]+)/)[1]); if (wikiMode === "fail") throw new Error("blocked"); return new Response(JSON.stringify(wiki), { status: 200, headers: { "content-type": "application/json" } }); }
+    return base(url, opt); };
   const E4 = { ...env, NAVER_ID: "id", NAVER_SECRET: "sec", PIXABAY_KEY: "pk", UNSPLASH_KEY: "uk", KAKAO_KEY: "kk" };
-  const jr = await (await worker.fetch(req("/api/trends"), E4)).json();
-  const live = jr.topics.filter((t) => t.kind === "live").map((t) => t.q);
+  const liveOf = async (E) => (await (await worker.fetch(req("/api/trends"), E)).json()).topics.filter((t) => t.kind === "live").map((t) => t.q);
+  caches.default.store.clear(); globalThis.fetch = mock("ok");
+  let live = await liveOf(E4);
   const wantIn = rows.filter((r) => r[2]).map((r) => r[0]), wantOut = rows.filter((r) => !r[2]).map((r) => r[0]);
-  ok(wantIn.every((q) => live.includes(q)), "ordinary words are no longer filtered (골목·사과·승마·장관·폭발적·경기도): missing " + wantIn.filter((q) => !live.includes(q)));
-  ok(live.includes("신작 드라마") && live.includes("아이돌 컴백"), "entertainment and idol topics are allowed");
-  ok(!wantOut.some((q) => live.includes(q)), "politics, accidents, sports results, apology/divorce gossip stay filtered: " + wantOut.filter((q) => live.includes(q)));
-  // AI 에 보내는 안내문: 연예는 허용, 정치·사건은 제외
-  caches.default.store.clear(); let sys = "";
+  ok(wantIn.every((q) => live.includes(q)), "ordinary words are not filtered (골목·사과·승마·장관·폭발적·경기도·가수원동·선수촌): missing " + wantIn.filter((q) => !live.includes(q)));
+  ok(!wantOut.some((q) => live.includes(q)), "politics, accidents, sports, entertainment words, gossip and celebrity names are filtered: " + wantOut.filter((q) => live.includes(q)));
+  ok(!live.includes("사미자") && wikiCalls === 1 && wikiTitles.includes("사미자"), "a celebrity name with no news keywords is caught by the Wikipedia person check (one batched call)");
+  // 위키를 못 가져오면 그대로 두되 오류 없이 동작
+  caches.default.store.clear(); globalThis.fetch = mock("fail");
+  live = await liveOf(E4);
+  ok(live.includes("단풍 명소") && !live.includes("배우 소식"), "wikipedia unreachable: still works, rule filters still apply");
+  // AI 에 보내는 안내문: 인물 이름·정치·사건 제외, 이름처럼 보이는 말도 제외
+  caches.default.store.clear(); globalThis.fetch = mock("ok"); let sys = "";
   await worker.fetch(req("/api/trends"), { ...E4, AI: { run: async (m, b) => { sys = b.messages[0].content; return { response: "[0]" }; } } });
-  ok(/entertainment/i.test(sys) && /politicians/i.test(sys) && !/names of people/i.test(sys), "AI prompt allows entertainment, excludes politics/crime/gossip");
+  ok(/names of people/i.test(sys) && /politics/i.test(sys) && /personal name/i.test(sys) && !/entertainment/i.test(sys), "AI prompt excludes people and name-like words, no entertainment allowance");
   globalThis.fetch = base;
 }
 

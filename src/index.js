@@ -487,8 +487,8 @@ async function datalabTopics(env, now) {
 
 // ---- 실제 인기 검색어: 구글 트렌드(한국) 일일 인기 검색어 RSS ----
 // 40개 후보를 직접 정하는 대신, 지금 사람들이 실제로 많이 찾는 말을 가져옵니다. 다만 인기 검색어는 연예인·경기 결과·사건 소식이 많아서
-//  1) 사건·사고·정치·경기 결과·가십 같은 뉴스 제목이 붙은 말은 걸러내고(NEWSY — 연예·드라마·유행 자체는 통과),
-//  2) Workers AI 가 있으면 "이미지로 볼 만한 말"(장소·음식·동물·자연·행사·물건·취미·연예·콘텐츠)만 한 번 더 고릅니다.
+//  1) 사건·사고·정치·경기 결과·연예인·가십 같은 뉴스 제목이 붙은 말은 걸러내고(NEWSY), 인물 이름 자체는 한국어 위키백과 분류로 한 번 더 걸러(personLabels),
+//  3) Workers AI 가 있으면 "이미지로 볼 만한 말"(장소·음식·동물·자연·행사·물건·취미)만 한 번 더 고릅니다.
 // 1시간 캐시. 못 가져오면(차단·형식 변경) 빈 목록을 주고, 화면은 기존 방식(데이터랩·계절 주제)으로 채웁니다.
 const NEWSY = new RegExp([
   // 사건·사고·재난 ("사고력", "폭발적 인기" 같은 평범한 말은 걸리지 않게 뒤를 확인)
@@ -499,8 +499,8 @@ const NEWSY = new RegExp([
   "정치|선거|대통령|국회(?!의사당)|정당(?!한|성|화|방위)|여당|야당|[가-힣]부\\s?장관|장관\\s?(?:후보|임명|지명|사퇴)|총리|탄핵|계엄|청문회|국정감사",
   // 전쟁
   "전쟁|미사일|파병",
-  // 가십·논란 (연예·유행 자체는 허용하고, 사생활 가십과 사과·논란 기사만 뺌)
-  "논란|이혼|열애|결별|불륜|사과(?:했|문|하며|하는|하고)|공식\\s?사과|사과\\s?요구",
+  // 연예·가십·논란 (인물 소식이 붙은 말은 뺌. "가수원동"·"감독관"·"선수촌" 같은 말은 남김)
+  "배우|가수(?!원)|아이돌|감독(?!관)|선수(?!촌)|논란|이혼|열애|결별|불륜|사과(?:했|문|하며|하는|하고)|공식\\s?사과|사과\\s?요구",
   // 경기 결과 ("경기도", "경기장"은 남김)
   "패배|우승|득점|홈런|연승|연패|결승|승리|경기(?![도장])",
   // 금융
@@ -520,9 +520,9 @@ function parseGoogleTrends(xml) {
 async function aiPickVisual(env, rows) {
   if (!env.AI || env.TREND_AI === "off" || !rows.length) return null;
   const list = rows.map((r, i) => `${i}: ${r.label}${r.news[0] ? " (" + r.news[0].slice(0, 40) + ")" : ""}`).join("\n");
-  const sys = "You pick trending Korean search keywords that people would enjoy browsing as PICTURES: places, travel, food and drink trends, animals, plants, nature, weather, seasonal events and holidays, products, fashion and beauty trends, interiors, hobbies, art and design, " +
-    "and entertainment (dramas, movies, shows, music, the actors and idols in them, memes and challenges). " +
-    "Exclude: politicians and political news, elections, crime (suspects, victims), accidents and disasters, sports match results, finance, lawsuits, scandals, breakups, divorces and gossip, death news, anything violent or sexual. " +
+  const sys = "You pick trending Korean search keywords that people would enjoy browsing as PICTURES: places, travel, food, drinks, animals, plants, nature, weather, seasonal events and holidays, products, fashion items, interiors, hobbies, art and design. " +
+    "Exclude: names of people (celebrities, actors, comedians, singers, idols, athletes, politicians), sports match results, crime, accidents, politics, finance, lawsuits, gossip, anything violent or sexual. " +
+    "Treat any keyword that looks like a personal name (a surname plus given name, 2-4 Hangul syllables, not an ordinary word) as a person even if you do not recognize it, and exclude it. " +
     'Reply with ONLY a JSON array of the chosen numbers, e.g. [0,3,7]. If none fit, reply [].';
   for (const model of [env.TR_MODEL, "@cf/meta/llama-3.1-8b-instruct", "@cf/meta/llama-3.2-3b-instruct"].filter(Boolean)) {
     try {
@@ -535,6 +535,23 @@ async function aiPickVisual(env, rows) {
   }
   return null;
 }
+// 인물 이름 거르기: 키워드가 한국어 위키백과에서 사람 문서(살아 있는 사람·○○년 출생·배우·가수 등 분류)이면 뺍니다.
+// 규칙(NEWSY)·AI 가 놓치는 이름(예: 원로 연예인)을 잡는 용도이고, 한 번에 최대 50개를 묶어 한 번만 묻습니다. 못 가져오면(차단·오류) 그대로 둡니다.
+const PERSON_CAT = /살아\s?있는\s?사람|\d{4}년\s?(?:출생|사망)|배우|가수|코미디언|개그맨|방송인|연예인|탤런트|성우|아이돌|래퍼|정치인|선수|감독/;
+async function personLabels(labels) {
+  const out = new Set(); const list = [...new Set(labels)].slice(0, 50);
+  if (!list.length) return out;
+  try {
+    const d = await getJson(`https://ko.wikipedia.org/w/api.php?action=query&format=json&redirects=1&prop=categories&cllimit=500&titles=${enc(list.join("|"))}`, {}, 3600, 5000);
+    const q = d?.query || {}, map = new Map(list.map((l) => [l, l]));
+    for (const n of q.normalized || []) for (const [k, v] of map) if (v === n.from) map.set(k, n.to);
+    for (const r of q.redirects || []) for (const [k, v] of map) if (v === r.from) map.set(k, r.to);
+    const isPerson = new Set();
+    for (const p of Object.values(q.pages || {})) if ((p.categories || []).some((c) => PERSON_CAT.test(String(c.title || "")))) isPerson.add(p.title);
+    for (const [k, v] of map) if (isPerson.has(v)) out.add(k);
+  } catch { /* 위키를 못 가져오면 건너뜀 */ }
+  return out;
+}
 async function realTrends(env, now) {
   if (env.REAL_TRENDS === "off") return [];
   const key = new Request(`https://cache.local/gt1?h=${Math.floor(now / 3600000)}`);
@@ -545,6 +562,8 @@ async function realTrends(env, now) {
     if (r.ok) list = parseGoogleTrends(await r.text());
   } catch { /* 네트워크 오류는 빈 목록 */ }
   list = list.filter((x) => !hardBlocked(x.label) && !isAdult(x.label) && !isExplicit(x.label) && !offTopic(x.label, ...x.news) && !NEWSY.test(x.news.join(" ")) && !NEWSY.test(x.label));
+  const people = await personLabels(list.slice(0, 30).map((x) => x.label));
+  list = list.filter((x) => !people.has(x.label));
   const picked = await aiPickVisual(env, list.slice(0, 30));
   const out = (picked || list).slice(0, 12).map((x) => ({ label: x.label, q: x.q, kind: "live" }));
   try { await caches.default.put(key, new Response(JSON.stringify(out), { headers: { "cache-control": `max-age=${out.length ? 3600 : 600}` } })); } catch { /* 캐시 실패는 무시 */ }
