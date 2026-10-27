@@ -45,6 +45,10 @@
     <symbol id="i-left" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></symbol>
     <symbol id="i-right" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></symbol>
     <symbol id="i-down2" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M10 11v6M14 11v6"/></symbol>
+    <symbol id="i-folder-plus" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><path d="M12 11v6M9 14h6"/></symbol>
+    <symbol id="i-folder-minus" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><path d="M9 14h6"/></symbol>
     <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></symbol>
   </defs>
 </svg>
@@ -92,30 +96,34 @@
   <div id="offline" hidden><span>오프라인이에요. 저장해 둔 북마크만 볼 수 있어요.</span><button id="retry" class="sm">다시 연결</button></div>
   <div id="home" hidden>
     <h2 class="hh">무엇을 찾아볼까요?</h2>
-    <p class="hint">위에서 검색하거나, 아래 주제를 눌러 보세요.</p>
+    <p class="hint">검색하거나, 아래 주제를 눌러 보세요.</p>
     <div class="hsubrow"><h3 class="hsub" id="homeTitle">추천 주제</h3><span class="grow"></span><button id="homeBack" class="sm" hidden><svg class="i"><use href="#i-left"/></svg>모든 주제</button><button id="homeShuffle" class="sm"><svg class="i"><use href="#i-shuffle"/></svg>다른 주제</button></div>
     <div id="homeChips" class="chips"></div>
     <h3 class="hsub">둘러보기</h3>
     <div class="explore">
       <button id="exRand" class="xbtn"><span class="xic"><svg class="i"><use href="#i-shuffle"/></svg></span><b>아무거나</b><small>세부 주제 중 하나를 무작위로 골라 바로 검색해요</small></button>
-      <button id="exTrend" class="xbtn"><span class="xic"><svg class="i"><use href="#i-trend"/></svg></span><b>트렌드</b><small>뜨는 주제 · 다가오는 행사 · 인기 사진 · 잘 찍은 사진</small></button>
+      <button id="exTrend" class="xbtn"><span class="xic"><svg class="i"><use href="#i-trend"/></svg></span><b>트렌드</b><small>지금 인기 · 베스트 · 에디터 픽</small></button>
       <button id="exBm" class="xbtn"><span class="xic"><svg class="i"><use href="#i-heart"/></svg></span><b>내 취향</b><small>북마크·학습한 취향의 태그로 찾아요</small></button>
     </div>
   </div>
   <div id="trends" hidden>
     <div class="trhead">
-      <nav class="seg" id="trSeg"><button data-g="rec" class="on">추천</button><button data-g="hot">뜨는</button><button data-g="pop">인기</button><button data-g="pick">잘 찍은</button><button data-g="news">화제</button></nav>
+      <nav class="seg" id="trSeg"><button data-g="all" class="on">모두</button><button data-g="hot">지금 인기</button><button data-g="best">베스트</button><button data-g="pick">에디터 픽</button></nav>
       <button id="trRefresh" class="ico sm" aria-label="새로고침" title="새로고침"><svg class="i"><use href="#i-refresh"/></svg></button>
     </div>
-    <div id="trTopics" class="chips" hidden></div>
-    <p class="hint" id="trNote"></p>
-    <div id="trGrid" class="grid"></div>
+    <div id="trTopics" class="rowscroll" hidden></div>
+    <p class="hint" id="trNote" hidden></p>
+    <div id="trGrid" class="grid tags"></div>
+    <div id="trMore" class="more" hidden><button type="button" class="mbtn pri">더 보기</button></div>
+    <div id="trSent"></div>
   </div>
   <div id="grid" class="grid"></div>
   <div id="bmtools" hidden>
-    <div class="bmrow">
+    <div id="selBar" class="bmrow" hidden><b id="selCount"></b><span class="grow"></span><button type="button" id="selAll" class="sm">모두 선택</button><button type="button" id="selCancel" class="sm">취소</button></div>
+    <div id="boardStrip" class="rowscroll" hidden></div>
+    <div class="bmrow" id="bmSearchRow">
       <div class="inwrap">
-        <input id="bmq" type="search" placeholder="북마크에서 찾기 (제목·태그·보드·메모)" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+        <input id="bmq" type="search" placeholder="북마크에서 찾기" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
         <button type="button" id="bmClear" class="clr" aria-label="입력 지우기" hidden><svg class="i"><use href="#i-x"/></svg></button>
       </div>
       <select id="bmsort" aria-label="정렬"><option value="new">최근 저장순</option><option value="old">오래된 순</option><option value="title">제목순</option></select>
@@ -146,6 +154,20 @@
   <button id="tabTr"><svg class="i"><use href="#i-trend"/></svg><span>트렌드</span></button>
   <button id="tabBm"><svg class="i"><use href="#i-bookmark"/></svg><span>북마크</span><em id="bmc"></em></button>
 </nav>
+
+<nav id="selAct" aria-label="선택한 북마크 정리" hidden>
+  <button id="selAdd"><svg class="i"><use href="#i-folder-plus"/></svg><span>보드에 추가</span></button>
+  <button id="selOut"><svg class="i"><use href="#i-folder-minus"/></svg><span>보드에서 빼기</span></button>
+  <button id="selDel" class="danger"><svg class="i"><use href="#i-trash"/></svg><span>삭제</span></button>
+</nav>
+
+<div id="cardMenuBg" hidden></div>
+<div id="cardMenu" role="menu" hidden>
+  <button id="cmLike" role="menuitem"><svg class="i"><use href="#i-up"/></svg><span>더 보기</span></button>
+  <button id="cmDis" role="menuitem"><svg class="i"><use href="#i-down"/></svg><span>덜 보기</span></button>
+  <button id="cmHide" role="menuitem"><svg class="i"><use href="#i-ban"/></svg><span>추천 안 함</span></button>
+  <button id="cmBoard" role="menuitem"><svg class="i"><use href="#i-bookmark"/></svg><span>북마크·보드</span></button>
+</div>
 
 <div id="toast" hidden></div>
 
@@ -211,13 +233,13 @@
 <div id="bmSheet" class="overlay wrap" hidden>
   <form id="bmForm" class="sheet bsheet">
     <div class="grab" aria-hidden="true"><i></i></div>
-    <div class="shead"><h2>보드·메모</h2></div>
+    <div class="shead"><h2 id="bmSheetTitle">보드·메모</h2></div>
     <div class="sbody">
-      <h3>보드</h3>
+      <h3>보드 <small>(여러 개 고를 수 있어요)</small></h3>
       <div id="bmBoards" class="chips"></div>
       <input id="bmNewBoard" type="search" placeholder="새 보드 이름 (선택)" maxlength="30" autocomplete="off">
-      <h3>메모</h3>
-      <textarea id="bmNote" rows="3" maxlength="200" placeholder="짧은 메모 (선택)"></textarea>
+      <div id="bmNoteBox"><h3>메모</h3>
+      <textarea id="bmNote" rows="3" maxlength="200" placeholder="짧은 메모 (선택)"></textarea></div>
     </div>
     <div class="sfoot"><button type="button" id="bmCancel">취소</button><button class="pri" type="submit">저장</button></div>
   </form>

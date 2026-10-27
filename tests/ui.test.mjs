@@ -29,19 +29,27 @@ const sources = [
   { id: "pixabay", name: "Pixabay", w: 1.1, en: false, colors: true, desc: "", keyless: false },
   { id: "openverse", name: "Openverse", w: 0.6, en: true, colors: false, desc: "", keyless: true },
 ];
-let cfgCaption = false; const searchCalls = []; let trendsPayload = null, imgFail = false;
+let cfgCaption = false; const searchCalls = []; let imgFail = false;
 const mk = (n, src = "pixabay", tags = ["sunset", "beach", "sea"], title = "") => ({ title, thumb: `https://x.test/${src}${n}.jpg`, full: `https://x.test/${src}${n}_full.jpg`, page: `https://x.test/p${n}`, w: 400, h: 300 + n * 10, tags, src, sc: false, adult: false });
 w.fetch = async (url) => {
   const u = String(url), res = (o) => ({ ok: true, status: 200, json: async () => o, blob: async () => new w.Blob(["x"], { type: "image/jpeg" }) });
   if (u.startsWith("/api/config")) return res({ sources, locked: [], ai: false, caption: cfgCaption });
   if (u.startsWith("/api/search")) { searchCalls.push(u); const src = u.match(/src=(\w+)/)[1]; return res({ items: [1, 2, 3, 4, 5, 6].map((n) => mk(n, src)) }); }
-  if (u.startsWith("/api/trends")) return res(trendsPayload);
+  if (u.startsWith("/api/trends")) return res(trendsFn(u));
   if (u.startsWith("/api/img")) { if (!imgFail) return res({}); const f = { ok: false, status: 502, json: async () => ({ error: "upstream 403" }) }; f.clone = () => f; return f; }
   return { ok: false, status: 404, json: async () => ({}) };
 };
-trendsPayload = { date: "2026-10-24", season: [{ label: "할로윈", q: "할로윈 호박", days: 4, kind: "event" }], rising: [{ label: "벚꽃", q: "벚꽃", kind: "rising", note: "▲40%" }, { label: "한옥", q: "한옥", kind: "hot", note: "" }], dl: { state: "ok" }, items: [
-  { ...mk(1, "wiki", [], "손흥민"), grp: "news" }, { ...mk(2, "wiki", [], "Mount Fuji"), grp: "news" }, { ...mk(3, "wiki", [], "서울 야경"), grp: "news" },
-  { ...mk(4, "pixabay", ["lake"], ""), grp: "pop" }, { ...mk(5, "pixabay", ["tree"], ""), grp: "pop" }, { ...mk(6, "wikimedia", ["sunset"], "Sunset"), grp: "pick" }, { ...mk(7, "naver", ["hanok"], "한옥 마을 풍경"), grp: "hot", topic: "한옥" } ] };
+// 가짜 트렌드 서버: g(all|hot|best|pick) · page · topic 에 따라 쪽 단위로 답합니다
+const trCalls = []; let trDl = { state: "ok" }, trEmptyHot = false;
+function trendsFn(u) {
+  const p = new URL(u, "https://app.test").searchParams, g = p.get("g") || "all", page = +p.get("page") || 1, topic = p.get("topic") || "";
+  trCalls.push({ g, page, topic, pc: p.get("pc") || "" });
+  const mkp = (n, grp, src, ex = {}) => ({ ...mk(page * 100 + n, src, ["t" + (page * 100 + n)], ""), grp, ...ex });
+  if (topic) return { items: [1, 2, 3].map((n) => mkp(n, "hot", "naver", { topic })), topics: [], more: page < 5, pc: "", dl: trDl };
+  const items = g === "hot" ? (trEmptyHot ? [] : [1, 2, 3, 4].map((n) => mkp(n, "hot", "naver", { topic: "한옥" }))) : g === "best" ? [1, 2, 3].map((n) => mkp(n, "best", "pixabay"))
+    : g === "pick" ? [1, 2].map((n) => mkp(n, "pick", "wikimedia")) : [mkp(1, "hot", "naver", { topic: "한옥" }), mkp(2, "best", "pixabay"), mkp(3, "pick", "wikimedia"), mkp(4, "best", "unsplash")];
+  return { items, topics: page === 1 ? [{ label: "수능", q: "수험생 응원", kind: "season" }, { label: "벚꽃", q: "벚꽃", kind: "rising" }, { label: "한옥", q: "한옥", kind: "rising" }] : [], more: page < 6, pc: g === "pick" || g === "all" ? "cur" + page : "", dl: trDl };
+}
 
 run(fs.readFileSync(ROOT + "color.js", "utf8").replace(/^"use strict";/, "")); run(fs.readFileSync(ROOT + "relevance.js", "utf8").replace(/^"use strict";/, "")); run(fs.readFileSync(ROOT + "safety.js", "utf8").replace(/^"use strict";/, "")); run(fs.readFileSync(ROOT + "taste.js", "utf8").replace(/^"use strict";/, "")); run(fs.readFileSync(ROOT + "avoid.js", "utf8").replace(/^"use strict";/, ""));
 vm.runInContext(fs.readFileSync(ROOT + "app.js", "utf8"), ctx);
@@ -195,26 +203,61 @@ $("#vclose").click(); await tick(60);
   ok(run(`whyOf({ name: "TimeoutError" })`) === "중계 시간 초과", "whyOf reports timeouts");
 }
 
-// ---- 트렌드: 이미지 그리드 ----
+// ---- 트렌드: 알약 · 주제 칩 · 무한 피드 ----
 $("#tabTr").click(); await tick(100);
-ok(!$("#trends").hidden && $$("#trGrid .card").length === 4, `trends tab (추천) shows hot+popular+featured photos but not the wiki news: ${$$("#trGrid .card").length} cards`);
-ok($$("#trSeg button").map((b) => b.textContent).join(",") === "추천,뜨는,인기,잘 찍은,화제" && !!$("#trRefresh .i") && $("#trRefresh").getAttribute("aria-label") === "새로고침", "trend header: 5 short tabs + icon-only refresh button");
-ok(!$("#trLang") && !$("#trChips"), "no country/language selector or word chips");
-ok(/2026-10-24/.test($("#trNote").textContent), "trend note shows date");
-ok($$("#trTopics button").length === 3 && /할로윈 D-4/.test($("#trTopics").textContent) && /벚꽃 ▲40%/.test($("#trTopics").textContent), "trend topic chips: season/event + rising with growth: " + $("#trTopics").textContent);
-ok(/가져오지 못했어요 \(네이버 API HUB/.test($("#trNote").textContent) === false, "dl ok -> no error note");
-$$("#trSeg button")[1].click(); ok($$("#trGrid .card").length === 1 && $$("#trGrid .card .tag")[0].textContent === "한옥", "뜨는 tab shows naver hot-topic images, labelled with the topic");
-$$("#trSeg button")[2].click(); ok($$("#trGrid .card").length === 2, "인기 사진 filter shows only popular photos");
-$$("#trSeg button")[3].click(); ok($$("#trGrid .card").length === 1, "잘 찍은 사진 filter shows featured pictures");
-$$("#trSeg button")[4].click(); ok($$("#trGrid .card").length === 3, "오늘의 화제 filter shows only wiki news photos");
-$$("#trSeg button")[0].click(); ok($$("#trGrid .card").length === 4, "추천 excludes news");
-$$("#trTopics button")[0].click(); await tick(100); ok($("#q").value === "할로윈 호박" && searchCalls.some((u) => u.includes(encodeURIComponent("할로윈 호박"))), "topic chip starts a search");
-$("#tabTr").click(); await tick(60); $$("#trSeg button")[4].click();
-ok($$("#trGrid .card .tag").some((t) => t.textContent === "위키백과"), "wiki items labelled 위키백과");
-$("#trGrid .card").click(); await tick(60); ok(!$("#viewer").hidden && /손흥민/.test($("#vtitle").textContent), "trend image opens in viewer");
+const trCards = () => $$("#trGrid .card");
+ok(!$("#trends").hidden && trCards().length === 4 && trCalls[0].g === "all" && trCalls[0].page === 1, `trends tab (모두) loads page 1 of the mixed feed: ${trCards().length} cards`);
+ok($$("#trSeg button").map((b) => b.textContent).join(",") === "모두,지금 인기,베스트,에디터 픽" && !!$("#trRefresh .i") && $("#trRefresh").getAttribute("aria-label") === "새로고침", "trend header: 4 plain-word pills + icon-only refresh button");
+ok(!/사진/.test($$("#trSeg button").map((b) => b.textContent).join()), "pill names avoid the word 사진");
+ok($$("#trSeg button")[0].classList.contains("on"), "모두 is selected first");
+ok(!$("#trLang") && !$("#trChips") && $("#trNote").hidden, "no country selector, and no date / description line");
+ok($$("#trTopics button").map((b) => b.textContent).join() === "수능,벚꽃,한옥" && !/[%▲D\d]/.test($("#trTopics").textContent), "topic chips: names only, no % / D-day / numbers: " + $("#trTopics").textContent);
+ok($$("#trTopics button").every((b) => !b.classList.contains("on")), "no topic chip selected at first");
+ok(!w.document.body.textContent.includes("위키") && trCards().every((c) => c._it.grp !== "news"), "wiki 'what is hot' is gone");
+// 알약
+$$("#trSeg button")[1].click(); await tick(60);
+ok(trCards().length === 4 && trCards().every((c) => c.dataset.g === "hot") && trCalls.at(-1).g === "hot" && trCalls.at(-1).page === 1, "지금 인기 shows the naver topic photos (page 1 of g=hot)");
+ok($("#trGrid").classList.contains("tags"), "topic labels on cards are allowed in 지금 인기");
+$$("#trSeg button")[2].click(); await tick(60);
+ok(trCards().length === 3 && trCalls.at(-1).g === "best", "베스트 shows popular photos");
+$$("#trSeg button")[3].click(); await tick(60);
+ok(trCards().length === 2 && trCalls.at(-1).g === "pick", "에디터 픽 shows editor picks");
+// 무한 피드: 스크롤(sentinel)로 이어 받다가 3쪽에서 멈추고 [더 보기]
+const trN0 = trCalls.length; $$("#trSeg button")[2].click(); await tick(60);
+ok(trCards().length === 3 && $("#trMore").hidden && trCalls.length === trN0, "best view is cached: re-selecting within 30 min makes no new request");
+run("trAuto()"); await tick(60); ok(trCards().length === 6 && trCalls.at(-1).page === 2, "scrolling loads page 2 and appends (6 cards)");
+run("trAuto()"); await tick(60); ok(trCards().length === 9 && trCalls.at(-1).page === 3 && !$("#trMore").hidden, "after 3 pages the auto-loading stops and 더 보기 appears");
+const nStop = trCalls.length; run("trAuto()"); await tick(40); ok(trCalls.length === nStop, "no more automatic requests while the button is showing");
+$("#trMore .mbtn").click(); await tick(60); ok(trCards().length === 12 && trCalls.at(-1).page === 4 && $("#trMore").hidden, "더 보기 loads the next page and hides itself");
+ok(new Set(trCards().map((c) => c._it.thumb)).size === 12, "no duplicate cards across pages");
+// 주제 칩: 그 주제의 피드, 다시 누르면 보던 알약으로 돌아감
+$$("#trSeg button")[0].click(); await tick(60);
+$$("#trTopics button")[1].click(); await tick(60);
+ok(trCalls.at(-1).topic === "벚꽃" && trCalls.at(-1).page === 1 && trCards().length === 3 && $$("#trTopics button")[1].classList.contains("on") && $$("#trSeg button").every((b) => !b.classList.contains("on")), "topic chip switches the feed to that topic; pills show nothing selected");
+ok(!$("#trGrid").classList.contains("tags"), "inside a topic the per-card label is hidden (it would repeat the topic)");
+run("trAuto()"); await tick(60); ok(trCalls.at(-1).topic === "벚꽃" && trCalls.at(-1).page === 2 && trCards().length === 6, "topic feed also scrolls on (page 2)");
+$$("#trTopics button")[1].click(); await tick(60);
+ok(trCards().length === 4 && trCards().every((c) => !c._it.topic || c._it.topic === "한옥"), "tapping the chip again returns to the pill that was selected before (cached 모두 view, no refetch)");
+ok($$("#trSeg button")[0].classList.contains("on") && !$$("#trTopics button")[1].classList.contains("on"), "back to 모두, chip off");
+$$("#trTopics button")[2].click(); await tick(60); $$("#trSeg button")[2].click(); await tick(60);
+ok(run("TR.topic") === "" && run("TR.g") === "best" && $$("#trTopics button").every((b) => !b.classList.contains("on")), "choosing a pill clears the topic");
+// 새로고침: 현재 피드를 첫 쪽부터 다시
+const nr = trCalls.length; $("#trRefresh").click(); await tick(60);
+ok(trCalls.length === nr + 1 && trCalls.at(-1).page === 1 && trCalls.at(-1).g === "best" && trCards().length === 3, "refresh reloads the current view from page 1");
+// 뷰어: 지금까지 받은 모두가 이어서 넘겨짐
+trCards()[0].click(); await tick(60); ok(!$("#viewer").hidden && run("lv().list.length") === 3, "trend image opens in viewer with the whole loaded list");
 $("#vfab").click(); await tick(60);
+// 안내 문구: 비어 있을 때만 짧게
+trEmptyHot = true; trDl = { state: "off" }; $$("#trSeg button")[0].click(); $$("#trSeg button")[1].click(); run("TR.views.delete('g:hot')"); $("#trRefresh").click(); await tick(60);
+ok(trCards().length === 0 && /네이버 키/.test($("#trNote").textContent) && !$("#trNote").hidden, "empty 지금 인기 explains why in one short line: " + $("#trNote").textContent);
+trDl = { state: "err", why: "denied", status: 403 }; $("#trRefresh").click(); await tick(60);
+ok(/이용 신청/.test($("#trNote").textContent), "datalab error reason is shown when 지금 인기 is empty");
+trEmptyHot = false; trDl = { state: "ok" }; $("#trRefresh").click(); await tick(60);
+ok(trCards().length === 4 && $("#trNote").hidden, "note disappears once photos arrive");
+$$("#trSeg button")[0].click(); await tick(40);
 $("#tabFeed").click(); $("#homeBtn").click(); await tick(60);
-$("#exTrend").click(); await tick(60); ok(!$("#trends").hidden, "home 요즘 화제 button opens trends tab");
+$("#exTrend").click(); await tick(60); ok(!$("#trends").hidden, "home 트렌드 button opens trends tab");
+ok(!/요즘 화제|위키|뜨는 주제|잘 찍은/.test($("#exTrend").textContent) && /지금 인기/.test($("#exTrend").textContent), "home trend button text matches the new names: " + $("#exTrend").textContent);
 
 // ---- 홈으로 ----
 $("#homeBtn").click(); await tick(60); ok(!$("#home").hidden && $("#q").value === "" && $("#qClear").hidden, "⌂ returns to home and clears the box");
@@ -405,6 +448,151 @@ const av = $$("#avoidView .tchip"); ok(av.length >= 1, "settings lists tags that
 const tag0 = av[0].querySelector("span").textContent; av[0].click(); ok(!$$("#avoidView .tchip").some((b) => b.querySelector("span").textContent === tag0), "tapping a tag lifts only that tag");
 $("#avoidClear").click(); ok(run("Avoid.isEmpty()") && $("#avoidClear").hidden, "모두 지우기 empties the avoid list");
 $("#closeSet").click();
+
+// ======== 11차: 홈 칩 두 줄 · 카드 길게 누르기 메뉴 · ☆ 짧게/길게 · 북마크 선택 모드 · 보드 묶음 ========
+$("#vfab").click(); await tick(60);
+$("#homeBtn").click(); await tick(100);
+{
+  const rows = $$("#homeChips .crow");
+  ok(rows.length === 2 && rows.every((r) => r.children.length >= 4) && $$("#homeChips button").length >= 10, "home chips are laid out in two rows (scroll sideways): " + rows.map((r) => r.children.length));
+  const wid = rows.map((r) => [...r.children].reduce((t, b) => t + b.textContent.length, 0));
+  ok(Math.abs(wid[0] - wid[1]) <= 8, "the two rows have similar length: " + wid);
+  ok(/#homeChips\{[^}]*overflow-x:auto/.test(css) && /#homeChips \.crow\{[^}]*width:max-content/.test(css), "css: chips scroll sideways in a fixed two-row block");
+}
+const fireP = (el, type, x = 10, y = 10, id = 9) => { const e = new w.Event(type, { bubbles: true, cancelable: true }); Object.assign(e, { pointerId: id, clientX: x, clientY: y, pointerType: "touch", button: 0 }); el.dispatchEvent(e); return e; };
+run('S.taste = true; S.priv = false; startSearch("sunset")'); await tick(900);
+{
+  let card = $("#grid .card"); const nCards = $$("#grid .card").length;
+  // 짧게 누르면 뷰어 (메뉴 없음)
+  fireP(card, "pointerdown"); fireP(card, "pointerup"); card.click(); await tick(60);
+  ok(!$("#viewer").hidden && $("#cardMenu").hidden, "short tap still opens the viewer, no menu"); $("#vfab").click(); await tick(60);
+  // 길게 누르기 → 메뉴
+  fireP(card, "pointerdown"); await tick(200); ok($("#cardMenu").hidden, "menu does not open before the hold time");
+  await tick(380);
+  ok(!$("#cardMenu").hidden && !$("#cardMenuBg").hidden, "holding a card opens the small menu");
+  ok(["더 보기", "덜 보기", "추천 안 함", "북마크·보드"].every((t) => $$("#cardMenu button").some((b) => !b.hidden && b.textContent.trim() === t)), "menu has 더 보기 / 덜 보기 / 추천 안 함 / 북마크·보드: " + $$("#cardMenu button").map((b) => b.textContent.trim()));
+  fireP(card, "pointerup"); card.click(); await tick(30);
+  ok($("#viewer").hidden && !$("#cardMenu").hidden, "releasing the finger after a long press does not open the viewer or close the menu");
+  $("#cardMenuBg").click(); ok(!$("#cardMenu").hidden, "a tap right after opening (the release) is ignored by the backdrop");
+  await tick(450); $("#cardMenuBg").click(); ok($("#cardMenu").hidden && $("#cardMenuBg").hidden, "tapping outside later closes the menu");
+  // 움직이면 길게 누르기가 아님 (스크롤)
+  fireP(card, "pointerdown", 10, 10); fireP(card, "pointermove", 10, 40); await tick(560); fireP(card, "pointerup", 10, 40);
+  ok($("#cardMenu").hidden, "moving the finger (scrolling) cancels the long press");
+  // 오른쪽 버튼(컴퓨터)
+  const ce = new w.Event("contextmenu", { bubbles: true, cancelable: true }); card.dispatchEvent(ce);
+  ok(ce.defaultPrevented && !$("#cardMenu").hidden, "right click opens the menu and blocks the browser menu"); await tick(460);
+  const openMenu = async (c) => { await tick(760); c.dispatchEvent(new w.Event("contextmenu", { bubbles: true, cancelable: true })); await tick(460); };
+  // 더 보기 / 덜 보기
+  $("#cmLike").click(); ok($("#cardMenu").hidden && /더 보여/.test($("#toast").textContent), "더 보기 closes the menu and confirms");
+  await openMenu(card); $("#cmDis").click(); ok(/덜 보여/.test($("#toast").textContent), "덜 보기 confirms");
+  // 학습이 꺼져 있으면 두 버튼은 숨김
+  run("S.taste = false"); await tick(760); card.dispatchEvent(new w.Event("contextmenu", { bubbles: true, cancelable: true }));
+  ok($("#cmLike").hidden && $("#cmDis").hidden && !$("#cmHide").hidden, "taste off: 더 보기/덜 보기 are hidden, 추천 안 함 stays"); await tick(460); $("#cardMenuBg").click(); run("S.taste = true");
+  // 추천 안 함 (뷰어 없이)
+  const key = run("keyOf")(card._it);
+  await openMenu(card); $("#cmHide").click();
+  ok($("#cardMenu").hidden && !$("#hideSheet").hidden && $("#viewer").hidden, "추천 안 함 opens the same two-choice sheet without opening the viewer");
+  $("#hideCancel").click(); ok(!run(`Avoid.isHidden(${JSON.stringify(key)})`), "cancel hides nothing");
+  await openMenu(card); $("#cmHide").click(); $("#hidePref").click(); await tick(80);
+  ok(run(`Avoid.isHidden(${JSON.stringify(key)})`) && $$("#grid .card").length === nCards - 1 && !card.isConnected, "hiding from the card removes it from the feed right away");
+}
+
+// ---- ☆ 짧게 = 마지막 보드에 저장, 길게 = 보드 고르기 ----
+run("DB._m = []; S.bmIds = new Set(); updateCount(); LS.set('lastBoard', '')");
+run(`DB._m.push(${JSON.stringify({ ...{ id: "b1", title: "t", thumb: "https://x.test/b1.jpg", full: "https://x.test/b1_f.jpg", page: "p", src: "pixabay", w: 400, h: 300, tags: ["a"], an: { tone: "pastel", temp: "warm", cols: ["red"], pal: [] } }, boards: ["여행"], board: "여행", ts: 1 })})`);
+run("S.bmIds.add('b1')");
+{
+  const star = (c) => c.querySelector(".star");
+  let cards = $$("#grid .card");
+  star(cards[0]).click(); await tick(100);
+  let r0 = run("DB._m.find((x) => x.id === " + JSON.stringify(cards[0]._it.id) + ")");
+  ok(r0 && (r0.boards || []).length === 0 && /북마크에 담았어요/.test($("#toast").textContent), "☆ with no 'last board' saves without a board");
+  run("LS.set('lastBoard', '없는보드')"); star(cards[1]).click(); await tick(100);
+  ok(run("DB._m.find((x) => x.id === " + JSON.stringify(cards[1]._it.id) + ").boards.length") === 0, "last board that no longer exists is ignored");
+  run("LS.set('lastBoard', '여행')"); star(cards[2]).click(); await tick(100);
+  r0 = run("DB._m.find((x) => x.id === " + JSON.stringify(cards[2]._it.id) + ")");
+  ok(r0 && r0.boards.join() === "여행" && r0.board === "여행" && /‘여행’ 보드에 담았어요/.test($("#toast").textContent), "☆ short tap saves into the last used board and says which: " + $("#toast").textContent);
+  star(cards[2]).click(); await tick(60); ok(!run("S.bmIds.has(" + JSON.stringify(cards[2]._it.id) + ")"), "☆ again removes the bookmark");
+  // 길게
+  const c3 = cards[3], before = run("S.bmIds.size");
+  fireP(star(c3), "pointerdown"); await tick(560); fireP(star(c3), "pointerup"); star(c3).click(); await tick(100);
+  ok(!$("#bmSheet").hidden && $("#bmSheetTitle").textContent === "보드·메모" && !$("#bmNoteBox").hidden, "holding ☆ opens the board sheet");
+  ok(run("S.bmIds.size") === before + 1 && run("DB._m.find((x) => x.id === " + JSON.stringify(c3._it.id) + ").boards.length") === 0, "…and saves the image once (the release click is not a second toggle), without auto board");
+  const chips = $$("#bmBoards button"); ok(chips.length === 1 && chips[0].textContent === "여행", "sheet lists existing boards");
+  chips[0].click(); ok($$("#bmBoards button")[0].classList.contains("on"), "tap selects a board");
+  $("#bmNewBoard").value = "음식"; $("#bmNote").value = "메모!";
+  $("#bmForm").dispatchEvent(new w.Event("submit", { cancelable: true, bubbles: true })); await tick(80);
+  const rr = run("DB._m.find((x) => x.id === " + JSON.stringify(c3._it.id) + ")");
+  ok(rr.boards.join() === "여행,음식" && rr.board === "여행" && rr.note === "메모!" && run("LS.get('lastBoard', '')") === "음식" && $("#bmSheet").hidden, "one image can be in several boards (picked + new name); the new one becomes the last board");
+  // 카드 메뉴의 북마크·보드
+  const c4 = cards[4]; await tick(760); c4.dispatchEvent(new w.Event("contextmenu", { bubbles: true, cancelable: true })); await tick(460);
+  ok($("#cmBoard").textContent.trim() === "북마크·보드", "menu item says 북마크·보드 for a new image"); $("#cmBoard").click(); await tick(100);
+  ok(!$("#bmSheet").hidden && $$("#bmBoards button").length === 2, "menu 북마크·보드 opens the sheet with both boards"); $("#bmCancel").click();
+  // 뷰어의 라벨
+  run('openViewer(lv() ? [] : [], -1)');
+}
+
+// ---- 북마크 탭: 보드 묶음 줄 + 선택 모드 ----
+run("DB._m = []; S.bmIds = new Set(); LS.set('lastBoard', '')");
+{
+  const base = { title: "t", thumb: "https://x.test/b.jpg", full: "https://x.test/b_f.jpg", page: "p", src: "pixabay", w: 400, h: 300, tags: ["a"], an: { tone: "pastel", temp: "warm", cols: ["red"], pal: [] } };
+  const recs = [["b1", ["여행"]], ["b2", ["여행"]], ["b3", ["여행"]], ["b4", ["음식"]], ["b5", ["여행", "음식"]], ["b6", []], ["b7", []]].map(([id, boards], i) => ({ ...base, id, thumb: `https://x.test/${id}.jpg`, full: `https://x.test/${id}_f.jpg`, boards, board: boards[0] || "", ts: 10 + i }));
+  // 예전 형식(board 한 칸만 있는 북마크)도 같이 읽힘
+  recs.push({ ...base, id: "b8", thumb: "https://x.test/b8.jpg", full: "https://x.test/b8_f.jpg", board: "음식", ts: 30 });
+  run(`DB._m = ${JSON.stringify(recs)}; S.bmIds = new Set(DB._m.map((x) => x.id)); updateCount(); S.board = "__all"`);
+  $("#tabBm").click(); await tick(120);
+  const tiles = () => $$("#boardStrip .bt");
+  const names = () => tiles().map((b) => b.querySelector(".nm").textContent);
+  ok(!$("#boardStrip").hidden && names().join("|") === "전체 8|여행 4|음식 3|보드 없음 2", "strip: 전체 + each board + 보드 없음, with counts: " + names().join("|"));
+  ok(tiles()[0].querySelectorAll("img").length === 4 && tiles()[3].querySelectorAll("img").length === 2, "each tile shows up to 4 thumbnails");
+  ok(!$("#chipsWrap") || $("#chipsWrap").hidden, "old board chip row is no longer shown in bookmarks");
+  ok($$("#bmgrid .card").length === 8, "all bookmarks shown at first: " + $$("#bmgrid .card").length);
+  tiles()[1].click(); await tick(80); ok($$("#bmgrid .card").length === 4 && tiles()[1].classList.contains("on"), "tapping a board tile shows just that board (includes multi-board and old-format items)");
+  tiles()[3].click(); await tick(80); ok($$("#bmgrid .card").length === 2, "보드 없음 tile shows only the unfiled bookmarks");
+  tiles()[0].click(); await tick(80);
+  // 선택 모드
+  const bc = () => $$("#bmgrid .card");
+  fireP(bc()[0], "pointerdown"); await tick(560); fireP(bc()[0], "pointerup"); bc()[0].click(); await tick(40);
+  ok(w.document.body.classList.contains("selmode") && !$("#selBar").hidden && !$("#selAct").hidden && $("#selCount").textContent === "1장 선택" && $("#viewer").hidden && $("#cardMenu").hidden, "long press on a bookmark starts selection mode with that one selected (no viewer, no menu)");
+  ok($("#bmSearchRow").hidden && $("#boardStrip").hidden, "search row and board strip step aside while selecting");
+  bc()[1].click(); bc()[2].click(); await tick(20); ok($("#selCount").textContent === "3장 선택" && bc().filter((c) => c.classList.contains("sel")).length === 3 && $("#viewer").hidden, "tapping cards selects them instead of opening the viewer");
+  bc()[1].click(); ok($("#selCount").textContent === "2장 선택", "tapping again unselects");
+  $("#selAll").click(); ok($("#selCount").textContent === "8장 선택" && $("#selAll").textContent === "선택 해제", "모두 선택 selects everything"); $("#selAll").click(); ok($("#selCount").textContent === "0장 선택" && $("#selAdd").disabled && $("#selDel").disabled, "선택 해제 clears; action buttons disabled with nothing selected");
+  $("#selCancel").click(); ok(!w.document.body.classList.contains("selmode") && $("#selAct").hidden && !$("#bmSearchRow").hidden && !$("#boardStrip").hidden, "취소 leaves selection mode");
+  // 보드에 추가 (여러 장 → 한 번에)
+  const b7 = bc().find((c) => c._it.id === "b7"); fireP(b7, "pointerdown"); await tick(560); fireP(b7, "pointerup"); b7.click();
+  const unfiled = bc().filter((c) => !run("bOf")(c._it).length); unfiled.forEach((c) => { if (!c.classList.contains("sel")) c.click(); });
+  ok($("#selCount").textContent === "2장 선택", "two unfiled bookmarks selected: " + $("#selCount").textContent + " / " + [...run("SEL.ids")]);
+  $("#selAdd").click(); await tick(60);
+  ok(!$("#bmSheet").hidden && /2장을 보드에 추가/.test($("#bmSheetTitle").textContent) && $("#bmNoteBox").hidden, "보드에 추가 opens the board sheet for several (no memo box)");
+  $("#bmForm").dispatchEvent(new w.Event("submit", { cancelable: true, bubbles: true })); await tick(40);
+  ok(!$("#bmSheet").hidden && /보드를 고르거나/.test($("#toast").textContent), "must choose a board or type a name first");
+  $$("#bmBoards button").find((b) => b.textContent === "음식").click(); $$("#bmBoards button").find((b) => b.textContent === "여행").click(); $("#bmNewBoard").value = "새 보드";
+  $("#bmForm").dispatchEvent(new w.Event("submit", { cancelable: true, bubbles: true })); await tick(120);
+  const got = run("DB._m.filter((x) => x.id === 'b6' || x.id === 'b7').map((x) => x.boards.join('+'))");
+  ok(got.length === 2 && got.every((g) => g === "음식+여행+새 보드" || g.split("+").sort().join() === "새 보드,여행,음식"), "both images were added to all chosen boards at once: " + got);
+  ok(!w.document.body.classList.contains("selmode") && $("#bmSheet").hidden && run("LS.get('lastBoard','')") === "새 보드", "selection ends after adding; the typed board is now the last board");
+  ok(names().map((n) => n.replace(/ \d+$/, "")).join("|") === "전체|새 보드|여행|음식", "strip updated: new board appears, 보드 없음 gone: " + names());
+  // 보드에서 빼기: 보드를 보고 있을 땐 그 보드에서만
+  tiles().find((b) => /^음식/.test(b.querySelector(".nm").textContent)).click(); await tick(80);
+  const nFood = bc().length;
+  fireP(bc()[0], "pointerdown"); await tick(560); fireP(bc()[0], "pointerup"); bc()[0].click();
+  ok(/이 보드에서 빼기/.test($("#selOut").textContent), "inside a board the button says 이 보드에서 빼기");
+  const id0 = bc()[0]._it.id, had = run(`bOf(DB._m.find((x) => x.id === ${JSON.stringify(id0)})).length`);
+  $("#selOut").click(); await tick(120);
+  const left = run(`bOf(DB._m.find((x) => x.id === ${JSON.stringify(id0)}))`);
+  ok(!left.includes("음식") && left.length === had - 1 && bc().length === nFood - 1 && !w.document.body.classList.contains("selmode"), "removed from this board only; other boards of the image stay: " + left);
+  // 삭제: 두 번 눌러야
+  tiles()[0].click(); await tick(80);
+  const total = run("DB._m.length"); fireP(bc()[0], "pointerdown"); await tick(560); fireP(bc()[0], "pointerup"); bc()[0].click();
+  $("#selDel").click(); ok(run("DB._m.length") === total && /한 번 더/.test($("#selDel").textContent), "삭제 asks to press once more");
+  $("#selDel").click(); await tick(120);
+  ok(run("DB._m.length") === total - 1 && !w.document.body.classList.contains("selmode") && bc().length === total - 1, "second press deletes the selected bookmark");
+  // 다른 탭으로 가면 선택 모드 해제
+  fireP(bc()[0], "pointerdown"); await tick(560); fireP(bc()[0], "pointerup"); bc()[0].click(); ok(w.document.body.classList.contains("selmode"), "selection mode on again");
+  w.dispatchEvent(Object.assign(new w.Event("keydown", { bubbles: true }), { key: "Escape" })); ok(!w.document.body.classList.contains("selmode"), "Esc leaves selection mode");
+  fireP(bc()[0], "pointerdown"); await tick(560); fireP(bc()[0], "pointerup"); bc()[0].click(); $("#tabFeed").click(); ok(!w.document.body.classList.contains("selmode"), "switching tabs leaves selection mode");
+}
 
 ok(errors.length === 0, "no script errors" + (errors.length ? ": " + errors.slice(0, 3).join(" ; ") : ""));
 console.log(fail ? `\n${fail} failed` : "\nall passed"); process.exit(fail ? 1 : 0);

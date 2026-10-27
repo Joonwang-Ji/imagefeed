@@ -52,7 +52,6 @@ const CATS = [
   ["☕", "카페와 공간", ["북카페", "루프탑", "작업실", "동네 빵집", "창가 자리", "벽돌 골목 카페"]],
   ["⛺", "아웃도어", ["캠핑 텐트", "등산길", "별 보는 밤", "계곡", "낚시", "해변 산책"]],
 ];
-const EXTRA_SRC = { wiki: "위키백과" }; // 검색 소스는 아니지만 트렌드에 나오는 이미지의 출처 이름
 const KO_COLOR = { red: "빨강", orange: "주황", yellow: "노랑", green: "초록", teal: "청록", blue: "파랑", purple: "보라", pink: "분홍", brown: "갈색", black: "검정", white: "하양", gray: "회색" };
 const COLOR_WORDS = /\b(red|orange|yellow|green|teal|turquoise|cyan|blue|purple|violet|pink|brown|black|white|gr[ae]y|gold|golden|silver|beige|colorful|pastel|monochrome)\b/i;
 const shuffle = (a) => { const r = a.slice(); for (let i = r.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [r[i], r[j]] = [r[j], r[i]]; } return r; };
@@ -103,7 +102,7 @@ function learnFrom(it, w) {
   Taste.learn(TasteStore.keysOf(it), w, { colors: (a?.cols || it.cols || []).slice(0, 2), tone: a?.tone, temp: a?.temp });
 }
 let cfg = null;
-const srcName = (id) => cfg?.sources.find((s) => s.id === id)?.name || EXTRA_SRC[id] || id;
+const srcName = (id) => cfg?.sources.find((s) => s.id === id)?.name || id;
 document.body.classList.toggle("noblur", !S.blur);
 
 // ---------- 서버 호출 ----------
@@ -143,7 +142,13 @@ const DB = {
 };
 const updateCount = () => { $("#bmc").textContent = S.bmIds.size ? `(${S.bmIds.size})` : ""; };
 
-async function toggleBookmark(it) {
+// 보드: 북마크 하나가 여러 보드에 들어갈 수 있습니다 (boards 배열). 예전에 저장한 북마크는 board 한 칸만 있어서 같이 읽어 줍니다.
+const bOf = (x) => (Array.isArray(x.boards) ? x.boards : x.board ? [x.board] : []);
+const boardNames = (all) => [...new Set(all.flatMap(bOf))].sort();
+const inBoard = (x, b) => b === "__all" || (b === "" ? !bOf(x).length : bOf(x).includes(b));
+const boardLabel = (x) => { const b = bOf(x); return b.length ? (b.length === 1 ? "보드: " + b[0] : `보드 ${b.length}개`) : "보드·메모"; };
+// board 를 따로 정하지 않으면(☆ 짧게 누르기) 마지막에 쓴 보드에 담습니다. 그 보드가 아직 있을 때만. board === "" 이면 보드 없이 담습니다.
+async function toggleBookmark(it, board) {
   if (S.priv) return toast("비공개 모드에서는 북마크를 쓸 수 없어요");
   if (S.bmIds.has(it.id)) { await DB.del(it.id); S.bmIds.delete(it.id); toast("북마크에서 뺐어요"); learnFrom(it, -2); }
   else {
@@ -151,9 +156,13 @@ async function toggleBookmark(it) {
     if (!blob) { try { blob = await fetchBlob(`/api/img?u=${enc(it.thumb)}`); } catch {} }
     let an = it.an && it.an.tone ? it.an : null;
     if (!an && blob) { try { an = (await blobInfo(blob))?.an || null; if (an) it.an = an; } catch { /* 분석 없이 저장 */ } } // 톤·팔레트를 저장 때 한 번 분석해 둠
-    const ok = await DB.put({ an, id: it.id, title: it.title, thumb: it.thumb, alt: it.alt, full: it.full, page: it.page, src: it.src, w: it.w, h: it.h, tags: it.tags, adult: !!it.adult && !it.safe, adultSrc: it.safe ? "" : it.ai ? "ai" : it.adult ? "kw" : "", safe: !!it.safe, ts: Date.now(), blob });
+    let boards = [];
+    if (board === undefined) { const last = LS.get("lastBoard", ""); if (last && boardNames(await DB.all()).includes(last)) boards = [last]; }
+    else if (board) boards = [board];
+    const ok = await DB.put({ an, boards, board: boards[0] || "", id: it.id, title: it.title, thumb: it.thumb, alt: it.alt, full: it.full, page: it.page, src: it.src, w: it.w, h: it.h, tags: it.tags, adult: !!it.adult && !it.safe, adultSrc: it.safe ? "" : it.ai ? "ai" : it.adult ? "kw" : "", safe: !!it.safe, ts: Date.now(), blob });
     if (!ok) return toast("이 브라우저에서는 북마크를 저장할 수 없어요");
-    S.bmIds.add(it.id); toast("북마크에 담았어요"); learnFrom(it, 3);
+    it.boards = boards; it.board = boards[0] || "";
+    S.bmIds.add(it.id); toast(boards.length ? `‘${boards[0]}’ 보드에 담았어요` : "북마크에 담았어요"); learnFrom(it, 3);
   }
   refreshStars(); updateCount();
   if (S.view === "bm" && $("#viewer").hidden) renderBm();
@@ -207,20 +216,49 @@ const io = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersec
 // open: 카드를 눌렀을 때 뷰어를 여는 방법 (메인 피드 / 북마크 / 비슷한 이미지 피드마다 다름)
 function makeCard(it, open) {
   const el = document.createElement("div");
-  el.className = "card"; el._it = it; el._r = clamp(it.w && it.h ? it.w / it.h : 1, 0.5, 2.2);
+  el.className = "card"; el._it = it; el.dataset.g = it.grp || ""; el._r = clamp(it.w && it.h ? it.w / it.h : 1, 0.5, 2.2);
   el.style.aspectRatio = String(el._r);
   const img = document.createElement("img"); img.alt = it.title || ""; img.decoding = "async"; el.appendChild(img);
   const star = document.createElement("button"); star.className = "star"; star.setAttribute("aria-label", "북마크"); star.textContent = S.bmIds.has(it.id) ? "★" : "☆"; el.appendChild(star);
   const veil = document.createElement("div"); veil.className = "veil"; veil.innerHTML = "민감할 수 있는 이미지<br><small>탭하면 보기</small>"; el.appendChild(veil);
   const tag = document.createElement("span"); tag.className = "tag"; tag.textContent = it.grp === "hot" && it.topic ? it.topic : srcName(it.src); el.appendChild(tag);
   if (it.avoidBlur) el.classList.add("avoid");
+  if (it.fromBm) { // 북마크 카드: 선택 모드의 체크 표시
+    const chk = document.createElement("span"); chk.className = "chk"; chk.innerHTML = '<svg class="i"><use href="#i-check"/></svg>'; el.appendChild(chk);
+    if (SEL.ids.has(it.id)) el.classList.add("sel");
+  }
   el.addEventListener("click", (e) => {
+    if (el._lp) { el._lp = false; return; } // 길게 눌렀다 뗄 때 따라오는 클릭은 무시
+    if (SEL.on) { if (it.fromBm) toggleSel(it); return; } // 선택 모드: 탭하면 고르기/해제
     if (e.target === star) { e.stopPropagation(); toggleBookmark(it); return; }
     if (el.dataset.st === "flag" && !it.revealed && (S.blur || it.avoidBlur)) { it.revealed = true; el.classList.add("reveal"); return; }
     open();
   });
+  bindLongPress(el, it, star);
   io.observe(el);
   return el;
+}
+// 카드를 길게 누르면: 일반 카드는 작은 메뉴, 북마크 카드는 선택 모드, ☆ 는 보드 고르기. (마우스는 오른쪽 버튼)
+const LP_MS = 480, LP_MOVE = 10;
+function bindLongPress(el, it, star) {
+  let t = null, x0 = 0, y0 = 0;
+  const cancel = () => { clearTimeout(t); t = null; };
+  const fire = (onStar) => { cancel(); el._lp = true; el._lpAt = Date.now(); navigator.vibrate?.(12); longPress(el, it, onStar); };
+  el.addEventListener("pointerdown", (e) => {
+    el._lp = false;
+    if (SEL.on || (e.pointerType === "mouse" && e.button !== 0)) return;
+    x0 = e.clientX; y0 = e.clientY; const onStar = e.target === star;
+    cancel(); t = setTimeout(() => fire(onStar), LP_MS);
+  });
+  el.addEventListener("pointermove", (e) => { if (t && Math.hypot(e.clientX - x0, e.clientY - y0) > LP_MOVE) cancel(); });
+  ["pointerup", "pointercancel", "pointerleave"].forEach((n) => el.addEventListener(n, cancel));
+  // 일부 브라우저는 길게 누르면 contextmenu 도 보냅니다. 방금 위 타이머로 열었다면 한 번만 열리게 합니다.
+  el.addEventListener("contextmenu", (e) => { e.preventDefault(); if (!SEL.on && Date.now() - (el._lpAt || 0) > 700) fire(e.target === star); });
+}
+function longPress(el, it, onStar) {
+  if (onStar) return openBoardSheet(it);
+  if (it.fromBm) return enterSel(it);
+  showCardMenu(el, it);
 }
 
 // 이미지에서 대표 색(cols: 색상 점 이름 목록)과 색 분포(sh)를 뽑습니다.
@@ -686,8 +724,10 @@ async function bmTopTags(n = 8) {
   return [...cnt.entries()].sort((a, b) => b[1] - a[1]).slice(0, n).map(([t]) => t);
 }
 function renderHome(reshuffle) {
-  const box = $("#homeChips"), tok = ++HOME.tok, cat = HOME.cat; box.textContent = "";
-  const chip = (label, cls, fn) => { const b = document.createElement("button"); b.textContent = label; if (cls) b.className = cls; b.onclick = fn; box.appendChild(b); };
+  const box = $("#homeChips"), tok = ++HOME.tok, cat = HOME.cat; box.textContent = ""; box.scrollLeft = 0;
+  // 칩을 두 줄에 나눠 담습니다. 글자 수가 더 적은 줄에 넣어 두 줄의 길이를 비슷하게 맞추고, 옆으로 밀어서 봅니다.
+  const rows = [0, 1].map(() => { const r = document.createElement("div"); r.className = "crow"; box.appendChild(r); return r; }), len = [0, 0];
+  const chip = (label, cls, fn) => { const b = document.createElement("button"); b.textContent = label; if (cls) b.className = cls; b.onclick = fn; const i = len[0] <= len[1] ? 0 : 1; len[i] += label.length + 4; rows[i].appendChild(b); };
   $("#homeBack").hidden = !cat; $("#homeShuffle").hidden = !!cat;
   $("#homeTitle").textContent = cat ? `${cat[0]} ${cat[1]}` : "추천 주제";
   if (!cat) {
@@ -741,6 +781,7 @@ $("#exBm").onclick = async () => {
 
 // ---------- 탭/북마크 보기 ----------
 function setView(v) {
+  if (v !== "bm" && SEL.on) exitSel();
   S.view = v;
   $("#tabFeed").classList.toggle("on", v === "feed"); $("#tabBm").classList.toggle("on", v === "bm"); $("#tabTr").classList.toggle("on", v === "tr");
   $("#grid").hidden = v !== "feed"; $("#bmgrid").hidden = v !== "bm"; $("#trends").hidden = v !== "tr"; $("#bmtools").hidden = v !== "bm";
@@ -749,7 +790,8 @@ function setView(v) {
   if (v !== "feed") $("#more").hidden = true;
   if (v !== "bm") recClose();
   if (v === "feed") { feedM.check(); renderChips(); const m = $("#msg"); m.hidden = !(M.q && !M.items.length && m.textContent); renderMore($("#more"), M); }
-  else if (v === "tr") { $("#msg").hidden = true; renderChips(); trM.check(); loadTrends(); scrollTo(0, 0); }
+  else if (v === "tr") { $("#msg").hidden = true; renderChips(); trEnter(); scrollTo(0, 0); }
+  if (v === "bm") $("#chipsWrap").hidden = true; // 북마크의 보드는 위쪽 묶음 줄에서 고릅니다
 }
 async function showBm() {
   if (S.priv) return toast("비공개 모드에서는 북마크를 볼 수 없어요");
@@ -759,21 +801,21 @@ async function showBm() {
 async function renderBm() {
   // 키워드로 걸린 선정성(adultSrc "kw")만 저장된 값을 따르고, AI가 걸었던 것은 지금 기준으로 다시 검사합니다. (예전 기준의 오탐이 북마크에 남지 않게)
   const all = (await DB.all()).map((x) => ({ ...x, fromBm: true, tags: x.tags || [], adult: !x.safe && x.adultSrc === "kw" }));
-  renderBoardChips(all);
+  renderBoardStrip(all);
   renderBmFil(all);
   const q = (S.bmq || "").trim().toLowerCase();
-  let shown = all.filter((x) => S.board === "__all" || (x.board || "") === S.board);
+  let shown = all.filter((x) => inBoard(x, S.board));
   S.boardItems = S.board !== "__all" && S.board !== "" ? shown : [];
   $("#bmrecRow").hidden = S.boardItems.length < 2;
   if ($("#bmrecRow").hidden) recClose();
   if (S.bmTone) shown = shown.filter((x) => x.an?.tone && toneMatch(x.an, S.bmTone));
   if (S.bmColor) shown = shown.filter((x) => (x.an?.cols || []).includes(S.bmColor));
-  if (q) shown = shown.filter((x) => [x.title, srcName(x.src), x.board, x.note, ...x.tags].join(" ").toLowerCase().includes(q));
+  if (q) shown = shown.filter((x) => [x.title, srcName(x.src), ...bOf(x), x.note, ...x.tags].join(" ").toLowerCase().includes(q));
   const by = S.bmsort;
   shown.sort(by === "old" ? (a, b) => a.ts - b.ts : by === "title" ? (a, b) => String(a.title || srcName(a.src)).localeCompare(String(b.title || srcName(b.src)), "ko") : (a, b) => b.ts - a.ts);
   S.list = shown; bmM.clear();
   backfillAn(all);
-  if (!shown.length) { showMsg(!all.length ? "아직 북마크가 없어요. 이미지의 ☆ 를 눌러 담아 보세요." : S.bmTone || S.bmColor ? "이 톤·색의 북마크가 없어요. (아직 분석 중인 북마크는 잠시 뒤 나타나요)" : q ? "찾는 북마크가 없어요. 다른 말로 검색해 보세요." : "이 보드는 비어 있어요."); return; }
+  if (!shown.length) { showMsg(!all.length ? "아직 북마크가 없어요. 이미지의 ☆ 를 눌러 담아 보세요." : S.bmTone || S.bmColor ? "이 톤·색의 북마크가 없어요. (아직 분석 중인 북마크는 잠시 뒤 나타나요)" : q ? "찾는 북마크가 없어요. 다른 말로 검색해 보세요." : S.board === "" ? "보드에 담지 않은 북마크가 없어요." : "이 보드는 비어 있어요."); return; }
   $("#msg").hidden = true;
   bmM.add(shown.map((it) => makeCard(it, () => openViewer(S.list, S.list.indexOf(it)))));
 }
@@ -799,7 +841,7 @@ async function backfillAn(all) {
 // 북마크의 톤·색 필터 칩 (분석된 북마크에 있는 톤·색만 보여 줌)
 function renderBmFil(all) {
   const box = $("#bmfil"); box.textContent = "";
-  const pool = all.filter((x) => (S.board === "__all" || (x.board || "") === S.board) && x.an?.tone);
+  const pool = all.filter((x) => inBoard(x, S.board) && x.an?.tone);
   const tones = new Map(), cols = new Map();
   for (const x of pool) { tones.set(x.an.tone, (tones.get(x.an.tone) || 0) + 1); if (x.an.temp !== "neutral") tones.set(x.an.temp, (tones.get(x.an.temp) || 0) + 1); for (const c of (x.an.cols || []).slice(0, 3)) cols.set(c, (cols.get(c) || 0) + 1); }
   if (S.bmTone && !tones.has(S.bmTone)) S.bmTone = "";
@@ -850,13 +892,34 @@ function recClose() { if (!REC.on && !REC.feed) return; REC.on = false; $("#bmre
 $("#bmrecBtn").onclick = openBoardRec;
 $("#bmrecClose").onclick = recClose;
 
-function renderBoardChips(all) {
-  const box = $("#chips"); box.textContent = ""; $("#chipsLbl").textContent = "보드";
-  const boards = [...new Set(all.map((x) => x.board).filter(Boolean))].sort();
-  if (!boards.length) { if (S.board !== "__all") S.board = "__all"; $("#chipsWrap").hidden = true; return; }
-  const mk = (label, val) => { const b = document.createElement("button"); b.textContent = label; if (S.board === val) b.classList.add("on"); b.onclick = () => { S.board = val; S.bmTone = ""; S.bmColor = ""; recClose(); showBm(); }; box.appendChild(b); };
-  mk("전체", "__all"); boards.forEach((n) => mk(n, n)); if (all.some((x) => !x.board)) mk("미분류", "");
-  $("#chipsWrap").hidden = false;
+// 북마크 맨 위의 보드 묶음 줄: 보드마다 대표 이미지 4장을 작게 모아 보여 주고, 누르면 그 보드만 봅니다. (보드가 하나도 없으면 줄 자체를 숨김)
+let stripUrls = [];
+function renderBoardStrip(all) {
+  const box = $("#boardStrip"); box.textContent = "";
+  stripUrls.forEach((u) => URL.revokeObjectURL(u)); stripUrls = [];
+  $("#chipsWrap").hidden = true;
+  const names = boardNames(all);
+  if (!names.length) { if (S.board !== "__all") S.board = "__all"; box.hidden = true; return; }
+  if (S.board !== "__all" && S.board !== "" && !names.includes(S.board)) S.board = "__all";
+  box.hidden = SEL.on;
+  const recent = (list) => list.slice().sort((a, b) => b.ts - a.ts).slice(0, 4);
+  const tile = (label, val, list) => {
+    const b = document.createElement("button"); b.type = "button"; b.className = "bt" + (S.board === val ? " on" : ""); b.dataset.b = val; b.setAttribute("aria-label", `${label} ${list.length}장`);
+    const th = document.createElement("span"); th.className = "th";
+    recent(list).forEach((x) => {
+      const im = document.createElement("img"); im.alt = ""; im.referrerPolicy = "no-referrer"; im.draggable = false;
+      if (x.adultSrc && !x.safe) im.className = "bl"; // 민감할 수 있는 이미지는 여기서도 흐리게
+      if (x.blob) { const u = URL.createObjectURL(x.blob); stripUrls.push(u); im.src = u; } else im.src = x.thumb;
+      th.appendChild(im);
+    });
+    const nm = document.createElement("span"); nm.className = "nm"; nm.textContent = `${label} ${list.length}`;
+    b.append(th, nm);
+    b.onclick = () => { S.board = val; S.bmTone = ""; S.bmColor = ""; recClose(); renderBm(); };
+    box.appendChild(b);
+  };
+  tile("전체", "__all", all);
+  names.forEach((n) => tile(n, n, all.filter((x) => bOf(x).includes(n))));
+  const un = all.filter((x) => !bOf(x).length); if (un.length) tile("보드 없음", "", un);
 }
 $("#tabFeed").onclick = () => setView("feed");
 $("#tabTr").onclick = () => setView("tr");
@@ -950,7 +1013,7 @@ function showItem(keepSim) {
   $("#vhide").hidden = !!it.fromBm; // 북마크는 내가 직접 담은 것이라 "추천 안 함" 대상이 아님
   $("#vtitle").textContent = it.title || srcName(it.src);
   $("#vsrc").textContent = srcName(it.src) + (it.w ? ` · ${it.w}×${it.h}` : "");
-  refreshStars(); setLbl($("#vboard"), it.board ? "보드: " + it.board : "보드·메모");
+  refreshStars(); setLbl($("#vboard"), boardLabel(it));
   $("#vnote").textContent = it.note || ""; $("#vnote").hidden = !it.note;
   img.referrerPolicy = "no-referrer";
   img.src = it.blob ? URL.createObjectURL(it.blob) : it.thumb;
@@ -1217,19 +1280,25 @@ function refreshAvoidCards(hiddenKey) {
     if (applyAvoid(it) === 2) { c.classList.add("avoid", "loaded"); c.classList.remove("reveal"); c.dataset.st = "flag"; }
   });
 }
+const HIDE = { it: null, l: null }; // 숨길 이미지와, 뷰어에서 눌렀다면 그 뷰어 칸
+function openHide(it, l) { HIDE.it = it; HIDE.l = l || null; $("#hideSheet").hidden = false; }
 function hideItem(kind) {
-  const l = lv(), it = curItem(); if (!l || !it) return closeHide();
+  const it = HIDE.it, l = HIDE.l; if (!it) return closeHide();
   Avoid.hide(keyOf(it), avoidKeys(it), kind);
   if (kind === "pref" && tasteOn()) learnFrom(it, -3);
   closeHide();
+  toast(kind === "bad" ? "숨겼어요. 비슷한 이미지는 블러로 가릴게요" : "이 이미지는 다시 추천하지 않을게요");
+  if (!l) { // 카드에서 바로 숨김: 트렌드 목록에서도 빼고 화면의 카드를 치움
+    const v = TR.v; const k = v ? v.items.indexOf(it) : -1; if (k >= 0) v.items.splice(k, 1);
+    return refreshAvoidCards(keyOf(it));
+  }
   const idx = l.list.indexOf(it); if (idx >= 0) l.list.splice(idx, 1);
   refreshAvoidCards(keyOf(it));
-  toast(kind === "bad" ? "숨겼어요. 비슷한 이미지는 블러로 가릴게요" : "이 이미지는 다시 추천하지 않을게요");
   if (!l.list.length) return closeViewer();
   l.cur = clamp(idx, 0, l.list.length - 1); showItem(false); $("#viewer").scrollTop = 0;
 }
 bindSheet($("#hideSheet"), closeHide);
-$("#vhide").onclick = () => { if (curItem()) $("#hideSheet").hidden = false; };
+$("#vhide").onclick = () => { const it = curItem(); if (it) openHide(it, lv()); };
 $("#hidePref").onclick = () => hideItem("pref");
 $("#hideBad").onclick = () => hideItem("bad");
 $("#hideCancel").onclick = closeHide;
@@ -1245,6 +1314,8 @@ $("#vveil").parentElement.addEventListener("click", () => { const it = curItem()
 const step = (d) => { const l = lv(); if (!l) return; const n = l.cur + d; if (n >= 0 && n < l.list.length) { l.cur = n; showItem(false); $("#viewer").scrollTop = 0; } };
 $("#vprev").onclick = () => step(-1); $("#vnext").onclick = () => step(1); $("#vclose").onclick = closeViewer; $("#vfab").onclick = closeViewer;
 addEventListener("keydown", (e) => {
+  if (!$("#cardMenu").hidden) { if (e.key === "Escape") closeCardMenu(); return; }
+  if (SEL.on && e.key === "Escape" && $("#bmSheet").hidden && $("#viewer").hidden) { exitSel(); return; }
   if (!$("#hideSheet").hidden) { if (e.key === "Escape") closeHide(); return; }
   if (!$("#bmSheet").hidden) { if (e.key === "Escape") closeSheet(); return; }
   if (!$("#settings").hidden) { if (e.key === "Escape") closeSettings(); return; }
@@ -1346,46 +1417,90 @@ $("#vdl").onclick = async () => {
 };
 
 // ---------- 트렌드 ----------
-// 서버가 주는 것: 요즘 뜨는 주제(rising: 네이버 데이터랩 검색량 변화), 다가오는 행사·계절(season), 이미지(items).
-// 이미지 grp: hot = 뜨는 주제를 네이버에서 찾은 이미지, pop = Pixabay·Unsplash 인기 사진, pick = 위키미디어 커먼즈 우수 사진, news = 위키백과 화제 문서(참고용, 추천에는 안 섞음)
-const TR = { g: "rec", at: 0, items: [], date: "", loading: false, rising: [], season: [], dl: { state: "off" } };
+// 위쪽 알약 [모두 | 지금 인기 | 베스트 | 에디터 픽]은 어떤 피드를 볼지, 그 아래 한 줄 칩은 요즘 찾는 주제(이름만)입니다.
+// 서버가 쪽(page) 단위로 돌려주는 이미지를 스크롤하면 이어서 받고, 3쪽쯤 받으면 멈추고 [더 보기]를 보여 줍니다. (메인 피드와 같은 방식)
+// 이미지 grp: hot = 네이버(뜨는 주제·주제 칩), best = Pixabay·Unsplash 인기, pick = 위키미디어 커먼즈 우수 사진
+const TR = { g: "all", topic: "", views: new Map(), v: null, topics: [], dl: { state: "off" } };
+const TR_AUTO = 3; // [더 보기] 없이 자동으로 이어 받는 쪽 수
 const DL_WHY = { denied: "네이버 API HUB에서 ‘검색어트렌드’ 이용 신청이 필요해요", limit: "요청 한도를 넘었어요", timeout: "응답이 늦어요", gone: "주소를 찾을 수 없어요 (NAVER_TREND_BASE 확인)", network: "연결하지 못했어요" };
-async function loadTrends(force) {
-  if (TR.loading) return;
-  if (!force && TR.items.length && Date.now() - TR.at < 30 * 60000) { renderTrends(); return; }
-  TR.loading = true; trM.clear(); $("#trNote").textContent = "불러오는 중…";
+const trKey = () => (TR.topic ? "t:" + TR.topic : "g:" + TR.g);
+const newView = () => ({ g: TR.g, topic: TR.topic, items: [], keys: new Set(), page: 0, pc: "", more: true, burst: 0, stall: 0, at: 0, loading: false, err: false });
+// 보는 피드(알약·주제)가 바뀌었을 때: 이미 받아 둔 것(30분 안)이 있으면 그대로, 없으면 첫 쪽부터
+function trSwitch() {
+  const k = trKey(); let v = TR.views.get(k);
+  if (!v || Date.now() - v.at > 30 * 60000) { v = newView(); TR.views.set(k, v); }
+  TR.v = v; trM.clear(); renderTrControls(); renderTrends();
+  if (!v.items.length && !v.loading) trLoad(); else trReobserve();
+  scrollTo(0, 0);
+}
+function trEnter() { if (!TR.v || Date.now() - TR.v.at > 30 * 60000) trSwitch(); else { trM.check(); renderTrControls(); renderTrFoot(); trReobserve(); } }
+async function trLoad() {
+  const v = TR.v; if (!v || v.loading || !v.more) return;
+  v.loading = true; v.err = false; renderTrNote();
   try {
-    const j = await (await api("/api/trends")).json();
-    TR.items = (j.items || []).map((it) => { const key = keyOf(it); return { ...it, id: hashId(key), key, tags: it.tags || [] }; });
-    TR.date = j.date || ""; TR.rising = j.rising || []; TR.season = j.season || []; TR.dl = j.dl || { state: "off" }; TR.at = Date.now();
-    renderTrends();
-  } catch (e) { if (e.message !== "auth") $("#trNote").textContent = "트렌드를 불러오지 못했어요. 잠시 후 [새로고침]을 눌러 주세요."; }
-  finally { TR.loading = false; }
+    const qs = new URLSearchParams({ g: v.g, page: String(v.page + 1) }); if (v.topic) qs.set("topic", v.topic); if (v.pc) qs.set("pc", v.pc);
+    const j = await (await api("/api/trends?" + qs)).json();
+    if (!v.page) v.at = Date.now();
+    v.page++; v.pc = j.pc || ""; v.more = !!j.more; v.burst++;
+    if (j.topics?.length) TR.topics = j.topics;
+    if (j.dl) TR.dl = j.dl;
+    const fresh = [];
+    for (const raw of j.items || []) {
+      const key = keyOf(raw); if (v.keys.has(key) || Avoid.isHidden(key)) continue;
+      v.keys.add(key); fresh.push({ ...raw, id: hashId(key), key, tags: raw.tags || [] });
+    }
+    v.stall = fresh.length ? 0 : v.stall + 1; if (v.stall >= 3) v.more = false; // 걸러져서 3쪽 연속 빈 쪽이면 끝낸 것으로 봄
+    const added = trOrder(fresh); v.items.push(...added);
+    if (TR.v === v) { trAppend(v, added); renderTrTopics(); }
+  } catch (e) { if (e.message !== "auth") v.err = true; }
+  finally { v.loading = false; if (TR.v === v) { renderTrNote(); renderTrFoot(); trReobserve(); } }
 }
-function renderTrTopics() {
-  const box = $("#trTopics"); box.textContent = "";
-  const chip = (label, q, cls) => { const b = document.createElement("button"); b.textContent = label; b.className = cls; b.onclick = () => startSearch(q); box.appendChild(b); };
-  TR.season.forEach((x) => chip(`${x.label}${x.kind === "event" ? (x.days > 0 ? ` D-${x.days}` : " 오늘") : ""}`, x.q, "season"));
-  TR.rising.forEach((x) => chip(`${x.label || x.q}${x.note ? " " + x.note : ""}`, x.q, "rising"));
-  box.hidden = !box.children.length;
-}
-function renderTrends() {
-  let list = TR.items.filter((it) => !it.dropped && !Avoid.isHidden(it.key) && (TR.g === "rec" ? it.grp !== "news" : it.grp === TR.g));
-  // 취향 학습을 켰으면 내 취향에 맞는 사진을 위로 (그 밖의 순서는 그대로)
-  if (tasteOn() && !Taste.isEmpty() && TR.g !== "news") list = list.map((it, i) => ({ it, i, a: Taste.affinity(TasteStore.keysOf(it)) })).sort((x, y) => (y.a - x.a) || (x.i - y.i)).map((x) => x.it);
-  // "추천 안 함"으로 배운 태그와 겹치는 사진은 뒤로 보내거나(1) 블러로 가립니다(2)
+// 한 쪽 안에서의 순서: 취향 학습을 켰으면 내 취향에 맞는 사진을 위로, "추천 안 함"으로 배운 태그와 겹치는 사진은 뒤로(또는 블러)
+function trOrder(list) {
+  if (tasteOn() && !Taste.isEmpty()) list = list.map((it, i) => ({ it, i, a: Taste.affinity(TasteStore.keysOf(it)) })).sort((x, y) => (y.a - x.a) || (x.i - y.i)).map((x) => x.it);
   const avd = new Map(list.map((it) => [it, applyAvoid(it)]));
-  list = [...list.filter((it) => !avd.get(it)), ...list.filter((it) => avd.get(it))];
-  trM.clear();
-  document.querySelectorAll("#trSeg button").forEach((b) => b.classList.toggle("on", b.dataset.g === TR.g));
-  renderTrTopics();
-  const dl = TR.dl.state === "err" ? ` ‘뜨는 주제’는 가져오지 못했어요 (${DL_WHY[TR.dl.why] || TR.dl.why || "오류"}).` : TR.dl.state === "off" ? " (네이버 데이터랩 키를 등록하면 ‘뜨는 주제’가 나와요.)" : "";
-  const info = { rec: "뜨는 주제·인기 사진·잘 찍은 사진을 모았어요.", hot: "요즘 검색이 늘어난 주제를 네이버 이미지에서 찾았어요. 사진 아래 이름표가 주제예요.", pop: "Pixabay·Unsplash에서 많이 찾는 인기 사진이에요.", pick: "위키미디어 커먼즈 우수 사진 중에서 골랐어요. 날마다 다른 사진이 나와요.", news: "위키백과에서 많이 본 문서의 대표 사진이에요. 사람들의 취향보다는 화제성을 보여 줘요." }[TR.g];
-  $("#trNote").textContent = !list.length ? TR.g === "hot" ? "아직 보여 줄 ‘뜨는’ 이미지가 없어요. (네이버 키와 데이터랩 이용 신청이 있어야 나와요)" : "이 분류에 보여 줄 이미지가 없어요. (인기 사진은 Pixabay·Unsplash 키가 있어야 나와요)" : `${TR.date ? TR.date + " 기준 · " : ""}${info}${TR.g === "rec" ? dl : ""}`;
-  trM.add(list.map((it) => makeCard(it, () => openViewer(list, list.indexOf(it)))));
+  return [...list.filter((it) => !avd.get(it)), ...list.filter((it) => avd.get(it))];
 }
-document.querySelectorAll("#trSeg button").forEach((b) => { b.onclick = () => { TR.g = b.dataset.g; renderTrends(); }; });
-$("#trRefresh").onclick = () => loadTrends(true);
+function trCard(v, it) { return makeCard(it, () => openViewer(v.items, v.items.indexOf(it))); }
+function trAppend(v, items) { trM.add(items.map((it) => trCard(v, it))); }
+function renderTrends() { // 지금 보는 피드를 처음부터 다시 그림 (비공개 모드·추천 안 함 변경 등)
+  const v = TR.v; trM.clear();
+  if (v) { v.items = v.items.filter((it) => !it.dropped && !Avoid.isHidden(it.key)); trAppend(v, v.items); }
+  $("#trGrid").classList.toggle("tags", !TR.topic);
+  renderTrTopics(); renderTrNote(); renderTrFoot();
+}
+function renderTrControls() {
+  document.querySelectorAll("#trSeg button").forEach((b) => b.classList.toggle("on", !TR.topic && b.dataset.g === TR.g));
+  $("#trGrid").classList.toggle("tags", !TR.topic);
+  renderTrTopics();
+}
+function renderTrTopics() { // 주제 이름만 한 줄 (누르면 그 주제의 피드, 다시 누르면 전체로)
+  const box = $("#trTopics"); box.textContent = "";
+  TR.topics.forEach((x) => {
+    const b = document.createElement("button"); b.type = "button"; b.textContent = x.label; b.classList.toggle("on", TR.topic === x.q);
+    b.onclick = () => { TR.topic = TR.topic === x.q ? "" : x.q; trSwitch(); };
+    box.appendChild(b);
+  });
+  box.hidden = !TR.topics.length;
+}
+function renderTrNote() { // 비어 있거나 실패했을 때만 짧게 알림
+  const v = TR.v; let t = "";
+  if (v && !v.items.length) {
+    if (v.loading) t = "불러오는 중…";
+    else if (v.err) t = "불러오지 못했어요. 새로고침을 눌러 주세요.";
+    else if (v.g === "hot" && !v.topic) t = TR.dl.state === "off" ? "네이버 키를 등록하면 나와요." : TR.dl.state === "err" ? `가져오지 못했어요 (${DL_WHY[TR.dl.why] || "오류"}).` : "아직 보여 줄 이미지가 없어요.";
+    else t = "보여 줄 이미지가 없어요.";
+  }
+  $("#trNote").textContent = t; $("#trNote").hidden = !t;
+}
+function renderTrFoot() { const v = TR.v; $("#trMore").hidden = !(v && v.more && !v.loading && v.burst >= TR_AUTO && v.items.length); }
+const trio = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting) && S.view === "tr") trAuto(); }, { rootMargin: "1200px 0px" });
+trio.observe($("#trSent"));
+function trReobserve() { trio.unobserve($("#trSent")); trio.observe($("#trSent")); }
+function trAuto() { const v = TR.v; if (v && v.more && !v.loading && v.burst < TR_AUTO) trLoad(); }
+$("#trMore .mbtn").onclick = () => { const v = TR.v; if (!v) return; v.burst = 0; renderTrFoot(); trLoad(); };
+document.querySelectorAll("#trSeg button").forEach((b) => { b.onclick = () => { TR.g = b.dataset.g; TR.topic = ""; trSwitch(); }; });
+$("#trRefresh").onclick = () => { TR.views.delete(trKey()); trSwitch(); };
 
 // ---------- 필터 (방향·색상) ----------
 const COLORS = { red: "#e53935", orange: "#fb8c00", yellow: "#fdd835", green: "#43a047", teal: "#00acc1", blue: "#1e88e5", purple: "#8e24aa", pink: "#ec407a", brown: "#6d4c41", black: "#111", white: "#fff", gray: "#9e9e9e" };
@@ -1424,16 +1539,16 @@ $("#filterClose").onclick = () => { $("#filters").hidden = true; };
 $("#filterReset").onclick = () => { S.color = ""; S.orient = ""; S.tone = ""; rerun(); };
 
 // ---------- 보드·메모 (입력창 대신 시트) ----------
-const sheet = { it: null, rec: null, board: "", names: [] };
+// 한 장(뷰어의 [보드·메모], ☆ 길게 누르기, 카드 메뉴)과 여러 장(북마크 선택 모드의 [보드에 추가])이 같은 시트를 씁니다.
+const sheet = { it: null, rec: null, ids: null, chosen: new Set(), names: [] };
 function renderSheetBoards() {
   const box = $("#bmBoards"); box.textContent = "";
-  const mk = (label, val) => {
-    const b = document.createElement("button"); b.type = "button"; b.textContent = label;
-    if (!$("#bmNewBoard").value.trim() && sheet.board === val) b.classList.add("on");
-    b.onclick = () => { sheet.board = val; $("#bmNewBoard").value = ""; renderSheetBoards(); };
+  if (!sheet.names.length) { const p = document.createElement("span"); p.className = "note"; p.textContent = "아직 보드가 없어요. 아래에 이름을 적으면 새로 만들어요."; box.appendChild(p); }
+  sheet.names.forEach((n) => {
+    const b = document.createElement("button"); b.type = "button"; b.textContent = n; b.classList.toggle("on", sheet.chosen.has(n));
+    b.onclick = () => { sheet.chosen.has(n) ? sheet.chosen.delete(n) : sheet.chosen.add(n); renderSheetBoards(); };
     box.appendChild(b);
-  };
-  mk("미분류", ""); sheet.names.forEach((n) => mk(n, n));
+  });
 }
 function closeSheet() { $("#bmSheet").hidden = true; }
 function closeSettings() { $("#settings").hidden = true; }
@@ -1452,28 +1567,106 @@ function bindSheet(overlay, close) {
 }
 bindSheet($("#bmSheet"), closeSheet);
 bindSheet($("#settings"), closeSettings);
-$("#vboard").onclick = async () => {
-  const it = curItem(); if (!it) return;
-  if (!S.bmIds.has(it.id)) await toggleBookmark(it);
+async function openBoardSheet(it) { // 한 장: 북마크가 아니면 먼저 (보드 없이) 담고 보드·메모를 고릅니다
+  if (!it) return;
+  if (S.priv) return toast("비공개 모드에서는 북마크를 쓸 수 없어요");
+  if (!S.bmIds.has(it.id)) await toggleBookmark(it, "");
   const all = await DB.all(), rec = all.find((x) => x.id === it.id); if (!rec) return;
-  Object.assign(sheet, { it, rec, board: rec.board || "", names: [...new Set(all.map((x) => x.board).filter(Boolean))].sort() });
-  $("#bmNewBoard").value = ""; $("#bmNote").value = rec.note || "";
+  Object.assign(sheet, { it, rec, ids: null, chosen: new Set(bOf(rec)), names: boardNames(all) });
+  $("#bmNewBoard").value = ""; $("#bmNote").value = rec.note || ""; $("#bmNoteBox").hidden = false; $("#bmSheetTitle").textContent = "보드·메모";
   renderSheetBoards(); $("#bmSheet").hidden = false;
-};
+}
+async function openBulkSheet() { // 여러 장: 고른 보드에 한꺼번에 더합니다 (이미 들어 있던 보드는 그대로)
+  if (!SEL.ids.size) return;
+  const all = await DB.all();
+  Object.assign(sheet, { it: null, rec: null, ids: [...SEL.ids], chosen: new Set(), names: boardNames(all) });
+  $("#bmNewBoard").value = ""; $("#bmNoteBox").hidden = true; $("#bmSheetTitle").textContent = `${SEL.ids.size}장을 보드에 추가`;
+  renderSheetBoards(); $("#bmSheet").hidden = false;
+}
+$("#vboard").onclick = () => openBoardSheet(curItem());
 $("#bmNewBoard").oninput = renderSheetBoards;
 $("#bmCancel").onclick = closeSheet;
 $("#bmForm").addEventListener("submit", async (e) => {
   e.preventDefault();
+  const extra = $("#bmNewBoard").value.trim().slice(0, 30), chosen = [...sheet.chosen];
+  if (extra && !chosen.includes(extra)) chosen.push(extra);
+  if (sheet.ids) { // 여러 장
+    if (!chosen.length) return toast("보드를 고르거나 새 이름을 적어 주세요");
+    let n = 0;
+    for (const rec of await DB.all()) if (sheet.ids.includes(rec.id)) { rec.boards = [...new Set([...bOf(rec), ...chosen])]; rec.board = rec.boards[0]; if (await DB.put(rec)) n++; }
+    LS.set("lastBoard", extra || chosen[0]); closeSheet(); exitSel();
+    toast(`${n}장을 ${chosen.map((c) => `‘${c}’`).join("·")} 보드에 담았어요`); return renderBm();
+  }
   const { it, rec } = sheet; if (!it || !rec) return closeSheet();
-  rec.board = ($("#bmNewBoard").value.trim() || sheet.board).slice(0, 30);
+  rec.boards = chosen; rec.board = chosen[0] || "";
   rec.note = $("#bmNote").value.trim().slice(0, 200);
-  it.board = rec.board; it.note = rec.note;
+  it.boards = rec.boards; it.board = rec.board; it.note = rec.note;
   const ok = await DB.put(rec); closeSheet();
   if (!ok) return toast("저장하지 못했어요");
-  setLbl($("#vboard"), rec.board ? "보드: " + rec.board : "보드·메모");
-  $("#vnote").textContent = rec.note; $("#vnote").hidden = !rec.note;
-  toast(rec.board ? `'${rec.board}' 보드에 저장했어요` : "저장했어요");
+  if (chosen.length) LS.set("lastBoard", extra || chosen[0]);
+  if (curItem() === it) { setLbl($("#vboard"), boardLabel(it)); $("#vnote").textContent = rec.note; $("#vnote").hidden = !rec.note; }
+  toast(chosen.length ? `${chosen.map((c) => `‘${c}’`).join("·")} 보드에 저장했어요` : "저장했어요");
+  if (S.view === "bm" && $("#viewer").hidden) renderBm();
 });
+
+// ---------- 북마크 선택 모드: 길게 눌러 시작 → 여러 장을 골라 보드에 추가·빼기·삭제 ----------
+const SEL = { on: false, ids: new Set(), armT: null };
+function enterSel(it) { if (SEL.on) return; SEL.on = true; SEL.ids = new Set([it.id]); applySel(); }
+function toggleSel(it) { SEL.ids.has(it.id) ? SEL.ids.delete(it.id) : SEL.ids.add(it.id); refreshSel(); }
+function exitSel() { SEL.on = false; SEL.ids.clear(); disarmDel(); applySel(); }
+function applySel() {
+  document.body.classList.toggle("selmode", SEL.on);
+  $("#selBar").hidden = !SEL.on; $("#selAct").hidden = !SEL.on; $("#bmSearchRow").hidden = SEL.on;
+  $("#boardStrip").hidden = SEL.on || !$("#boardStrip").children.length;
+  refreshSel();
+}
+function refreshSel() {
+  const n = SEL.ids.size, real = S.board !== "__all" && S.board !== "";
+  document.querySelectorAll("#bmgrid .card").forEach((c) => c.classList.toggle("sel", !!c._it && SEL.ids.has(c._it.id)));
+  $("#selCount").textContent = `${n}장 선택`;
+  $("#selAll").textContent = S.list.length && n >= S.list.length ? "선택 해제" : "모두 선택";
+  setLbl($("#selOut"), real ? "이 보드에서 빼기" : "보드 해제");
+  ["selAdd", "selOut", "selDel"].forEach((id) => { $("#" + id).disabled = !n; });
+}
+function disarmDel() { clearTimeout(SEL.armT); SEL.armT = null; setLbl($("#selDel"), "삭제"); }
+$("#selCancel").onclick = exitSel;
+$("#selAll").onclick = () => { if (S.list.length && SEL.ids.size >= S.list.length) SEL.ids.clear(); else S.list.forEach((it) => SEL.ids.add(it.id)); refreshSel(); };
+$("#selAdd").onclick = openBulkSheet;
+$("#selOut").onclick = async () => {
+  if (!SEL.ids.size) return;
+  const real = S.board !== "__all" && S.board !== "", ids = [...SEL.ids]; let n = 0;
+  for (const rec of await DB.all()) if (ids.includes(rec.id)) { rec.boards = real ? bOf(rec).filter((b) => b !== S.board) : []; rec.board = rec.boards[0] || ""; if (await DB.put(rec)) n++; }
+  exitSel(); toast(real ? `${n}장을 ‘${S.board}’ 보드에서 뺐어요` : `${n}장의 보드를 해제했어요`); renderBm();
+};
+$("#selDel").onclick = async () => { // 실수 방지: 한 번 누르면 확인 문구, 3초 안에 한 번 더 누르면 삭제
+  if (!SEL.ids.size) return;
+  if (!SEL.armT) { setLbl($("#selDel"), "한 번 더"); SEL.armT = setTimeout(disarmDel, 3000); return; }
+  const ids = [...SEL.ids]; let n = 0;
+  for (const id of ids) if (await DB.del(id)) { S.bmIds.delete(id); n++; }
+  updateCount(); exitSel(); toast(`${n}장을 북마크에서 삭제했어요`); renderBm();
+};
+
+// ---------- 카드 길게 누르기 메뉴 ----------
+const CM = { it: null, at: 0 };
+function closeCardMenu() { $("#cardMenu").hidden = true; $("#cardMenuBg").hidden = true; CM.it = null; }
+function showCardMenu(el, it) {
+  CM.it = it; CM.at = Date.now();
+  $("#cmLike").hidden = $("#cmDis").hidden = !tasteOn();
+  $("#cmBoard").hidden = S.priv; setLbl($("#cmBoard"), S.bmIds.has(it.id) ? "보드·메모" : "북마크·보드");
+  const m = $("#cardMenu"); $("#cardMenuBg").hidden = false; m.hidden = false;
+  const r = el.getBoundingClientRect(), mw = m.offsetWidth, mh = m.offsetHeight;
+  const top = Math.max(r.top, 0), bottom = Math.min(r.bottom, innerHeight); // 카드에서 화면에 보이는 부분의 가운데
+  m.style.left = clamp(r.left + r.width / 2 - mw / 2, 8, Math.max(8, innerWidth - mw - 8)) + "px";
+  m.style.top = clamp((top + bottom) / 2 - mh / 2, 8, Math.max(8, innerHeight - mh - 8)) + "px";
+}
+// 길게 누른 손가락을 뗄 때 따라오는 클릭이 메뉴를 바로 닫거나 누르지 않게, 열린 직후 잠깐은 무시합니다.
+const cmGuard = (fn) => () => { if (Date.now() - CM.at < 450) return; fn(CM.it); };
+$("#cardMenuBg").addEventListener("click", cmGuard(closeCardMenu));
+addEventListener("scroll", () => { if (!$("#cardMenu").hidden) closeCardMenu(); }, { passive: true, capture: true });
+$("#cmLike").onclick = cmGuard((it) => { closeCardMenu(); if (it) { learnFrom(it, 2); toast("이런 이미지를 더 보여 드릴게요"); } });
+$("#cmDis").onclick = cmGuard((it) => { closeCardMenu(); if (it) { learnFrom(it, -3); toast("이런 이미지는 덜 보여 드릴게요"); } });
+$("#cmHide").onclick = cmGuard((it) => { closeCardMenu(); if (it) openHide(it, null); });
+$("#cmBoard").onclick = cmGuard((it) => { closeCardMenu(); if (it) openBoardSheet(it); });
 
 // ---------- AI 이미지 설명 (비슷한 이미지 보강 / 사진으로 검색) ----------
 // 작게 줄인 JPEG 한 장을 서버(Workers AI)로 보내 핵심 영어 단어를 받습니다. 못 쓰는 서버면 이번 접속 동안 다시 시도하지 않습니다.

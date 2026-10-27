@@ -83,15 +83,16 @@ const SOURCES = [
   {
     id: "naver", name: "네이버", w: 1.25, en: false, desc: "한국 이미지", need: ["NAVER_ID", "NAVER_SECRET"],
     ok: (e) => e.NAVER_ID && e.NAVER_SECRET,
-    async run(q, page, safe, e) {
+    async run(q, page, safe, e, o = {}) {
       const base = e.NAVER_BASE || "https://naverapihub.apigw.ntruss.com/search/v1/image";
       const legacy = base.includes("openapi.naver.com");
       const headers = legacy
         ? { "X-Naver-Client-Id": e.NAVER_ID, "X-Naver-Client-Secret": e.NAVER_SECRET }
         : { "X-NCP-APIGW-API-KEY-ID": e.NAVER_ID, "X-NCP-APIGW-API-KEY": e.NAVER_SECRET };
-      const start = (page - 1) * 40 + 1;
+      const n = o.n || 40; // 트렌드는 한 쪽에 필요한 만큼만 받습니다
+      const start = (page - 1) * n + 1;
       if (start > 1000) return [];
-      const d = await getJson(`${base}?query=${enc(q)}&display=40&start=${start}&sort=sim&filter=all`, headers);
+      const d = await getJson(`${base}?query=${enc(q)}&display=${n}&start=${start}&sort=sim&filter=all`, headers);
       // 네이버 기본 썸네일은 아주 작습니다. 카카오와 같은 방식으로, 원본이 너무 크지 않으면 원본을 썸네일로 쓰고
       // 안 열리면(막힌 사이트·삭제된 이미지) 크기 코드를 키운 네이버 썸네일(type=w480)로, 그것도 안 되면 원래 썸네일로 대신합니다.
       return (d.items || []).map((it) => {
@@ -105,10 +106,10 @@ const SOURCES = [
   {
     id: "kakao", name: "카카오(다음)", w: 1.1, en: false, desc: "한국 이미지", need: ["KAKAO_KEY"],
     ok: (e) => e.KAKAO_KEY,
-    async run(q, page, safe, e) {
+    async run(q, page, safe, e, o = {}) {
       if (page > 50) return [];
       const d = await getJson(
-        `https://dapi.kakao.com/v2/search/image?query=${enc(q)}&sort=accuracy&page=${page}&size=40`,
+        `https://dapi.kakao.com/v2/search/image?query=${enc(q)}&sort=accuracy&page=${page}&size=${o.n || 40}`,
         { Authorization: `KakaoAK ${e.KAKAO_KEY}` });
       // thumbnail_url 은 아주 작아서 흐리게 보입니다. 원본(image_url)이 너무 크지 않을 때는 원본을 쓰고,
       // 안 열리면 화면이 작은 썸네일(alt)로 한 번 더 시도합니다.
@@ -127,7 +128,7 @@ const SOURCES = [
     async run(q, page, safe, e, o = {}) {
       const lang = HANGUL.test(q) ? "ko" : "en";
       const d = await getJson(
-        `https://pixabay.com/api/?key=${e.PIXABAY_KEY}&q=${enc(q)}&lang=${lang}&image_type=all&safesearch=${safe}&per_page=40&page=${page}&order=popular` + extra("pixabay", "colors", "orientation", o),
+        `https://pixabay.com/api/?key=${e.PIXABAY_KEY}&q=${enc(q)}&lang=${lang}&image_type=all&safesearch=${safe}&per_page=${o.n || 40}&page=${page}&order=popular` + extra("pixabay", "colors", "orientation", o),
         {}, 900);
       return (d.hits || []).map((it) => ({
         title: "", thumb: it.webformatURL, full: it.largeImageURL || it.webformatURL, page: it.pageURL,
@@ -141,7 +142,7 @@ const SOURCES = [
     ok: (e) => e.UNSPLASH_KEY,
     async run(q, page, safe, e, o = {}) {
       const d = await getJson(
-        `https://api.unsplash.com/search/photos?query=${enc(q)}&page=${page}&per_page=30&content_filter=${safe ? "high" : "low"}` + extra("unsplash", "color", "orientation", o),
+        `https://api.unsplash.com/search/photos?query=${enc(q)}&page=${page}&per_page=${o.n || 30}&content_filter=${safe ? "high" : "low"}` + extra("unsplash", "color", "orientation", o),
         { Authorization: `Client-ID ${e.UNSPLASH_KEY}`, "Accept-Version": "v1" }, 1800);
       return (d.results || []).map((it) => ({
         title: clean(it.alt_description || it.description || ""), thumb: it.urls?.small, full: it.urls?.regular,
@@ -363,77 +364,33 @@ async function caption(req, env) {
 }
 
 // ---------- 트렌드: 단어 대신 이미지 ----------
-// 위키백과(한국어·영어)에서 많이 본 문서의 대표 사진(grp "news")과, Pixabay·Unsplash 키가 있으면 인기 사진(grp "pop")을 섞어 돌려줍니다.
-// 나라를 고르는 대신 한국어·영어 두 곳만 씁니다. (다른 언어는 제목을 읽기 어려워서)
-const TREND_SKIP = /^(Main_Page|대문|Wikipedia|위키백과|Special|특수|Portal|포털|Help|도움말|Category|분류|File|파일)/;
-const fileName = (u) => { try { return decodeURIComponent(String(u).split("/").pop().replace(/\.\w+(?:\.png)?$/, "").replace(/^\d+px-/, "")).replace(/[_-]+/g, " "); } catch { return ""; } };
+// 한 쪽(page)씩 끊어서 돌려주는 무한 피드입니다. 화면이 쪽 번호를 올려 가며 이어서 받습니다.
+//  g = all(전체를 번갈아 섞음) | hot(지금 인기: 네이버에서 요즘 검색이 늘어난 주제) | best(베스트: Pixabay·Unsplash 인기 사진) | pick(에디터 픽: 커먼즈 우수 사진)
+//  topic = 주제 칩을 눌렀을 때: 그 주제의 이미지를 여러 검색 소스에서 가져옵니다.
 const rr = (...lists) => { // 여러 목록을 번갈아 한 줄로 섞기
   const out = [];
   for (let i = 0; lists.some((l) => i < l.length); i++) for (const l of lists) if (i < l.length) out.push(l[i]);
   return out;
 };
-async function wikiTrend(lang) {
-  for (let back = 2; back <= 4; back++) {
-    const d = new Date(Date.now() - back * 86400000);
-    const y = d.getUTCFullYear(), m = String(d.getUTCMonth() + 1).padStart(2, "0"), day = String(d.getUTCDate()).padStart(2, "0");
-    let titles;
-    try {
-      const j = await getJson(`https://wikimedia.org/api/rest_v1/metrics/pageviews/top/${lang}.wikipedia/all-access/${y}/${m}/${day}`, {}, 3600);
-      const arts = j.items?.[0]?.articles || [];
-      titles = arts
-        .filter((a) => a.article && !TREND_SKIP.test(a.article))
-        .map((a) => String(a.article).replace(/_/g, " "))
-        .filter((t) => !t.includes(":") && !t.includes("|") && !hardBlocked(t) && !isExplicit(t) && !(isAdult(t) && !hasArtContext(t)))
-        .slice(0, 40);
-    } catch { continue; } // 아직 없는 날짜면 하루 전 것을 시도
-    if (!titles.length) continue;
-    // 한 번의 호출로 문서 40개의 대표 사진을 받아 옵니다.
-    let q;
-    try {
-      q = (await getJson(
-        `https://${lang}.wikipedia.org/w/api.php?action=query&format=json&prop=pageimages|pageterms&wbptterms=description&piprop=thumbnail|original&pithumbsize=640&pilimit=50&redirects=1&titles=${enc(titles.join("|"))}`,
-        {}, 3600)).query || {};
-    } catch { continue; }
-    const norm = new Map((q.normalized || []).map((n) => [n.from, n.to]));
-    const redir = new Map((q.redirects || []).map((r) => [r.from, r.to]));
-    const rank = new Map();
-    titles.forEach((t, i) => { const f = redir.get(norm.get(t) || t) || norm.get(t) || t; if (!rank.has(f)) rank.set(f, i); });
-    const items = Object.values(q.pages || {})
-      .filter((p) => p.thumbnail?.source && !/\.svg(\.png)?$/i.test(p.original?.source || p.thumbnail.source)) // 지도·깃발·로고(svg)는 제외
-      .sort((a, b) => (rank.get(a.title) ?? 99) - (rank.get(b.title) ?? 99))
-      .map((p) => {
-        const big = p.original?.source;
-        return {
-          title: clean(p.title), thumb: p.thumbnail.source, full: big && /\.(jpe?g|png|webp)$/i.test(big) ? big : p.thumbnail.source,
-          page: `https://${lang}.wikipedia.org/wiki/${enc(p.title.replace(/ /g, "_"))}`,
-          w: num(p.thumbnail.width), h: num(p.thumbnail.height), tags: [], src: "wiki", grp: "news", adult: false,
-          // 제목만으로는 알 수 없는 내용(짧은 설명·사진 파일 이름)도 선정성 판단에 씁니다. 화면에는 보내지 않음.
-          ctx: [(p.terms?.description || []).join(" "), fileName(big || p.thumbnail.source)].join(" "),
-        };
-      });
-    if (items.length) return { date: `${y}-${m}-${day}`, items };
-  }
-  return null;
-}
-// 키가 등록된 사진 소스의 인기·추천 사진 (날짜에 따라 페이지를 바꿔서 매일 조금씩 다르게)
-async function popularPhotos(env, day) {
+// 키가 등록된 사진 소스의 인기 사진 (Pixabay 에디터 추천 인기순 + Unsplash 인기순). n = 소스마다 한 쪽에 받을 장수
+async function popularPhotos(env, page, n) {
   const out = [];
   if (env.PIXABAY_KEY) {
     try {
-      const d = await getJson(`https://pixabay.com/api/?key=${env.PIXABAY_KEY}&image_type=photo&editors_choice=true&safesearch=true&order=popular&per_page=30&page=${1 + (day % 4)}`, {}, 1800);
+      const d = await getJson(`https://pixabay.com/api/?key=${env.PIXABAY_KEY}&image_type=photo&editors_choice=true&safesearch=true&order=popular&per_page=${n}&page=${page}`, {}, 1800);
       out.push((d.hits || []).map((it) => ({
         title: "", thumb: it.webformatURL, full: it.largeImageURL || it.webformatURL, page: it.pageURL, w: num(it.imageWidth), h: num(it.imageHeight),
-        tags: String(it.tags || "").split(",").map((t) => t.trim()).filter(Boolean), src: "pixabay", grp: "pop",
+        tags: String(it.tags || "").split(",").map((t) => t.trim()).filter(Boolean), src: "pixabay", grp: "best",
       })));
     } catch { /* 이 소스는 건너뜀 */ }
   }
   if (env.UNSPLASH_KEY) {
     try {
-      const d = await getJson(`https://api.unsplash.com/photos?order_by=popular&per_page=20&page=${1 + (day % 3)}`,
+      const d = await getJson(`https://api.unsplash.com/photos?order_by=popular&per_page=${n}&page=${page}`,
         { Authorization: `Client-ID ${env.UNSPLASH_KEY}`, "Accept-Version": "v1" }, 1800);
       out.push((Array.isArray(d) ? d : []).map((it) => ({
         title: clean(it.alt_description || it.description || ""), thumb: it.urls?.small, full: it.urls?.regular, page: it.links?.html,
-        w: num(it.width), h: num(it.height), tags: (it.tags || []).map((t) => t.title).filter(Boolean), src: "unsplash", grp: "pop",
+        w: num(it.width), h: num(it.height), tags: (it.tags || []).map((t) => t.title).filter(Boolean), src: "unsplash", grp: "best",
       })));
     } catch { /* 이 소스는 건너뜀 */ }
   }
@@ -441,18 +398,20 @@ async function popularPhotos(env, day) {
 }
 
 // ---- 잘 찍은 사진: 위키미디어 커먼즈 "우수 사진(Featured pictures)" ----
-// 커뮤니티 투표로 뽑힌 사진이라 화제성이 아니라 "품질"을 기준으로 한 목록입니다. 날짜에 따라 둘러보는 시기를 바꿔서 매일 조금씩 다르게 보여 줍니다.
+// 커뮤니티 투표로 뽑힌 사진이라 화제성이 아니라 "품질"을 기준으로 한 목록입니다. 날짜에 따라 시작하는 시기를 바꿔서 매일 조금씩 다르게 보여 주고, 쪽이 넘어갈수록 더 오래된 시기를 이어서 봅니다.
 // 큰 원본은 수십 MB 일 수 있어, 폭이 크면 1600px 짜리 축소본 주소를 씁니다.
 const wikiBig = (ii) => (ii.width > 1800 && ii.thumburl ? ii.thumburl.replace(/\/\d+px-/, "/1600px-") : ii.url);
 const CAT_SKIP = /featured|quality|valued|taken with|uploaded|pictures? by|photographs? by|photos? by|cc-|license|self-published|media of the day|^pd-|commons|wikimedia|^files? |^images? |by country|by year|by date|\d{4}/i;
-async function featuredPicks(day) {
+// cur = 이전 쪽이 알려 준 이어 받기 표(없으면 첫 쪽). 반환: { items, next } — next 가 없으면 더 없음.
+async function featuredPicks(day, cur, n) {
   const base = "https://commons.wikimedia.org/w/api.php?action=query&format=json&generator=categorymembers&gcmtitle=" + enc("Category:Featured_pictures_on_Wikimedia_Commons") +
-    "&gcmtype=file&gcmsort=timestamp&gcmdir=older&gcmlimit=50&prop=imageinfo&iiprop=" + enc("url|size|mime|extmetadata") + "&iiurlwidth=640&iiextmetadatafilter=" + enc("ObjectName|ImageDescription|Categories");
+    `&gcmtype=file&gcmsort=timestamp&gcmdir=older&gcmlimit=${n}&prop=imageinfo&iiprop=` + enc("url|size|mime|extmetadata") + "&iiurlwidth=640&iiextmetadatafilter=" + enc("ObjectName|ImageDescription|Categories");
   const start = new Date(Date.now() - (day % 90) * 7 * 86400000).toISOString().replace(/\.\d+Z$/, "Z");
+  const more = cur ? `&gcmcontinue=${enc(cur)}` : "";
   let d;
-  try { d = await getJson(`${base}&gcmstart=${enc(start)}`, {}, 21600, 9000); } catch { d = null; }
-  if (!Object.keys(d?.query?.pages || {}).length) d = await getJson(base, {}, 21600, 9000); // 시기 지정이 안 되면 가장 최근 것으로
-  return Object.values(d.query?.pages || {}).sort((a, b) => (a.index || 0) - (b.index || 0)).map((p) => {
+  try { d = await getJson(`${base}&gcmstart=${enc(start)}${more}`, {}, 21600, 9000); } catch { d = null; }
+  if (!Object.keys(d?.query?.pages || {}).length) d = await getJson(base + more, {}, 21600, 9000); // 시기 지정이 안 되면 가장 최근 것으로
+  const items = Object.values(d.query?.pages || {}).sort((a, b) => (a.index || 0) - (b.index || 0)).map((p) => {
     const ii = p.imageinfo?.[0];
     if (!ii || !ii.thumburl || !/^image\/(jpeg|png|webp)$/.test(ii.mime)) return null;
     const md = ii.extmetadata || {};
@@ -463,7 +422,8 @@ async function featuredPicks(day) {
       w: num(ii.thumbwidth) || num(ii.width), h: num(ii.thumbheight) || num(ii.height), tags: cats.slice(0, 6), src: "wikimedia", grp: "pick", adult: false,
       ctx: [clean(md.ImageDescription?.value || "").slice(0, 200), cats.join(" "), p.title].join(" "),
     };
-  }).filter(Boolean).slice(0, 40);
+  }).filter(Boolean);
+  return { items, next: String(d.continue?.gcmcontinue || "").slice(0, 300) };
 }
 
 // ---- 요즘 뜨는 주제: 네이버 데이터랩 검색어트렌드 ----
@@ -516,29 +476,52 @@ async function datalabTopics(env, now) {
   }
   const ok = rows.filter((x) => !hardBlocked(x.label) && !isAdult(x.label) && !offTopic(x.label, x.q));
   const rising = ok.filter((x) => x.vol >= 0.02 && x.growth >= 0.15).sort((a, b) => b.growth - a.growth).slice(0, 8)
-    .map((x) => ({ label: x.label, q: x.q, kind: "rising", note: `▲${Math.round(x.growth * 100)}%` }));
+    .map((x) => ({ label: x.label, q: x.q, kind: "rising" }));
   const hot = ok.filter((x) => !rising.some((r) => r.q === x.q)).sort((a, b) => b.vol - a.vol).slice(0, Math.max(0, 6 - rising.length))
-    .map((x) => ({ label: x.label, q: x.q, kind: "hot", note: "" }));
+    .map((x) => ({ label: x.label, q: x.q, kind: "hot" }));
   out = { state: "ok", list: [...rising, ...hot] };
   try { await caches.default.put(key, new Response(JSON.stringify(out), { headers: { "cache-control": "max-age=43200" } })); } catch { /* 캐시 실패는 무시 */ }
   return out;
 }
 
-// ---- 뜨는 주제의 이미지: 데이터랩이 가려낸 주제(‘뜨는’ 것 우선) 몇 개로 네이버 이미지를 찾아 grp "hot" 으로 돌려줍니다 ----
-// 네이버 이미지 검색은 이미 등록한 키를 그대로 쓰고, 주제는 최대 3개·주제당 14장만 받아서 호출을 아낍니다. (결과는 Cloudflare 가 1시간 캐시)
-async function hotPhotos(env, topics) {
+// ---- 지금 인기: 데이터랩이 가려낸 주제(‘뜨는’ 것 우선) 몇 개로 네이버 이미지를 쪽 단위로 찾아 grp "hot" 으로 돌려줍니다 ----
+// 네이버 이미지 검색은 이미 등록한 키를 그대로 쓰고, 주제는 앞의 4개만 씁니다. 주제마다 n 장씩, 쪽 번호만큼 뒤로 이어서 받습니다. (결과는 Cloudflare 가 캐시)
+async function hotPhotos(env, topics, page, n) {
   const naver = SOURCES.find((s) => s.id === "naver");
   if (!naver?.ok(env) || !topics.length) return [];
-  const picked = topics.slice(0, 3);
-  const rs = await Promise.allSettled(picked.map((t) => naver.run(t.q, 1, 1, env)));
-  return rr(...rs.map((r, i) => (r.status === "fulfilled" ? r.value.slice(0, 14).map((it) => ({ ...it, src: "naver", grp: "hot", topic: picked[i].label })) : [])));
+  const picked = topics.slice(0, 4);
+  const rs = await Promise.allSettled(picked.map((t) => naver.run(t.q, page, 1, env, { n })));
+  return rr(...rs.map((r, i) => (r.status === "fulfilled" ? r.value.map((it) => ({ ...it, src: "naver", grp: "hot", topic: picked[i].label })) : [])));
+}
+// ---- 주제 칩을 눌렀을 때: 그 주제의 이미지를 한국·해외 소스에서 함께 가져옵니다 (grp "hot", 주제 이름표는 화면이 가림) ----
+async function topicPhotos(env, q, page, n) {
+  const ids = ["naver", "kakao", "pixabay", "unsplash"], need = Math.max(4, Math.ceil(n / 3));
+  const en = SOURCES.some((s) => s.id === "unsplash" && s.ok(env)) && HANGUL.test(q) ? await translate(q, env) : q; // 영어 검색이 나은 소스(Unsplash)에는 번역한 말을 씁니다
+  const rs = await Promise.allSettled(SOURCES.filter((s) => ids.includes(s.id) && s.ok(env)).map((s) => s.run(s.en ? en : q, page, 1, env, { n: need }).then((l) => l.map((it) => ({ ...it, src: s.id, grp: "hot", topic: q })))));
+  return rr(...rs.map((r) => (r.status === "fulfilled" ? r.value : [])));
 }
 
-async function trends(env) {
+// 한 쪽에 몇 장씩 받을지: all 은 세 갈래를 번갈아 섞어 약 40장, 한 갈래만 보면 그 갈래를 넉넉히
+const TR_N = { all: { hot: 4, best: 7, pick: 12 }, hot: { hot: 12, best: 0, pick: 0 }, best: { hot: 0, best: 20, pick: 0 }, pick: { hot: 0, best: 0, pick: 40 } };
+
+async function trends(env, u) {
   const now = Date.now(), day = Math.floor(now / 86400000);
-  const dlP = datalabTopics(env, now).catch((e) => ({ state: "err", why: e?.code || "error", list: [] }));
-  const [ko, en, pop, pick, dl, hot] = await Promise.all([wikiTrend("ko").catch(() => null), wikiTrend("en").catch(() => null), popularPhotos(env, day).catch(() => []),
-    featuredPicks(day).catch(() => []), dlP, dlP.then((d) => hotPhotos(env, d.list || [])).catch(() => [])]);
+  const g = ["all", "hot", "best", "pick"].includes(u.searchParams.get("g")) ? u.searchParams.get("g") : "all";
+  const page = clampInt(u.searchParams.get("page"), 1, 40, 1);
+  const topic = (u.searchParams.get("topic") || "").trim().slice(0, 60);
+  const pc = (u.searchParams.get("pc") || "").slice(0, 300); // 에디터 픽의 이어 받기 표
+  const N = TR_N[g];
+  // 주제 칩은 첫 쪽(과 지금 인기)에서만 필요합니다. 데이터랩 결과는 12시간 캐시되어 있어 부담이 작습니다.
+  const needDl = !topic && (page === 1 || g === "all" || g === "hot");
+  const dlP = needDl ? datalabTopics(env, now).catch((e) => ({ state: "err", why: e?.code || "error", list: [] })) : Promise.resolve({ state: "skip", list: [] });
+  let pickNext = "";
+  const topicOk = !topic || !(hardBlocked(topic) || isAdult(topic) || isExplicit(topic) || offTopic(topic));
+  const [dl, hot, best, pick] = await Promise.all([
+    dlP,
+    !topicOk ? [] : topic ? topicPhotos(env, topic, page, 36).catch(() => []) : N.hot ? dlP.then((d) => hotPhotos(env, d.list || [], page, N.hot)).catch(() => []) : [],
+    !topic && N.best ? popularPhotos(env, page, N.best).catch(() => []) : [],
+    !topic && N.pick && (page === 1 || pc) ? featuredPicks(day, pc, N.pick).then((r) => { pickNext = r.next; return r.items; }).catch(() => []) : [],
+  ]);
   const seen = new Set();
   // 트렌드는 훑어 올리다 놀라지 않게 더 엄격하게 거릅니다.
   //  - 성행위·성기 표현이 제목·태그·짧은 설명·파일 이름에 있으면 미술·역사 자료라도 뺍니다.
@@ -550,17 +533,23 @@ async function trends(env) {
     if (isNude(t)) return hasArtContext(t) ? "blur" : "drop";
     return isAdult(t) ? "blur" : "ok";
   };
-  const items = rr(ko?.items || [], en?.items || [], pop, pick, hot)
+  const raw = rr(hot, best, pick);
+  const items = raw
     .filter((it) => it.thumb && it.full)
     .map((it) => ({ it, v: verdict(it) })).filter((x) => x.v !== "drop")
-    .map(({ it, v }) => { const { ctx, ...rest } = it; return { ...rest, thumb: https(it.thumb), full: https(it.full), alt: it.alt ? https(it.alt) : "", page: https(it.page || it.full), adult: it.adult || v === "blur" }; })
-    .filter((it) => (seen.has(it.thumb) ? false : seen.add(it.thumb)))
-    .slice(0, 200);
-  // 화면 구성: rising(데이터랩이 가려낸 뜨는 주제) / season(곧 다가오는 기념일·계절 주제) / items(사진: grp "pop" 인기, "pick" 잘 찍은 사진, "hot" 뜨는 주제의 네이버 이미지, "news" 오늘의 화제)
-  // dl: 데이터랩 상태("ok" | "off"=키 없음 | "err"=사용할 수 없음, why=이유)
+    .map(({ it, v }) => { const { ctx, ...rest } = it; return { ...rest, tags: it.tags || [], thumb: https(it.thumb), full: https(it.full), alt: it.alt ? https(it.alt) : "", page: https(it.page || it.full), adult: it.adult || v === "blur" }; })
+    .filter((it) => (seen.has(it.thumb) ? false : seen.add(it.thumb)));
+  // 주제 칩: 다가오는 행사·계절 주제와 요즘 뜨는 주제를 번갈아 섞어 이름만 돌려줍니다. (퍼센트·순위·날짜는 화면에 필요 없음)
+  const topics = [];
+  if (!topic && page === 1) {
+    const tp = new Set();
+    for (const x of rr(seasonTopics(now).map((s) => ({ label: s.label, q: s.q, kind: "season" })), (dl.list || []).map((x) => ({ label: x.label || x.q, q: x.q, kind: "rising" })))) if (!tp.has(x.q)) { tp.add(x.q); topics.push(x); }
+  }
   // 사진이 하나도 없어도 주제는 보여 줄 수 있으므로 502 가 아니라 빈 목록으로 응답합니다.
-  return json({ date: ko?.date || en?.date || "", rising: dl.list || [], season: seasonTopics(now), items, dl: { state: dl.state, why: dl.why || "", status: dl.status || 0 } });
+  // more: 다음 쪽을 더 받아 볼 만한지. 원본이 비었거나 쪽이 너무 깊으면 끝입니다. (걸러져서 비었을 뿐이면 계속 이어 받음)
+  return json({ items, topics, more: raw.length > 0 && page < 40, pc: pickNext, dl: { state: dl.state, why: dl.why || "", status: dl.status || 0 } });
 }
+const clampInt = (v, lo, hi, d) => { const n = parseInt(v, 10); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : d; };
 
 // ---------- 이미지 중계 ----------
 function blockedHost(h) {
@@ -625,7 +614,7 @@ export default {
 
     if (u.pathname === "/api/img") return proxyImage(u);
 
-    if (u.pathname === "/api/trends") return trends(env);
+    if (u.pathname === "/api/trends") return trends(env, u);
 
     if (u.pathname === "/api/search") {
       const src = SOURCES.find((s) => s.id === u.searchParams.get("src"));

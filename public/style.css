@@ -97,26 +97,39 @@ body.priv header{border-bottom-color:var(--acc)}
 /* ---------- 본문 ---------- */
 main{padding:10px max(10px,env(safe-area-inset-right)) calc(var(--tab-h) + 40px + env(safe-area-inset-bottom)) max(10px,env(safe-area-inset-left))}
 .hint{color:var(--mut)}
-#home{padding:22px 4px}
-.hh{margin:0 0 4px;font-size:26px;line-height:1.2;letter-spacing:-.02em}
-.hsub{margin:24px 0 8px;font-size:13px;color:var(--mut);font-weight:600;letter-spacing:.02em}
-.hsubrow{display:flex;align-items:center;gap:8px;margin-top:24px}
+#home{padding:12px 4px}
+.hh{margin:0 0 2px;font-size:24px;line-height:1.2;letter-spacing:-.02em}
+.hsub{margin:16px 0 6px;font-size:13px;color:var(--mut);font-weight:600;letter-spacing:.02em}
+.hsubrow{display:flex;align-items:center;gap:8px;margin-top:14px}
 .hsubrow .hsub{margin:0}
-#homeChips{margin-top:10px}
-#homeChips button{padding:10px 17px;font-size:14px;border-radius:999px}
+/* 추천 주제: 칩을 두 줄에 나눠 담고 옆으로 밀어 봅니다 (세로 공간을 아끼려고) */
+#homeChips{display:block;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch;margin:6px -4px 0;padding:2px 4px 6px}
+#homeChips::-webkit-scrollbar{display:none}
+#homeChips .crow{display:flex;gap:8px;width:max-content}
+#homeChips .crow+.crow{margin-top:8px}
+#homeChips button{padding:8px 15px;font-size:14px;border-radius:999px}
 #homeChips button.mine{border-color:var(--acc);color:var(--acc);background:var(--accbg)}
-.explore{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(210px,1fr))}
-.xbtn{display:flex;flex-direction:column;align-items:flex-start;gap:4px;text-align:left;white-space:normal;padding:16px;border-radius:20px;background:var(--card)}
+.explore{display:grid;gap:8px;grid-template-columns:repeat(auto-fit,minmax(210px,1fr))}
+.xbtn{display:flex;flex-direction:column;align-items:flex-start;gap:4px;text-align:left;white-space:normal;padding:14px;border-radius:20px;background:var(--card)}
 .xbtn:hover{border-color:var(--acc)}
 .xbtn b{font-size:16px}
 .xbtn small{color:var(--mut);font-size:12px;line-height:1.4}
-.xic{display:flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:12px;background:var(--grad);color:#fff;margin-bottom:6px}
+.xic{display:flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:12px;background:var(--grad);color:#fff;margin-bottom:6px}
 .grid{display:flex;gap:8px;align-items:flex-start}
 .col{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px}
-.card{position:relative;border-radius:16px;overflow:hidden;background:var(--card);width:100%;cursor:pointer}
-.card img{display:block;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .25s}
+.card{position:relative;border-radius:16px;overflow:hidden;background:var(--card);width:100%;cursor:pointer;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
+.card img{display:block;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .25s;pointer-events:none;-webkit-user-drag:none}
 .card.loaded img{opacity:1}
 .card.broken{display:none}
+.card .chk{display:none;position:absolute;top:7px;left:7px;width:26px;height:26px;padding:0;border-radius:50%;border:2px solid #fff;background:rgba(0,0,0,.35);color:#fff;align-items:center;justify-content:center;pointer-events:none}
+.card .chk .i{width:15px;height:15px;stroke-width:3;opacity:0}
+body.selmode .card .chk{display:flex}
+body.selmode .card .star{display:none}
+body.selmode .card:not(.sel) img{opacity:.55}
+.card.sel{outline:3px solid var(--acc);outline-offset:-3px}
+.card.sel .chk{background:var(--grad);border-color:transparent}
+.card.sel .chk .i{opacity:1}
+
 .card .star{position:absolute;top:7px;right:7px;padding:0;width:32px;height:32px;border-radius:50%;background:rgba(0,0,0,.42);border:none;color:#fff;font-size:16px;line-height:1;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
 .card .tag{position:absolute;left:7px;bottom:7px;max-width:calc(100% - 14px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10.5px;padding:2px 8px;border-radius:999px;background:rgba(0,0,0,.45);color:#fff;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
 .veil{display:none;position:absolute;inset:0;align-items:center;justify-content:center;text-align:center;flex-direction:column;color:#fff;font-size:13px;background:rgba(0,0,0,.25);pointer-events:none}
@@ -154,15 +167,18 @@ body.offline header .hrow.top,body.offline #tabFeed,body.offline #tabTr,body.off
 .seg{display:flex;background:var(--card2);border-radius:999px;padding:3px}
 .trhead .seg{flex:1;min-width:0;overflow-x:auto;scrollbar-width:none}
 .trhead .seg::-webkit-scrollbar{display:none}
-.seg button{flex:1 0 auto;border:none;background:transparent;padding:6px 10px;font-size:13px;color:var(--mut)}
+.seg button{flex:1 0 auto;border:none;background:transparent;padding:6px 9px;font-size:13px;color:var(--mut)}
 .seg button.on{background:var(--card);color:var(--fg);font-weight:600;box-shadow:0 1px 4px rgba(0,0,0,.25)}
 #trRefresh{flex:none}
-#trTopics{margin:2px 2px 10px}
-#trTopics button{padding:6px 14px;font-size:13px;background:var(--card);white-space:nowrap}
-#trTopics button::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--mut)}
-#trTopics .rising{border-color:var(--acc)}
-#trTopics .rising::before{background:var(--acc2)}
-#trTopics .season::before{background:var(--acc)}
+/* 가로로 한 줄만 차지하는 칩 줄 (주제 이름만, 숫자·설명 없음) */
+.rowscroll{display:flex;gap:7px;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch;padding:2px 2px 10px}
+.rowscroll::-webkit-scrollbar{display:none}
+#trTopics button{flex:none;padding:6px 14px;font-size:13px;background:var(--card);white-space:nowrap}
+#trTopics button.on{background:var(--accbg);border-color:var(--acc);color:var(--acc);font-weight:600}
+/* 트렌드 카드의 이름표는 ‘지금 인기’에서 어떤 주제인지 알려 줄 때만 */
+#trGrid .card .tag{display:none}
+#trGrid.tags .card[data-g=hot] .tag{display:block}
+#trMore{padding-top:18px}
 
 /* ---------- 시트·로그인 ---------- */
 .overlay{position:fixed;inset:0;z-index:50;background:var(--bg);overflow:auto}
@@ -269,6 +285,14 @@ body.priv #tabBm,body.priv #exBm,body.priv .star,body.priv #vstar,body.priv #vbo
 .vcbar button{background:#1d2027;border-color:#444;color:#fff}
 .vcbar .pri{background:var(--grad);border:none}
 
+/* ---------- 카드를 길게 누르면 뜨는 작은 메뉴 ---------- */
+#cardMenuBg{position:fixed;inset:0;z-index:57;background:transparent}
+#cardMenu{position:fixed;z-index:58;display:flex;gap:2px;padding:6px;background:var(--card);border:1px solid var(--line);border-radius:20px;box-shadow:var(--shadow)}
+#cardMenu button{flex-direction:column;gap:3px;min-width:62px;padding:8px 6px;border:none;border-radius:14px;background:transparent;font-size:11.5px;line-height:1.2;color:var(--fg)}
+#cardMenu button:active{background:var(--accbg)}
+#cardMenu .i{width:21px;height:21px}
+#cmHide{color:var(--danger)}
+
 /* ---------- 북마크 ---------- */
 #bmtools{display:block;padding:4px 2px 10px}
 .bmrow{display:flex;gap:8px;align-items:center}
@@ -281,8 +305,26 @@ body.priv #tabBm,body.priv #exBm,body.priv .star,body.priv #vstar,body.priv #vbo
 #bmrec{margin-top:18px;padding-top:12px;border-top:1px solid var(--line)}
 .rechead{display:flex;gap:8px;align-items:center;margin-bottom:8px}
 .rechead span:not(.grow){color:var(--mut);font-size:13px}
+/* 보드 한눈에: 대표 이미지 4장짜리 작은 묶음 */
+#boardStrip{padding-bottom:8px}
+#boardStrip .bt{flex:none;width:84px;display:flex;flex-direction:column;gap:5px;padding:0;border:none;border-radius:14px;background:transparent;align-items:stretch}
+#boardStrip .bt:active{transform:scale(.96)}
+#boardStrip .th{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:2px;width:84px;height:84px;border-radius:15px;overflow:hidden;background:var(--card2);border:2px solid transparent;box-sizing:border-box}
+#boardStrip .th img{width:100%;height:100%;object-fit:cover;display:block;background:var(--card)}
+#boardStrip .bt.on .th{border-color:var(--acc)}
+#boardStrip .nm{font-size:12px;line-height:1.25;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center;color:var(--mut)}
+#boardStrip .bt.on .nm{color:var(--acc);font-weight:600}
+#selBar{margin-bottom:8px}
+#selBar b{font-size:15px}
+#selAct{position:fixed;left:0;right:0;bottom:0;z-index:35;display:flex;justify-content:space-around;padding:6px 10px calc(6px + env(safe-area-inset-bottom));background:var(--glass);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);border-top:1px solid var(--line)}
+#selAct button{flex:1;flex-direction:column;gap:2px;max-width:150px;padding:6px 8px;border:none;border-radius:16px;background:transparent;color:var(--fg);font-size:11px;font-weight:600}
+#selAct button .i{width:24px;height:24px}
+#selAct button.danger{color:var(--danger)}
+#selAct button:disabled{opacity:.4}
+body.selmode #tabbar{display:none}
+#bmSheet h3 small{color:var(--mut);font-weight:400}
 @media(max-width:520px){
   .explore{grid-template-columns:1fr;gap:8px}
-  .xbtn{display:grid;grid-template-columns:40px 1fr;column-gap:14px;row-gap:1px;align-items:center;padding:12px 14px;border-radius:18px}
+  .xbtn{display:grid;grid-template-columns:34px 1fr;column-gap:12px;row-gap:0;align-items:center;padding:9px 14px;border-radius:18px}
   .xic{grid-row:span 2;margin:0}
 }

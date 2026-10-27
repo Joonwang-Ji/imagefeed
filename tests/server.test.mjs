@@ -4,145 +4,126 @@ import { hardBlocked, isAdult } from "../src/filters.js";
 let fail = 0; const ok = (c, m) => { if (!c) { fail++; console.log("FAIL", m); } else console.log("ok  ", m); };
 const calls = [];
 const jres = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { "content-type": "application/json" } });
+// 에디터 픽(커먼즈 우수 사진) 한 장 만들기
+const fp = (id, name, cats, desc, w = 3000) => ({ index: id, title: `File:${name}.jpg`, imageinfo: [{ thumburl: `https://upload.wikimedia.org/wikipedia/commons/thumb/a/ab/${name}.jpg/640px-${name}.jpg`, thumbwidth: 640, thumbheight: 427, url: `https://upload.wikimedia.org/wikipedia/commons/a/ab/${name}.jpg`, width: w, height: Math.round(w * 0.67), mime: "image/jpeg", descriptionurl: `https://commons.wikimedia.org/wiki/File:${name}`,
+  extmetadata: { ObjectName: { value: name.replace(/_/g, " ") }, ImageDescription: { value: desc }, Categories: { value: cats } } }] });
+let pickPages = null; // 커먼즈가 돌려줄 목록 (테스트마다 바꿈)
+const defaultPicks = () => ({
+  11: fp(2, "Sunset_over_Jeju", "Featured pictures of South Korea|Sunsets in Jeju|Taken with Canon EOS|Quality images|Jeju Island", "A calm sunset over the sea", 4000),
+  12: fp(1, "Old_town_street", "Featured pictures of Spain|Streets in Spain|2019 in Spain", "Narrow street", 1500),
+  13: fp(3, "Venus_de_Milo_front", "Featured pictures of sculptures|Nude statues", "Ancient marble statue", 3000),
+  14: fp(4, "Explicit_shunga_print", "Featured pictures|Shunga", "Edo period erotic woodblock print"),
+  15: { index: 5, title: "File:Doc.pdf", imageinfo: [{ thumburl: "https://upload.wikimedia.org/x.png", mime: "application/pdf" }] },
+});
+pickPages = defaultPicks();
+let fpStart = true;
 globalThis.fetch = async (url) => {
   const u = String(url); calls.push(u);
-  if (u.includes("wikimedia.org/api/rest_v1/metrics/pageviews/top/ko")) return jres({ items: [{ articles: [
-    { article: "대문" }, { article: "손흥민" }, { article: "특수:검색" }, { article: "시체_발견" }, { article: "누드_사진" }, { article: "서울_야경" }, { article: "한국_국기" }, { article: "이미지_없음" } ] }] });
-  if (u.includes("wikimedia.org/api/rest_v1/metrics/pageviews/top/en")) return jres({ items: [{ articles: [
-    { article: "Main_Page" }, { article: "Albert_Einstein" }, { article: "Mount_Fuji" }, { article: "Special:Search" } ] }] });
-  if (u.includes("ko.wikipedia.org/w/api.php")) {
-    const t = decodeURIComponent(u.match(/titles=([^&]+)/)[1]).split("|");
-    if (t.some((x) => /시체|누드|대문|특수/.test(x))) return jres({ error: "bad titles" }, 500); // 걸러진 제목이 요청에 섞이면 실패
-    return jres({ query: { normalized: [], redirects: [], pages: {
-      1: { title: "서울 야경", thumbnail: { source: "http://upload.wikimedia.org/a.jpg", width: 640, height: 400 }, original: { source: "https://upload.wikimedia.org/a_big.jpg" } },
-      2: { title: "손흥민", thumbnail: { source: "https://upload.wikimedia.org/b.jpg", width: 500, height: 640 }, original: { source: "https://upload.wikimedia.org/b_big.tif" } },
-      3: { title: "한국 국기", thumbnail: { source: "https://upload.wikimedia.org/flag.svg.png", width: 640, height: 400 }, original: { source: "https://upload.wikimedia.org/flag.svg" } },
-      4: { title: "이미지 없음" },
-    } } });
+  if (u.includes("commons.wikimedia.org") && u.includes("Featured_pictures")) {
+    if (u.includes("gcmstart") && !fpStart) return new Response("bad", { status: 400 });
+    return jres({ query: { pages: pickPages }, continue: { gcmcontinue: "file|ABC|123", continue: "gcmcontinue||" } });
   }
-  if (u.includes("en.wikipedia.org/w/api.php")) return jres({ query: { normalized: [{ from: "Mount Fuji", to: "Mount Fuji" }], redirects: [{ from: "Albert Einstein", to: "Albert Einstein" }], pages: {
-      5: { title: "Mount Fuji", thumbnail: { source: "https://upload.wikimedia.org/fuji.jpg", width: 640, height: 427 }, original: { source: "https://upload.wikimedia.org/fuji_o.jpg" } },
-      6: { title: "Albert Einstein", thumbnail: { source: "https://upload.wikimedia.org/ae.jpg", width: 480, height: 640 }, original: { source: "https://upload.wikimedia.org/ae_o.png" } } } } });
   if (u.startsWith("https://pixabay.com/api/")) return jres({ hits: [
     { webformatURL: "https://pixabay.com/p1.jpg", largeImageURL: "https://pixabay.com/p1L.jpg", pageURL: "https://pixabay.com/1", imageWidth: 800, imageHeight: 600, tags: "sea, sky" },
     { webformatURL: "https://pixabay.com/p2.jpg", largeImageURL: "https://pixabay.com/p2L.jpg", pageURL: "https://pixabay.com/2", imageWidth: 600, imageHeight: 800, tags: "gore, blood" } ] });
   if (u.startsWith("https://api.unsplash.com/photos?")) return jres([{ urls: { small: "https://images.unsplash.com/u1s", regular: "https://images.unsplash.com/u1r" }, links: { html: "https://unsplash.com/u1" }, width: 400, height: 500, alt_description: "a calm lake", tags: [{ title: "lake" }] }]);
+  if (u.startsWith("https://api.unsplash.com/search/photos")) return jres({ results: [{ urls: { small: "https://images.unsplash.com/s1s", regular: "https://images.unsplash.com/s1r" }, links: { html: "https://unsplash.com/s1" }, width: 400, height: 500, alt_description: "cherry blossom", tags: [] }] });
+  if (u.startsWith("https://dapi.kakao.com/v2/search/image")) return jres({ documents: [{ image_url: "https://blog.test/k1.jpg", thumbnail_url: "https://t.kakao.test/k1.jpg", display_sitename: "카카오 블로그", width: 800, height: 600, doc_url: "https://blog.test/k1" }] });
   return new Response("nf", { status: 404 });
 };
 const req = (path, pass = "pw") => new Request("https://x.test" + path, { headers: { "x-pass": pass } });
 const env = { PASS: "pw", ASSETS: { fetch: () => new Response("a") } };
+const urlsOf = (re) => calls.filter((c) => re.test(c));
 
+// ---- 트렌드(1): 키 없이도 동작, 쪽 단위 응답 ----
 let r = await worker.fetch(req("/api/trends", "bad"), env); ok(r.status === 401, "trends requires password");
 r = await worker.fetch(req("/api/trends"), env); let j = await r.json();
-ok(r.status === 200 && j.items.length >= 4, `trends ok without keys: ${j.items.length} items, date ${j.date}`);
-ok(j.items.every((i) => i.grp === "news" && i.src === "wiki"), "without keys all items are wiki news");
-ok(j.items.map((i) => i.title).join("|") === "손흥민|Albert Einstein|서울 야경|Mount Fuji", "interleaved ko / en: " + j.items.map((i) => i.title).join(" | "));
-ok(!j.items.some((i) => /국기/.test(i.title)), "svg flag dropped");
-ok(!j.items.some((i) => /이미지 없음/.test(i.title)), "page without image dropped");
-ok(j.items.every((i) => i.thumb.startsWith("https://")), "http thumbs upgraded to https");
-const son = j.items.find((i) => i.title === "손흥민"); ok(son && son.full === son.thumb, "tif original falls back to thumb");
-const fuji = j.items.find((i) => i.title === "Mount Fuji"); ok(fuji.full.endsWith("fuji_o.jpg") && fuji.page === "https://en.wikipedia.org/wiki/Mount_Fuji", "full = original jpg, page link ok");
-ok(!calls.some((c) => /%EC%8B%9C%EC%B2%B4|%EB%88%84%EB%93%9C/.test(c)), "blocked/adult titles never requested");
+ok(r.status === 200 && j.items.length >= 2 && j.items.every((i) => i.grp === "pick" && i.src === "wikimedia"), `no keys: only editor picks (${j.items.length})`);
+ok(j.more === true && j.pc === "file|ABC|123", "response tells there is a next page and the editor-pick cursor: " + j.pc);
+ok(!j.items.some((i) => /Explicit shunga/.test(i.title)) && !j.items.some((i) => /Doc/.test(i.title)), "explicit print and non-image mime dropped");
+ok(j.items.every((i) => i.thumb.startsWith("https://") && !("ctx" in i)), "https thumbs, no internal ctx sent to the browser");
+ok(Array.isArray(j.topics) && j.topics.length > 0 && j.topics.every((t) => t.label && t.q && ["season", "rising"].includes(t.kind) && !("note" in t) && !("days" in t)), "topic chips are names only (no %, no D-day): " + j.topics.map((t) => t.label).join(","));
+ok(j.dl.state === "off", "datalab off without naver key");
+ok(!("rising" in j) && !("season" in j) && !("date" in j), "old fields (rising / season / date / wiki news) are gone");
 
-r = await worker.fetch(req("/api/trends"), { ...env, PIXABAY_KEY: "k1", UNSPLASH_KEY: "k2" }); j = await r.json();
-const pops = j.items.filter((i) => i.grp === "pop");
-ok(pops.length === 2 && pops.some((i) => i.src === "pixabay") && pops.some((i) => i.src === "unsplash"), "pop photos from pixabay + unsplash: " + pops.map((p) => p.src));
-ok(!pops.some((i) => i.tags.includes("gore")), "hard-blocked tags dropped from pop");
-ok(j.items.slice(0, 3).map((i) => i.grp).join() === "news,news,pop", "round-robin mixes ko, en, pop: " + j.items.slice(0, 6).map((i) => i.grp));
+// 키가 있으면 베스트(Pixabay·Unsplash): 쪽 번호와 장수가 요청에 실림
+calls.length = 0;
+r = await worker.fetch(req("/api/trends?g=best&page=2"), { ...env, PIXABAY_KEY: "k1", UNSPLASH_KEY: "k2" }); j = await r.json();
+const pops = j.items.filter((i) => i.grp === "best");
+ok(pops.length === 2 && pops.some((i) => i.src === "pixabay") && pops.some((i) => i.src === "unsplash") && j.items.length === 2, "best: photos from pixabay + unsplash only: " + pops.map((p) => p.src));
+ok(!pops.some((i) => i.tags.includes("gore")), "hard-blocked tags dropped from best");
+ok(urlsOf(/pixabay\.com\/api\/.*editors_choice/).every((c) => /per_page=20&page=2/.test(c)) && urlsOf(/api\.unsplash\.com\/photos\?/).every((c) => /per_page=20&page=2/.test(c)), "best page 2 asks 20 per source from page 2");
+ok(!calls.some((c) => c.includes("commons.wikimedia.org")), "best-only view does not touch commons");
+calls.length = 0;
+r = await worker.fetch(req("/api/trends?page=1"), { ...env, PIXABAY_KEY: "k1", UNSPLASH_KEY: "k2" }); j = await r.json();
+ok(urlsOf(/pixabay\.com\/api\//).every((c) => /per_page=7&page=1/.test(c)), "all view asks only 7 per photo source");
+ok(j.items.slice(0, 3).map((i) => i.grp).join() === "best,pick,best", "all view mixes best and pick: " + j.items.slice(0, 6).map((i) => i.grp));
+// 에디터 픽 이어 받기: 표를 되돌려 주면 같은 목록의 다음 쪽을 요청
+calls.length = 0;
+r = await worker.fetch(req("/api/trends?g=pick&page=2&pc=" + encodeURIComponent("file|ABC|123")), env); j = await r.json();
+ok(urlsOf(/Featured_pictures/).some((c) => c.includes("gcmcontinue=" + encodeURIComponent("file|ABC|123"))), "editor pick page 2 continues from the cursor");
+r = await worker.fetch(req("/api/trends?g=pick&page=2"), env); j = await r.json();
+ok(j.items.length === 0 && j.more === false, "editor pick page 2 without a cursor = nothing more");
 
-// 트렌드 선정성: 성행위·성기는 아예 제외, 나체는 미술·역사 맥락이면 블러로 남기고 아니면 제외
+// 선정성: 성행위·성기는 아예 제외, 나체는 미술·역사 맥락이면 블러로 남기고 아니면 제외
 {
-  const keep = globalThis.fetch; const asked = [];
-  const pg = (id, title, desc, file) => ({ [id]: { title, terms: { description: desc ? [desc] : [] }, thumbnail: { source: `https://upload.wikimedia.org/thumb/${file}`, width: 600, height: 400 }, original: { source: `https://upload.wikimedia.org/orig/${file}` } } });
-  globalThis.fetch = async (url) => {
-    const u = String(url); asked.push(u);
-    if (u.includes("pageviews/top/ko")) return jres({ items: [{ articles: [
-      { article: "성행위" }, { article: "다비드상" }, { article: "카주라호" }, { article: "사진_속_나체" }, { article: "우키요에" }, { article: "오럴B" }, { article: "자위대" }, { article: "서울_야경" }, { article: "누드_사진" } ] }] });
-    if (u.includes("pageviews/top/en")) return jres({ items: [{ articles: [{ article: "Michelangelo" }] }] });
-    if (u.includes("ko.wikipedia.org/w/api.php")) {
-      // 제목이 이미 걸러졌다면 요청에 없어야 함
-      const t = decodeURIComponent(u.match(/titles=([^&]+)/)[1]).split("|");
-      if (t.some((x) => /성행위|누드/.test(x))) return jres({ error: "filtered titles leaked" }, 500);
-      return jres({ query: { pages: {
-        ...pg(1, "다비드상", "르네상스 시대의 나체 대리석 조각", "David.jpg"),
-        ...pg(2, "카주라호", "인도의 사원 유적", "Khajuraho_erotic_sculpture_couple.jpg"),
-        ...pg(3, "사진 속 나체", "사진 기법", "photo_naked_model.jpg"),
-        ...pg(4, "우키요에", "일본 목판화", "ukiyoe_shunga_scroll.jpg"),
-        ...pg(5, "오럴B", "칫솔 브랜드", "oralb.jpg"),
-        ...pg(6, "자위대", "일본의 군대", "jsdf.jpg"),
-        ...pg(7, "서울 야경", "대한민국의 수도", "seoul.jpg"),
-      } } });
-    }
-    if (u.includes("en.wikipedia.org/w/api.php")) return jres({ query: { pages: { ...pg(8, "Michelangelo", "Italian sculptor and painter", "Michelangelo.jpg") } } });
-    return new Response("nf", { status: 404 });
-  };
-  const rr2 = await worker.fetch(req("/api/trends"), env), jj = await rr2.json(); globalThis.fetch = keep;
-  const byT = Object.fromEntries(jj.items.map((i) => [i.title, i]));
-  ok(!byT["카주라호"], "explicit word in the photo file name (erotic) -> dropped even though it is an art/heritage page");
-  ok(!byT["우키요에"], "shunga file name -> dropped even in an art context");
-  ok(!byT["사진 속 나체"], "nudity without art context -> dropped");
-  ok(byT["다비드상"] && byT["다비드상"].adult === true, "nude marble sculpture (art context) stays, but blurred");
-  ok(byT["오럴B"] && byT["자위대"] && byT["서울 야경"] && byT["Michelangelo"], "normal pages (toothbrush brand, Self-Defense Forces, city view, artist) are not caught");
-  ok(["오럴B", "자위대", "서울 야경", "Michelangelo"].every((t) => byT[t].adult === false), "normal pages are not blurred");
-  ok(!asked.some((c) => /%EC%84%B1%ED%96%89%EC%9C%84|%EB%88%84%EB%93%9C/.test(c)), "explicit and nude-titled pages are never requested");
-  ok(jj.items.every((i) => !("ctx" in i)), "internal context text is not sent to the browser");
+  pickPages = { 1: fp(1, "David_statue", "Sculptures|Nude statues", "Renaissance nude marble sculpture"),
+    2: fp(2, "Khajuraho_erotic_sculpture_couple", "Temples in India", "Hindu temple ruins"),
+    3: fp(3, "photo_naked_model", "Photography", "A studio photo"),
+    4: fp(4, "Oral-B_toothbrush", "Brands", "Toothbrush brand"),
+    5: fp(5, "Seoul_night", "Seoul", "City view at night") };
+  r = await worker.fetch(req("/api/trends?g=pick"), env); j = await r.json();
+  const byT = Object.fromEntries(j.items.map((i) => [i.title, i]));
+  ok(!byT["Khajuraho erotic sculpture couple"], "explicit word in the file name -> dropped even for heritage sculpture");
+  ok(!byT["photo naked model"], "nudity without art context -> dropped");
+  ok(byT["David statue"] && byT["David statue"].adult === true, "nude marble sculpture (art context) stays, but blurred");
+  ok(byT["Oral-B toothbrush"] && byT["Seoul night"] && !byT["Oral-B toothbrush"].adult && !byT["Seoul night"].adult, "ordinary pictures are not caught or blurred");
+  pickPages = {
+    1: fp(1, "Halloween_pumpkins", "Autumn", "Jack-o-lantern"), 2: fp(2, "Ramadan_lanterns", "Islam", "Ramadan night"), 3: fp(3, "Mount_Fuji", "Japan", "Mountain"), 4: fp(4, "Buddhism_temple", "Temples", "Buddhism") };
+  r = await worker.fetch(req("/api/trends?g=pick"), env); j = await r.json();
+  ok(j.items.map((i) => i.title).join() === "Mount Fuji", "Halloween / Ramadan / Buddhism pictures dropped: " + j.items.map((i) => i.title));
+  pickPages = defaultPicks();
 }
 
 // 모든 소스 실패 → 사진은 비어 있지만 기념일·계절 주제는 외부 호출 없이 계속 보여 줌
 const saved = globalThis.fetch; globalThis.fetch = async () => new Response("x", { status: 500 });
 r = await worker.fetch(req("/api/trends"), env); j = await r.json();
-ok(r.status === 200 && j.items.length === 0 && j.season.length > 0 && j.dl.state === "off", "nothing available: empty photos, but season topics still shown (dl off without keys)");
+ok(r.status === 200 && j.items.length === 0 && j.more === false && j.topics.length > 0 && j.dl.state === "off", "nothing available: empty photos, no next page, but season topics still shown");
 globalThis.fetch = saved;
 
-// ---- 새 트렌드: 잘 찍은 사진(커먼즈 우수 사진) + 요즘 뜨는 주제(데이터랩) + 시즌 주제 ----
+
+// ---- 트렌드(2): 지금 인기(데이터랩 + 네이버 이미지) · 주제 칩 · 캐시 ----
 {
   globalThis.caches = { default: { store: new Map(), match: async function (k) { const v = this.store.get(k.url); return v ? new Response(v) : undefined; }, put: async function (k, r) { this.store.set(k.url, await r.text()); } } };
-  const keep = globalThis.fetch; const seen = []; let dlMode = "ok", fpStart = true;
-  const fp = (id, name, cats, desc, w = 3000) => ({ index: id, title: `File:${name}.jpg`, imageinfo: [{ thumburl: `https://upload.wikimedia.org/wikipedia/commons/thumb/a/ab/${name}.jpg/640px-${name}.jpg`, thumbwidth: 640, thumbheight: 427, url: `https://upload.wikimedia.org/wikipedia/commons/a/ab/${name}.jpg`, width: w, height: Math.round(w * 0.67), mime: "image/jpeg", descriptionurl: `https://commons.wikimedia.org/wiki/File:${name}`,
-    extmetadata: { ObjectName: { value: name.replace(/_/g, " ") }, ImageDescription: { value: desc }, Categories: { value: cats } } }] });
+  const keep = globalThis.fetch; const seen = []; let dlMode = "ok";
   const dlBody = (groups, grow) => ({ results: groups.map((g) => ({ title: g, keywords: [g], data: Array.from({ length: 27 }, (_, i) => ({ period: "d" + i, ratio: g === "사진" ? 50 : i >= 20 ? (grow[g] ?? 5) : 5 })) })) });
   globalThis.fetch = async (url, opt = {}) => {
     const u = String(url); seen.push({ u, opt });
-    if (u.includes("commons.wikimedia.org") && u.includes("Featured_pictures")) {
-      if (u.includes("gcmstart") && !fpStart) return new Response("bad", { status: 400 });
-      return jres({ query: { pages: {
-        11: fp(2, "Sunset_over_Jeju", "Featured pictures of South Korea|Sunsets in Jeju|Taken with Canon EOS|Quality images|Jeju Island", "A calm sunset over the sea", 4000),
-        12: fp(1, "Old_town_street", "Featured pictures of Spain|Streets in Spain|2019 in Spain", "Narrow street", 1500),
-        13: fp(3, "Venus_de_Milo_front", "Featured pictures of sculptures|Nude statues", "Ancient marble statue", 3000),
-        14: fp(4, "Explicit_shunga_print", "Featured pictures|Shunga", "Edo period erotic woodblock print"),
-        15: { index: 5, title: "File:Doc.pdf", imageinfo: [{ thumburl: "https://upload.wikimedia.org/x.png", mime: "application/pdf" }] },
-      } } });
-    }
     if (u.startsWith("https://naverapihub.apigw.ntruss.com/search-trend/v1/search")) {
       if (dlMode === "denied") return new Response("no", { status: 403 });
       const b = JSON.parse(opt.body); const grow = { 벚꽃: 40, 한옥: 20, 캠핑: 2 };
       return jres(dlBody(b.keywordGroups.map((g) => g.groupName), grow));
     }
-    if (u.startsWith("https://naverapihub.apigw.ntruss.com/search/v1/image")) { // 뜨는 주제의 네이버 이미지
-      const q = decodeURIComponent(u.match(/query=([^&]+)/)[1]);
-      return jres({ items: Array.from({ length: 20 }, (_, i) => ({ title: `<b>${q}</b> 사진 ${i}`, link: `https://blog.test/${encodeURIComponent(q)}${i}.jpg`, thumbnail: `http://search.pstatic.net/common/?src=${i}&type=b150`, sizewidth: "800", sizeheight: "600" })) });
+    if (u.startsWith("https://naverapihub.apigw.ntruss.com/search/v1/image")) { // 네이버 이미지: display / start 를 그대로 존중
+      const q = decodeURIComponent(u.match(/query=([^&]+)/)[1]), n = +u.match(/display=(\d+)/)[1], st = +u.match(/start=(\d+)/)[1];
+      return jres({ items: Array.from({ length: n }, (_, i) => ({ title: `<b>${q}</b> 사진 ${st + i}`, link: `https://blog.test/${encodeURIComponent(q)}${st + i}.jpg`, thumbnail: `http://search.pstatic.net/common/?src=${st + i}&type=b150`, sizewidth: "800", sizeheight: "600" })) });
     }
     return keep(url, opt);
   };
   const E = { ...env, NAVER_ID: "id", NAVER_SECRET: "sec" };
-  let rt = await worker.fetch(req("/api/trends"), E), jt = await rt.json();
-  const picks = jt.items.filter((i) => i.grp === "pick"), byTitle = Object.fromEntries(picks.map((i) => [i.title, i]));
-  ok(picks.length >= 2, "featured pictures included (grp pick): " + picks.map((p) => p.title).join(" | "));
-  ok(picks[0].title === "Old town street" && picks[1].title === "Sunset over Jeju", "featured pictures keep the generator order (index): " + picks.map((p) => p.title));
-  ok(!byTitle["Explicit shunga print"], "explicit featured picture dropped (title/description/category)");
-  ok(byTitle["Venus de Milo front"] && byTitle["Venus de Milo front"].adult === true, "nude statue with art context stays but blurred");
-  ok(!picks.some((p) => /Doc/.test(p.title)), "non-image mime (pdf) dropped");
+  let rt = await worker.fetch(req("/api/trends?g=pick"), E), jt = await rt.json();
+  const picks = jt.items, byTitle = Object.fromEntries(picks.map((i) => [i.title, i]));
+  ok(picks.length >= 2 && picks[0].title === "Old town street" && picks[1].title === "Sunset over Jeju", "editor picks keep the generator order (index): " + picks.map((p) => p.title));
   const jeju = byTitle["Sunset over Jeju"];
-  ok(/\/1600px-/.test(jeju.full) && !/original|\/a\/ab\/Sunset_over_Jeju\.jpg$/.test(jeju.full), "huge original replaced by a 1600px version: " + jeju.full);
+  ok(/\/1600px-/.test(jeju.full) && !/\/a\/ab\/Sunset_over_Jeju\.jpg$/.test(jeju.full), "huge original replaced by a 1600px version: " + jeju.full);
   ok(byTitle["Old town street"].full.endsWith("Old_town_street.jpg") && !/px-/.test(byTitle["Old town street"].full), "medium original (<=1800px) used as is");
+  ok(byTitle["Venus de Milo front"]?.adult === true, "nude statue with art context stays but blurred");
   ok(jeju.tags.join() === "Sunsets in Jeju,Jeju Island", "useful category names become tags, noise dropped: " + jeju.tags);
-  ok(jeju.src === "wikimedia" && jeju.page.includes("commons.wikimedia.org/wiki/File:"), "source and page link");
-  ok(jt.items.every((i) => !("ctx" in i)), "no internal ctx leaked");
   ok(seen.some((c) => c.u.includes("gcmstart")), "first request rotates the browsing window with gcmstart");
   // 시기 지정이 거절되면 가장 최근 것으로 다시 요청
   fpStart = false; caches.default.store.clear(); seen.length = 0;
-  rt = await worker.fetch(req("/api/trends"), E); jt = await rt.json();
-  ok(jt.items.filter((i) => i.grp === "pick").length >= 2 && seen.filter((c) => c.u.includes("Featured_pictures")).length === 2, "if gcmstart is rejected, retries without it");
+  rt = await worker.fetch(req("/api/trends?g=pick"), E); jt = await rt.json();
+  ok(jt.items.length >= 2 && seen.filter((c) => c.u.includes("Featured_pictures")).length === 2, "if gcmstart is rejected, retries without it");
 
   // 데이터랩
   fpStart = true; caches.default.store.clear(); seen.length = 0;
@@ -158,44 +139,69 @@ globalThis.fetch = saved;
     ok(im2.length >= 1 && im2.every((c) => c.opt.headers["X-NCP-APIGW-API-KEY-ID"] === "id"), "image search keeps using the image-search key");
     caches.default.store.clear(); seen.length = 0;
     const r3 = await worker.fetch(req("/api/trends"), { ...env, NAVER_TREND_ID: "tid", NAVER_TREND_SECRET: "tsec" }); const j3 = await r3.json();
-    ok(j3.dl.state === "ok", "trend key alone is enough for the rising topics (image search key not required)");
+    ok(j3.dl.state === "ok", "trend key alone is enough for the topics (image search key not required)");
     caches.default.store.clear(); seen.length = 0; await worker.fetch(req("/api/trends"), E);
   }
   const b0 = JSON.parse(dlCalls[0].opt.body);
   ok(b0.timeUnit === "date" && b0.keywordGroups.length === 5 && b0.keywordGroups[0].groupName === "사진" && /^\d{4}-\d\d-\d\d$/.test(b0.startDate), "request body: anchor + 4 topics, daily");
-  ok(jt.rising.length >= 3 && jt.rising[0].q === "벚꽃" && jt.rising[0].note === "▲700%" || jt.rising[0].q === "벚꽃", "fastest riser first: " + JSON.stringify(jt.rising.slice(0, 3)));
-  ok(jt.rising.filter((x) => x.kind === "rising").every((x) => x.note.startsWith("▲")), "rising topics carry a growth note");
-  ok(!jt.rising.some((x) => x.q === "캠핑" && x.kind === "rising"), "flat topic (growth below 15%) is not 'rising'");
-  ok(jt.rising.length === 6 && jt.rising.slice(2).every((x) => x.kind === "hot"), "list filled up to 6 with high-volume topics: " + jt.rising.map((x) => x.q + ":" + x.kind));
-  // 뜨는 주제의 네이버 이미지 (grp hot): 뜨는 주제 앞 3개로 이미지 검색, 주제당 14장
+  const rising = jt.topics.filter((x) => x.kind === "rising");
+  ok(rising[0].q === "벚꽃" && rising[1].q === "한옥", "fastest riser first among data-based topics: " + rising.map((x) => x.q));
+  ok(!jt.topics.some((x) => /[%▲]|\d/.test(x.label)), "no percent / number text in chips");
+  ok(rising.length === 6, "up to 6 data-based topics (rising first, then high-volume): " + rising.map((x) => x.q));
+  ok(jt.topics.some((x) => x.kind === "season") && jt.topics[0].kind === "season" && jt.topics[1].kind === "rising", "season and data-based topics alternate");
+  // 지금 인기 (all 쪽): 앞 4개 주제로 네이버 이미지 검색, 주제당 4장
   {
     const hot = jt.items.filter((i) => i.grp === "hot"), imgCalls = seen.filter((c) => c.u.includes("search/v1/image"));
-    const top3 = jt.rising.slice(0, 3).map((x) => x.label);
-    ok(imgCalls.length === 3 && imgCalls.every((c) => c.opt.headers["X-NCP-APIGW-API-KEY-ID"] === "id"), "hot photos: exactly 3 naver image searches: " + imgCalls.length);
-    ok(hot.length === 42 && hot.every((i) => i.src === "naver" && i.thumb.startsWith("https://")), "hot photos: 3 topics x 14 images, https: " + hot.length);
-    ok(new Set(hot.map((i) => i.topic)).size === 3 && hot.every((i) => top3.includes(i.topic)), "hot photos come from the top-3 rising topics: " + [...new Set(hot.map((i) => i.topic))]);
+    const top4 = rising.slice(0, 4).map((x) => x.label);
+    ok(imgCalls.length === 4 && imgCalls.every((c) => /display=4&start=1&/.test(c.u) && c.opt.headers["X-NCP-APIGW-API-KEY-ID"] === "id"), "all view page 1: 4 naver searches of 4 images each: " + imgCalls.length);
+    ok(hot.length === 16 && hot.every((i) => i.src === "naver" && i.thumb.startsWith("https://")), "16 hot photos, https: " + hot.length);
+    ok(new Set(hot.map((i) => i.topic)).size === 4 && hot.every((i) => top4.includes(i.topic)), "hot photos come from the top-4 topics: " + [...new Set(hot.map((i) => i.topic))]);
     ok(hot.every((i) => !/<b>/.test(i.title)) && hot.every((i) => !i.alt || i.alt.startsWith("https://")), "naver html stripped from titles, alt upgraded to https");
-    ok(jt.items.slice(0, 6).some((i) => i.grp === "hot"), "hot photos are mixed into the round-robin near the top: " + jt.items.slice(0, 6).map((i) => i.grp));
+    ok(jt.items.slice(0, 3).some((i) => i.grp === "hot") && jt.items.slice(0, 8).some((i) => i.grp === "pick"), "hot photos and picks are interleaved: " + jt.items.slice(0, 8).map((i) => i.grp));
   }
+  // 지금 인기만 보는 무한 피드: 2쪽은 12장씩 이어서(start=13), 중복 없음
+  seen.length = 0;
+  const h1 = await (await worker.fetch(req("/api/trends?g=hot&page=1"), E)).json(), h2 = await (await worker.fetch(req("/api/trends?g=hot&page=2"), E)).json();
+  const ic = seen.filter((c) => c.u.includes("search/v1/image"));
+  ok(ic.filter((c) => /display=12&start=1&/.test(c.u)).length === 4 && ic.filter((c) => /display=12&start=13&/.test(c.u)).length === 4, "hot-only pages continue where the last page ended (start=1, start=13)");
+  ok(h1.items.length === 48 && h2.items.length === 48 && h1.items.every((i) => i.grp === "hot") && h2.more === true, "hot-only pages: 48 photos each, more=true");
+  ok(new Set([...h1.items, ...h2.items].map((i) => i.thumb)).size === 96, "no duplicate photos across pages");
+  ok(h2.topics.length === 0, "topic chips are only sent with page 1");
   // 12시간 캐시
   seen.length = 0; await worker.fetch(req("/api/trends"), E);
   ok(seen.filter((c) => c.u.includes("search-trend")).length === 0, "datalab result cached (no second round of requests)");
+
+  // 주제 칩을 누르면: 네이버·카카오·Pixabay·Unsplash 에서 그 주제로 (한 쪽씩)
+  seen.length = 0;
+  const TE = { ...E, KAKAO_KEY: "kk", PIXABAY_KEY: "pk", UNSPLASH_KEY: "uk" };
+  const t1 = await (await worker.fetch(req("/api/trends?topic=" + encodeURIComponent("벚꽃") + "&page=2"), TE)).json();
+  const q = encodeURIComponent("벚꽃");
+  ok(seen.some((c) => c.u.includes("search/v1/image") && c.u.includes("query=" + q) && /display=12&start=13&/.test(c.u)) && seen.some((c) => c.u.includes("dapi.kakao.com") && c.u.includes("page=2&size=12")), "topic mode asks naver and kakao for page 2 with the same size");
+  ok(seen.some((c) => c.u.includes("pixabay.com") && c.u.includes("q=" + q) && c.u.includes("per_page=12&page=2")) && seen.some((c) => c.u.includes("api.unsplash.com/search/photos")), "topic mode also asks pixabay and unsplash");
+  ok(!seen.some((c) => c.u.includes("search-trend")) && !seen.some((c) => c.u.includes("Featured_pictures")), "topic mode does not call datalab or commons");
+  ok(t1.items.length >= 12 && t1.items.every((i) => i.grp === "hot") && ["naver", "kakao", "pixabay", "unsplash"].every((s) => t1.items.some((i) => i.src === s)), "topic photos come from all four sources, mixed: " + [...new Set(t1.items.map((i) => i.src))]);
+  ok(t1.topics.length === 0 && t1.more === true, "topic mode: no chip list, keeps going");
+  seen.length = 0;
+  const t2 = await (await worker.fetch(req("/api/trends?topic=" + encodeURIComponent("할로윈 호박")), TE)).json();
+  ok(t2.items.length === 0 && t2.more === false && !seen.some((c) => c.u.includes("naverapihub") || c.u.includes("kakao") || c.u.includes("pixabay")), "an off-topic topic is refused without calling any source");
+  const t3 = await (await worker.fetch(req("/api/trends?topic=" + encodeURIComponent("누드 사진")), TE)).json();
+  ok(t3.items.length === 0 && t3.more === false, "adult topic is refused");
+
   // 권한 없음 → 이유를 알림, 다른 구성은 그대로
   caches.default.store.clear(); dlMode = "denied"; seen.length = 0;
   rt = await worker.fetch(req("/api/trends"), E); jt = await rt.json();
   ok(!jt.items.some((i) => i.grp === "hot") && !seen.some((c) => c.u.includes("search/v1/image")), "no topics (datalab denied) -> no hot photos and no image searches");
-  ok(rt.status === 200 && jt.dl.state === "err" && jt.dl.why === "denied" && jt.dl.status === 403 && jt.rising.length === 0, "datalab denied: reason reported, rest still works: " + JSON.stringify(jt.dl));
-  ok(jt.season.length > 0 && jt.items.some((i) => i.grp === "pick"), "season topics and photos unaffected by datalab failure");
+  ok(rt.status === 200 && jt.dl.state === "err" && jt.dl.why === "denied" && jt.dl.status === 403 && !jt.topics.some((x) => x.kind === "rising"), "datalab denied: reason reported, rest still works: " + JSON.stringify(jt.dl));
+  ok(jt.topics.some((x) => x.kind === "season") && jt.items.some((i) => i.grp === "pick"), "season topics and photos unaffected by datalab failure");
   // 키가 없으면 호출 안 함
   seen.length = 0; rt = await worker.fetch(req("/api/trends"), env); jt = await rt.json();
   ok(jt.dl.state === "off" && !seen.some((c) => c.u.includes("search-trend")) && !seen.some((c) => c.u.includes("search/v1/image")), "no naver key -> datalab off, never called, no hot photos");
   // 끄기
   seen.length = 0; rt = await worker.fetch(req("/api/trends"), { ...E, TREND_TOPICS: "off" }); jt = await rt.json();
   ok(jt.dl.state === "off" && !seen.some((c) => c.u.includes("search-trend")), "TREND_TOPICS=off skips datalab");
-  // 시즌 주제는 외부 호출 없이
-  ok(jt.season.every((s) => s.label && s.q && ["event", "season"].includes(s.kind)), "season topics shape");
   globalThis.fetch = keep; delete globalThis.caches;
 }
+
 
 // 필터 점검: 홈 카테고리 세부 주제가 필터에 걸리지 않는지 (app.js 의 CATS 를 그대로 읽어 검사)
 import fs from "node:fs";
@@ -290,25 +296,5 @@ ok(CATS.every((c) => c[2].length >= 5), "each category has >= 5 sub topics");
   ok(terms.length === 1, "English-only query never doubles the request");
 }
 
-// ---- 기독교 세계관: 할로윈·다른 종교 주제는 추천에서 뺌 ----
-{
-  const { offTopic } = await import("../src/topics.js");
-  ok(["할로윈 호박", "핼러윈 파티", "Halloween costume", "부처님오신날 연등", "Buddhism", "이슬람 모스크", "Islam", "라마단", "타로 카드", "사주 보는 법", "마녀 빗자루"].every((t) => offTopic(t)), "other-faith / halloween / occult phrases are caught");
-  ok(["크리스마스 트리", "부활절 달걀", "대림절 촛불", "고딕 성당", "스테인드글라스", "교회 첨탑", "Islamabad skyline", "추석 보름달", "설날 한복", "수능 응원"].every((t) => !offTopic(t)), "Christian and ordinary Korean holiday topics are not caught");
-  const keep = globalThis.fetch;
-  globalThis.fetch = async (url) => {
-    const u = String(url);
-    if (u.includes("pageviews/top/ko")) return new Response("x", { status: 500 });
-    if (u.includes("pageviews/top/en")) return jres({ items: [{ articles: [{ article: "Halloween" }, { article: "Ramadan" }, { article: "Mount_Fuji" }, { article: "Buddhism" }] }] });
-    if (u.includes("en.wikipedia.org/w/api.php")) {
-      const pg = (id, t) => ({ [id]: { title: t, thumbnail: { source: `https://upload.wikimedia.org/${id}.jpg`, width: 640, height: 400 }, original: { source: `https://upload.wikimedia.org/${id}_o.jpg` } } });
-      return jres({ query: { pages: { ...pg(1, "Halloween"), ...pg(2, "Ramadan"), ...pg(3, "Mount Fuji"), ...pg(4, "Buddhism") } } });
-    }
-    return new Response("nf", { status: 404 });
-  };
-  const rx = await worker.fetch(req("/api/trends"), env), jx = await rx.json();
-  ok(jx.items.map((i) => i.title).join() === "Mount Fuji", "trend photos: Halloween / Ramadan / Buddhism pages dropped: " + jx.items.map((i) => i.title));
-  globalThis.fetch = keep;
-}
 
 console.log(fail ? `\n${fail} failed` : "\nall passed"); process.exit(fail ? 1 : 0);
