@@ -80,7 +80,22 @@
     return rows[0]?.[0] || "";
   }
 
-  const api = { classify, bucket, shares, similarity, topColor };
+  // 살색에 가까운 픽셀의 비율(0~1). 브라우저 AI가 "선정적"이라고 한 이미지가 정말 피부가 많이 보이는 사진인지 확인하는 데 씁니다.
+  // (성경책 위에 놓인 손, 펼친 책, 나무색 배경처럼 AI가 잘못 짚기 쉬운 것은 살색 면적이 작거나 모양이 달라 걸러집니다.)
+  function skin(rgba) {
+    const n = rgba.length >> 2;
+    let sk = 0, tot = 0;
+    for (let i = 0; i < n; i++) {
+      if (rgba[i * 4 + 3] < 128) continue;
+      const r = rgba[i * 4], g = rgba[i * 4 + 1], b = rgba[i * 4 + 2];
+      tot++;
+      const y = 0.299 * r + 0.587 * g + 0.114 * b, cb = 128 - 0.168736 * r - 0.331264 * g + 0.5 * b, cr = 128 + 0.5 * r - 0.418688 * g - 0.081312 * b;
+      if (y > 50 && cb >= 77 && cb <= 127 && cr >= 133 && cr <= 173 && r > g && r > b) sk++;
+    }
+    return tot ? sk / tot : 0;
+  }
+
+  const api = { classify, bucket, shares, similarity, topColor, skin };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.ColorTools = api;
 })(typeof self !== "undefined" ? self : this);

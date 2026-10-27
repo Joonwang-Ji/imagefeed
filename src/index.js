@@ -1,4 +1,4 @@
-import { hardBlocked, isAdult } from "./filters.js";
+import { hardBlocked, isAdult, isExplicit, isNude, hasArtContext } from "./filters.js";
 
 const UA = "Mozilla/5.0 (compatible; ImageFeed/1.0; personal use)";
 const enc = encodeURIComponent;
@@ -364,6 +364,7 @@ async function caption(req, env) {
 // 위키백과(한국어·영어)에서 많이 본 문서의 대표 사진(grp "news")과, Pixabay·Unsplash 키가 있으면 인기 사진(grp "pop")을 섞어 돌려줍니다.
 // 나라를 고르는 대신 한국어·영어 두 곳만 씁니다. (다른 언어는 제목을 읽기 어려워서)
 const TREND_SKIP = /^(Main_Page|대문|Wikipedia|위키백과|Special|특수|Portal|포털|Help|도움말|Category|분류|File|파일)/;
+const fileName = (u) => { try { return decodeURIComponent(String(u).split("/").pop().replace(/\.\w+(?:\.png)?$/, "").replace(/^\d+px-/, "")).replace(/[_-]+/g, " "); } catch { return ""; } };
 const rr = (...lists) => { // 여러 목록을 번갈아 한 줄로 섞기
   const out = [];
   for (let i = 0; lists.some((l) => i < l.length); i++) for (const l of lists) if (i < l.length) out.push(l[i]);
@@ -380,7 +381,7 @@ async function wikiTrend(lang) {
       titles = arts
         .filter((a) => a.article && !TREND_SKIP.test(a.article))
         .map((a) => String(a.article).replace(/_/g, " "))
-        .filter((t) => !t.includes(":") && !t.includes("|") && !hardBlocked(t) && !isAdult(t))
+        .filter((t) => !t.includes(":") && !t.includes("|") && !hardBlocked(t) && !isExplicit(t) && !(isAdult(t) && !hasArtContext(t)))
         .slice(0, 40);
     } catch { continue; } // 아직 없는 날짜면 하루 전 것을 시도
     if (!titles.length) continue;
@@ -388,7 +389,7 @@ async function wikiTrend(lang) {
     let q;
     try {
       q = (await getJson(
-        `https://${lang}.wikipedia.org/w/api.php?action=query&format=json&prop=pageimages&piprop=thumbnail|original&pithumbsize=640&pilimit=50&redirects=1&titles=${enc(titles.join("|"))}`,
+        `https://${lang}.wikipedia.org/w/api.php?action=query&format=json&prop=pageimages|pageterms&wbptterms=description&piprop=thumbnail|original&pithumbsize=640&pilimit=50&redirects=1&titles=${enc(titles.join("|"))}`,
         {}, 3600)).query || {};
     } catch { continue; }
     const norm = new Map((q.normalized || []).map((n) => [n.from, n.to]));
@@ -404,6 +405,8 @@ async function wikiTrend(lang) {
           title: clean(p.title), thumb: p.thumbnail.source, full: big && /\.(jpe?g|png|webp)$/i.test(big) ? big : p.thumbnail.source,
           page: `https://${lang}.wikipedia.org/wiki/${enc(p.title.replace(/ /g, "_"))}`,
           w: num(p.thumbnail.width), h: num(p.thumbnail.height), tags: [], src: "wiki", grp: "news", adult: false,
+          // 제목만으로는 알 수 없는 내용(짧은 설명·사진 파일 이름)도 선정성 판단에 씁니다. 화면에는 보내지 않음.
+          ctx: [(p.terms?.description || []).join(" "), fileName(big || p.thumbnail.source)].join(" "),
         };
       });
     if (items.length) return { date: `${y}-${m}-${day}`, items };
@@ -438,9 +441,19 @@ async function trends(env) {
   const day = Math.floor(Date.now() / 86400000);
   const [ko, en, pop] = await Promise.all([wikiTrend("ko").catch(() => null), wikiTrend("en").catch(() => null), popularPhotos(env, day).catch(() => [])]);
   const seen = new Set();
+  // 트렌드는 훑어 올리다 놀라지 않게 더 엄격하게 거릅니다.
+  //  - 성행위·성기 표현이 제목·태그·짧은 설명·파일 이름에 있으면 미술·역사 자료라도 뺍니다.
+  //  - 나체 표현은 미술·역사 맥락(조각·그림·유물 등)이 있으면 남기되 블러, 맥락이 없으면 뺍니다.
+  const verdict = (it) => {
+    const t = `${it.title} ${it.tags.join(" ")} ${it.ctx || ""}`;
+    if (hardBlocked(t) || isExplicit(t)) return "drop";
+    if (isNude(t)) return hasArtContext(t) ? "blur" : "drop";
+    return isAdult(t) ? "blur" : "ok";
+  };
   const items = rr(ko?.items || [], en?.items || [], pop)
-    .filter((it) => it.thumb && it.full && !hardBlocked(`${it.title} ${it.tags.join(" ")}`))
-    .map((it) => ({ ...it, thumb: https(it.thumb), full: https(it.full), page: https(it.page || it.full), adult: it.adult || isAdult(`${it.title} ${it.tags.join(" ")}`) }))
+    .filter((it) => it.thumb && it.full)
+    .map((it) => ({ it, v: verdict(it) })).filter((x) => x.v !== "drop")
+    .map(({ it, v }) => { const { ctx, ...rest } = it; return { ...rest, thumb: https(it.thumb), full: https(it.full), page: https(it.page || it.full), adult: it.adult || v === "blur" }; })
     .filter((it) => (seen.has(it.thumb) ? false : seen.add(it.thumb)))
     .slice(0, 100);
   if (!items.length) return json({ error: "no data", items: [] }, 502);

@@ -50,6 +50,44 @@ ok(pops.length === 2 && pops.some((i) => i.src === "pixabay") && pops.some((i) =
 ok(!pops.some((i) => i.tags.includes("gore")), "hard-blocked tags dropped from pop");
 ok(j.items.slice(0, 3).map((i) => i.grp).join() === "news,news,pop", "round-robin mixes ko, en, pop: " + j.items.slice(0, 6).map((i) => i.grp));
 
+// 트렌드 선정성: 성행위·성기는 아예 제외, 나체는 미술·역사 맥락이면 블러로 남기고 아니면 제외
+{
+  const keep = globalThis.fetch; const asked = [];
+  const pg = (id, title, desc, file) => ({ [id]: { title, terms: { description: desc ? [desc] : [] }, thumbnail: { source: `https://upload.wikimedia.org/thumb/${file}`, width: 600, height: 400 }, original: { source: `https://upload.wikimedia.org/orig/${file}` } } });
+  globalThis.fetch = async (url) => {
+    const u = String(url); asked.push(u);
+    if (u.includes("pageviews/top/ko")) return jres({ items: [{ articles: [
+      { article: "성행위" }, { article: "다비드상" }, { article: "카주라호" }, { article: "사진_속_나체" }, { article: "우키요에" }, { article: "오럴B" }, { article: "자위대" }, { article: "서울_야경" }, { article: "누드_사진" } ] }] });
+    if (u.includes("pageviews/top/en")) return jres({ items: [{ articles: [{ article: "Michelangelo" }] }] });
+    if (u.includes("ko.wikipedia.org/w/api.php")) {
+      // 제목이 이미 걸러졌다면 요청에 없어야 함
+      const t = decodeURIComponent(u.match(/titles=([^&]+)/)[1]).split("|");
+      if (t.some((x) => /성행위|누드/.test(x))) return jres({ error: "filtered titles leaked" }, 500);
+      return jres({ query: { pages: {
+        ...pg(1, "다비드상", "르네상스 시대의 나체 대리석 조각", "David.jpg"),
+        ...pg(2, "카주라호", "인도의 사원 유적", "Khajuraho_erotic_sculpture_couple.jpg"),
+        ...pg(3, "사진 속 나체", "사진 기법", "photo_naked_model.jpg"),
+        ...pg(4, "우키요에", "일본 목판화", "ukiyoe_shunga_scroll.jpg"),
+        ...pg(5, "오럴B", "칫솔 브랜드", "oralb.jpg"),
+        ...pg(6, "자위대", "일본의 군대", "jsdf.jpg"),
+        ...pg(7, "서울 야경", "대한민국의 수도", "seoul.jpg"),
+      } } });
+    }
+    if (u.includes("en.wikipedia.org/w/api.php")) return jres({ query: { pages: { ...pg(8, "Michelangelo", "Italian sculptor and painter", "Michelangelo.jpg") } } });
+    return new Response("nf", { status: 404 });
+  };
+  const rr2 = await worker.fetch(req("/api/trends"), env), jj = await rr2.json(); globalThis.fetch = keep;
+  const byT = Object.fromEntries(jj.items.map((i) => [i.title, i]));
+  ok(!byT["카주라호"], "explicit word in the photo file name (erotic) -> dropped even though it is an art/heritage page");
+  ok(!byT["우키요에"], "shunga file name -> dropped even in an art context");
+  ok(!byT["사진 속 나체"], "nudity without art context -> dropped");
+  ok(byT["다비드상"] && byT["다비드상"].adult === true, "nude marble sculpture (art context) stays, but blurred");
+  ok(byT["오럴B"] && byT["자위대"] && byT["서울 야경"] && byT["Michelangelo"], "normal pages (toothbrush brand, Self-Defense Forces, city view, artist) are not caught");
+  ok(["오럴B", "자위대", "서울 야경", "Michelangelo"].every((t) => byT[t].adult === false), "normal pages are not blurred");
+  ok(!asked.some((c) => /%EC%84%B1%ED%96%89%EC%9C%84|%EB%88%84%EB%93%9C/.test(c)), "explicit and nude-titled pages are never requested");
+  ok(jj.items.every((i) => !("ctx" in i)), "internal context text is not sent to the browser");
+}
+
 // 모든 소스 실패 → 502
 const saved = globalThis.fetch; globalThis.fetch = async () => new Response("x", { status: 500 });
 r = await worker.fetch(req("/api/trends"), env); ok(r.status === 502, "502 when nothing available");

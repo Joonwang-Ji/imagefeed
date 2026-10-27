@@ -43,7 +43,7 @@ trendsPayload = { date: "2026-10-24", items: [
   { ...mk(1, "wiki", [], "손흥민"), grp: "news" }, { ...mk(2, "wiki", [], "Mount Fuji"), grp: "news" }, { ...mk(3, "wiki", [], "서울 야경"), grp: "news" },
   { ...mk(4, "pixabay", ["lake"], ""), grp: "pop" }, { ...mk(5, "pixabay", ["tree"], ""), grp: "pop" } ] };
 
-run(fs.readFileSync(ROOT + "color.js", "utf8").replace(/^"use strict";/, "")); run(fs.readFileSync(ROOT + "relevance.js", "utf8").replace(/^"use strict";/, ""));
+run(fs.readFileSync(ROOT + "color.js", "utf8").replace(/^"use strict";/, "")); run(fs.readFileSync(ROOT + "relevance.js", "utf8").replace(/^"use strict";/, "")); run(fs.readFileSync(ROOT + "safety.js", "utf8").replace(/^"use strict";/, ""));
 vm.runInContext(fs.readFileSync(ROOT + "app.js", "utf8"), ctx);
 await tick(150);
 const $ = (s) => w.document.querySelector(s), $$ = (s) => [...w.document.querySelectorAll(s)];

@@ -40,7 +40,7 @@ w.fetch = async (url) => {
   if (u.startsWith("/api/img")) return res({});
   return { ok: false, status: 404, json: async () => ({}) };
 };
-run(fs.readFileSync(ROOT + "color.js", "utf8").replace(/^"use strict";/, "")); run(fs.readFileSync(ROOT + "relevance.js", "utf8").replace(/^"use strict";/, ""));
+run(fs.readFileSync(ROOT + "color.js", "utf8").replace(/^"use strict";/, "")); run(fs.readFileSync(ROOT + "relevance.js", "utf8").replace(/^"use strict";/, "")); run(fs.readFileSync(ROOT + "safety.js", "utf8").replace(/^"use strict";/, ""));
 vm.runInContext(fs.readFileSync(ROOT + "app.js", "utf8"), ctx);
 await tick(150);
 const $ = (s) => w.document.querySelector(s), $$ = (s) => [...w.document.querySelectorAll(s)];
@@ -162,6 +162,61 @@ ok($("#more").hidden, "home hides the 더 보기 area");
 run('startSearch("cat")'); await tick(1500); ok(!$("#more").hidden, "search shows it again");
 $("#tabTr").click(); await tick(50); ok($("#more").hidden, "trends tab hides it");
 $("#tabFeed").click(); await tick(50); ok(!$("#more").hidden, "returning to the feed brings it back");
+
+// ======== 8) 패턴 가을: 한 소스(네이버)가 화면을 독차지하지 않는다 ========
+imgOk();
+{
+  const Qp = "패턴 가을";
+  const nav = (p) => p > 5 ? [] : Array.from({ length: 40 }, (_, i) => item("naver", (p - 1) * 40 + i, { title: `가을 패턴 배경 ${p}-${i}` }));
+  const pix = (p) => p > 3 ? [] : Array.from({ length: 40 }, (_, i) => item("pixabay", (p - 1) * 40 + i, { tags: ["autumn", "pattern", "leaves"] }));
+  const uns = (p) => p > 3 ? [] : Array.from({ length: 30 }, (_, i) => item("unsplash", (p - 1) * 30 + i, { title: "orange leaves in autumn", tags: ["autumn", "leaf"] }));
+  const wik = (p) => p > 2 ? [] : Array.from({ length: 25 }, (_, i) => item("wikimedia", (p - 1) * 25 + i, { title: `Autumn leaf pattern ${i}` }));
+  scenario = { tr: { [Qp]: { t: "autumn pattern" } }, data: { [Qp]: { naver: nav, pixabay: pix, unsplash: uns, wikimedia: wik } } };
+  delay = {}; calls.length = 0; run(`startSearch(${JSON.stringify(Qp)})`); await tick(1500);
+  const by = {}; for (const s of srcs()) by[s] = (by[s] || 0) + 1;
+  const total = srcs().length, most = Math.max(...Object.values(by));
+  ok(total === 60, "first view is 60 cards: " + total);
+  ok(most <= Math.ceil(total * 0.35), "with four sources no single one takes more than 35% of the first view: " + JSON.stringify(by));
+  ok(Object.keys(by).length === 4, "all four sources are visible in the first view: " + JSON.stringify(by));
+  ok(by.naver >= 15, "naver (strong Korean matches) is still well represented: " + by.naver);
+  // 한 소스만 결과가 있을 때는 상한 없이 그대로 채움
+  scenario.data[Qp] = { naver: nav };
+  run(`startSearch(${JSON.stringify(Qp)})`); await tick(1500); await scrollDown(3);
+  ok($$("#grid .card").length === 60, "when only one source has results it still fills the view: " + $$("#grid .card").length);
+}
+
+// ======== 9) 느린 소스가 있어도 4초 뒤에는 이미 받은 이미지로 화면을 채운다 ========
+{
+  const Qs = "가을 낙엽 길";
+  scenario = { tr: { [Qs]: { t: "autumn leaves road" } }, data: { [Qs]: {
+    naver: () => Array.from({ length: 40 }, (_, i) => item("naver", i, { title: `가을 낙엽 길 ${i}` })),
+    pixabay: () => Array.from({ length: 40 }, (_, i) => item("pixabay", i, { tags: ["autumn", "leaves", "road"] })),
+    wikimedia: () => Array.from({ length: 10 }, (_, i) => item("wikimedia", i, { title: `Autumn leaves road ${i}` })),
+  } } };
+  delay = { wikimedia: 6500 };
+  run(`startSearch(${JSON.stringify(Qs)})`); await tick(1500);
+  ok($$("#grid .card").length === 12, "right after the fast sources answer only the first screenful (12) is shown: " + $$("#grid .card").length);
+  await tick(3200);
+  ok($$("#grid .card").length > 12, "after ~4 s the slow source no longer holds the rest back: " + $$("#grid .card").length);
+  await tick(2600);
+  ok(run("[...M.pend.values()].some((e) => e.it.src === 'wikimedia')"), "the slow source's results still arrive (waiting for [더 보기], cards already shown never move)");
+  delay = {};
+}
+
+// ======== 10) 막다른 상태가 없다: 이미지가 열리기를 기다리는 중에도 [더 보기]가 나오고, 누르면 이어 불러온다 ========
+{
+  const Qk = "겨울 눈 풍경";
+  run("for (const k in IMGH) delete IMGH[k]"); // 이미지가 한 장도 열리지 않은 상태를 흉내 (테스트에서는 이미지가 실제로 열리지 않음)
+  scenario = { tr: {}, data: { [Qk]: { naver: (p) => p > 3 ? [] : Array.from({ length: 40 }, (_, i) => item("naver", (p - 1) * 40 + i, { title: `겨울 눈 풍경 ${p}-${i}` })) } } };
+  calls.length = 0; run(`startSearch(${JSON.stringify(Qk)})`); await tick(1500);
+  await run("M.next()"); await tick(100);
+  ok(calls.filter((c) => /src=naver/.test(c)).length === 1, "while the images are still opening, the next page is not requested yet");
+  ok(!$("#more .mbtn").hidden, "a [더 보기] button is available even though the feed is waiting");
+  ok(/열리는 중/.test($("#more .mnote").textContent), "with an explanation: " + $("#more .mnote").textContent);
+  $("#more .mbtn").click(); await tick(1200);
+  ok(calls.filter((c) => /src=naver/.test(c)).length >= 2, "pressing it loads the next page without waiting");
+  imgOk();
+}
 
 ok(errors.length === 0, "no script errors" + (errors.length ? ": " + errors.slice(0, 3).join(" ; ") : ""));
 console.log(fail ? `\n${fail} failed` : "\nall passed"); process.exit(fail ? 1 : 0);

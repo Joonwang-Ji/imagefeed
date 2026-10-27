@@ -29,6 +29,7 @@ const SAFE = new RegExp([
   "장노출|단노출|과노출|저노출",
   "고어\\s?텍스",
   "에로스|에로우",
+  "오럴\\s?-?b",
   "nude\\s+(?:colou?rs?|tones?|shades?|palettes?|lipsticks?|makeup|nails?|pink|beige|dress|heels?|aesthetic)",
   "naked\\s+(?:eyes?|singularity|mole\\s+rat)",
 ].join("|"), "gi");
@@ -36,7 +37,30 @@ const neutral = (s) => String(s ?? "").replace(SAFE, " ");
 
 const build = (ko, en) => new RegExp(`(${ko.join("|")})|\\b(${en.join("|")})`, "i");
 const hardRe = build(KO_HARD, EN_HARD);
+
+// 성행위·성기 같은 노골적인 표현. 트렌드에서는 이런 항목을 아예 빼고, 검색에서는 블러 처리합니다.
+// ("형성기"·"생성기"처럼 글자가 붙은 말이 걸리지 않도록 한글은 앞뒤를 확인하고, 영어는 단어 단위로 봅니다.)
+const KO_EXPLICIT = [
+  "성행위", "성관계", "성교(?!육)", "음경", "음부", "음순", "음낭", "고환", "페니스", "자위(?!대|권|적|단|군)", "오르가슴", "오럴", "정액(?![제권])",
+  "성폭행", "성폭력", "강간", "성매매", "매춘", "윤락", "성인물", "야설", "근친상간",
+  "(?<![가-힣])성기(?:[은는이가을를의에도와과로]|(?![가-힣]))",
+  "카마수트라", "슌가", "춘화",
+];
+const EN_EXPLICIT = [
+  "sex", "sexual\\w*", "intercourse", "penis", "penile", "vagina\\w*", "vulva", "genital\\w*", "phall\\w*", "testicle\\w*", "scrotum", "anus", "anal\\s+sex",
+  "clitor\\w*", "masturbat\\w*", "orgasm\\w*", "orgy", "ejaculat\\w*", "fellatio", "cunnilingus", "oral\\s+sex", "kama\\s?sutra", "shunga",
+  "erotic\\w*", "porn\\w*", "dildo", "rape[ds]?", "incest\\w*", "prostitut\\w*", "brothel\\w*", "sex\\s*(?:toy|tape|scene|slave)",
+];
+const explicitRe = new RegExp(`(${KO_EXPLICIT.join("|")})|\\b(?:${EN_EXPLICIT.join("|")})\\b`, "i");
+// 나체 표현(누드·알몸). 미술·역사 작품이면 트렌드에서도 블러로 남기고, 아니면 뺍니다.
+const nudeRe = new RegExp("(누드|나체|알몸|벌거벗)|\\b(?:nude|nudes|nudity|naked|topless)\\b", "i");
+// 미술·역사 맥락(작품·유적·박물관 등): 이런 설명이 붙은 나체는 정상적인 미술·역사 자료로 보고 블러만 합니다.
+const artRe = new RegExp("(그림|회화|조각|석상|벽화|부조|사원|사찰|신전|박물관|미술|예술|유물|고대|르네상스|바로크|신화|왕조|세기|도자|유화|판화|목판|동상)|" +
+  "(paint\\w*|sculpt\\w*|statue\\w*|fresco\\w*|mural\\w*|relief|temple|museum|galler(?:y|ies)|artwork|\\bart\\b|artist|renaissance|baroque|ancient|antique|classical|mytholog\\w*|century|dynasty|woodblock|ukiyo|engraving|etching|manuscript|vase|pottery|mosaic|marble|bronze|archaeolog\\w*|monument)", "i");
 const adultRe = build(KO_ADULT, EN_ADULT);
 
 export const hardBlocked = (s = "") => hardRe.test(neutral(s));
-export const isAdult = (s = "") => adultRe.test(neutral(s));
+export const isExplicit = (s = "") => explicitRe.test(neutral(s));
+export const isNude = (s = "") => nudeRe.test(neutral(s));
+export const hasArtContext = (s = "") => artRe.test(String(s ?? ""));
+export const isAdult = (s = "") => { const t = neutral(s); return adultRe.test(t) || explicitRe.test(t); };
