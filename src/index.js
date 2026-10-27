@@ -469,7 +469,7 @@ async function featuredPicks(day) {
 // ---- 요즘 뜨는 주제: 네이버 데이터랩 검색어트렌드 ----
 // 후보 단어(topics.js)를 4개씩 묶어(+기준 단어) 요청하고, 최근 7일 평균이 그 앞 3주 평균보다 얼마나 늘었는지로 "뜨는 주제"를 가립니다.
 // 데이터랩은 비율(상대값)만 주므로 기준 단어 대비 검색량이 너무 적은 말은 뺍니다. 결과는 12시간 캐시.
-// 네이버 키(NAVER_ID/SECRET)가 있어야 하고, API HUB 에서 "검색어트렌드" 상품을 쓸 수 있어야 합니다. 안 되면 state 가 "err" 로 와서 화면에 이유를 알립니다.
+// 네이버 키(NAVER_TREND_ID/SECRET, 없으면 NAVER_ID/SECRET)가 있어야 하고, API HUB 에서 "검색어트렌드" 상품을 쓸 수 있어야 합니다. 안 되면 state 가 "err" 로 와서 화면에 이유를 알립니다.
 const kstDate = (ms) => new Date(ms + 9 * 3600000).toISOString().slice(0, 10);
 const avg = (a) => (a.length ? a.reduce((t, x) => t + x, 0) / a.length : 0);
 function datalabEndpoint(env) {
@@ -477,11 +477,13 @@ function datalabEndpoint(env) {
   return (env.NAVER_BASE || "").includes("openapi.naver.com") ? "https://openapi.naver.com/v1/datalab/search" : "https://naverapihub.apigw.ntruss.com/search-trend/v1/search";
 }
 async function datalabTopics(env, now) {
-  if (!(env.NAVER_ID && env.NAVER_SECRET) || env.TREND_TOPICS === "off") return { state: "off", list: [] };
+  // 트렌드는 별도 애플리케이션 키(NAVER_TREND_ID/SECRET)를 먼저 쓰고, 없으면 이미지 검색 키(NAVER_ID/SECRET)를 씁니다.
+  const tid = env.NAVER_TREND_ID || env.NAVER_ID, tsec = env.NAVER_TREND_SECRET || env.NAVER_SECRET;
+  if (!(tid && tsec) || env.TREND_TOPICS === "off") return { state: "off", list: [] };
   const key = new Request(`https://cache.local/dl3?h=${Math.floor(now / 43200000)}`);
   try { const hit = await caches.default.match(key); if (hit) return await hit.json(); } catch { /* 캐시가 없으면 새로 물어봄 */ }
   const url = datalabEndpoint(env), legacy = url.includes("openapi.naver.com");
-  const headers = { "content-type": "application/json", "user-agent": UA, ...(legacy ? { "X-Naver-Client-Id": env.NAVER_ID, "X-Naver-Client-Secret": env.NAVER_SECRET } : { "X-NCP-APIGW-API-KEY-ID": env.NAVER_ID, "X-NCP-APIGW-API-KEY": env.NAVER_SECRET }) };
+  const headers = { "content-type": "application/json", "user-agent": UA, ...(legacy ? { "X-Naver-Client-Id": tid, "X-Naver-Client-Secret": tsec } : { "X-NCP-APIGW-API-KEY-ID": tid, "X-NCP-APIGW-API-KEY": tsec }) };
   const startDate = kstDate(now - 28 * 86400000), endDate = kstDate(now - 86400000);
   const chunks = []; for (let i = 0; i < TOPIC_POOL.length; i += 4) chunks.push(TOPIC_POOL.slice(i, i + 4));
   const rs = await Promise.allSettled(chunks.map(async (c) => {

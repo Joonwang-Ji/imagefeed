@@ -9,6 +9,7 @@
 ## 10차에서 바뀐 것
 - **종교 주제 제외** (`src/topics.js` `OFF_TOPIC`/`offTopic()`): 시즌 행사(`src/season.js`에서 할로윈·부처님오신날 삭제 + 필터), 데이터랩 ‘뜨는 주제’, 트렌드 사진(제목·태그 검사)에서 제외. 클라이언트 `CATS`의 ‘사찰 풍경’→‘고궁 풍경’, ‘전통 사원’→‘아치 회랑’, ‘별자리 지도’→‘천체 지도’.
 - **네이버 트렌드** (`src/index.js` `hotPhotos`): 데이터랩에서 뜬 상위 3개 주제를 네이버 이미지로 검색해 주제당 14장, `grp: "hot"`, `topic` 이름표. 트렌드 탭에 ‘뜨는’ 분류 추가(추천에도 섞임). 취향 학습은 `hot` 제목에서 배우지 않음(`taste.js keysOf`).
+- **트렌드 전용 키**: `NAVER_TREND_ID`/`NAVER_TREND_SECRET`(Secret)이 있으면 데이터랩 호출에 우선 사용, 없으면 `NAVER_ID`/`SECRET`. 이미지 검색은 항상 `NAVER_ID`/`SECRET`.
 - **새로고침 버튼**: `.trhead` = [분류 알약(flex:1, 좁으면 가로 스크롤)] + [아이콘 버튼]. Playwright 375px 캡처로 확인(버튼 오른쪽 끝 365/375, 가로 스크롤 없음, 다크·라이트).
 - **부분 검색**(`public/app.js` `CR`·`crBounds`·`crSeg`): 상자가 이미지 영역 안에서만 이동·크기 조절, 최소 7%. 모서리 손잡이 4개(손가락 32px 판정). 빈 곳을 끌면 새로 그리기도 유지. 후보 검색어는 선택 부분 AI 설명 조각만(`simCandidates(..., crop=true)`), 보정 UI `#vcw`(단어 칩 토글, 직접 입력, `simRetry`). **버그 수정**: 하단 [이 부분으로 찾기] 버튼이 뷰어 확대 처리(wrap)의 포인터 캡처에 가로채여 크롬에서 안 눌리던 문제(`.vcbar` pointerdown에서 stopPropagation).
 - **취향 칩 삭제**: `Taste.forget(kind, k)`; 칩은 `.tchip`(✕).

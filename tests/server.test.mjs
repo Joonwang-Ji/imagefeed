@@ -150,6 +150,17 @@ globalThis.fetch = saved;
   const dlCalls = seen.filter((c) => c.u.includes("search-trend/v1/search"));
   ok(jt.dl.state === "ok" && dlCalls.length === 10, "datalab asked in 10 chunks (40 topics, 4 + anchor each): " + dlCalls.length);
   ok(dlCalls.every((c) => c.opt.method === "POST" && c.opt.headers["X-NCP-APIGW-API-KEY-ID"] === "id" && c.opt.headers["X-NCP-APIGW-API-KEY"] === "sec"), "uses NAVER API HUB headers");
+  { // 트렌드 전용 키(NAVER_TREND_ID/SECRET)가 있으면 그 키로 트렌드를 부르고, 이미지 검색은 원래 키를 씁니다
+    caches.default.store.clear(); seen.length = 0;
+    const r2 = await worker.fetch(req("/api/trends"), { ...E, NAVER_TREND_ID: "tid", NAVER_TREND_SECRET: "tsec" }); const j2 = await r2.json();
+    const d2 = seen.filter((c) => c.u.includes("search-trend/v1/search")), im2 = seen.filter((c) => c.u.includes("/search/v1/image"));
+    ok(j2.dl.state === "ok" && d2.length === 10 && d2.every((c) => c.opt.headers["X-NCP-APIGW-API-KEY-ID"] === "tid" && c.opt.headers["X-NCP-APIGW-API-KEY"] === "tsec"), "separate trend key is used for datalab");
+    ok(im2.length >= 1 && im2.every((c) => c.opt.headers["X-NCP-APIGW-API-KEY-ID"] === "id"), "image search keeps using the image-search key");
+    caches.default.store.clear(); seen.length = 0;
+    const r3 = await worker.fetch(req("/api/trends"), { ...env, NAVER_TREND_ID: "tid", NAVER_TREND_SECRET: "tsec" }); const j3 = await r3.json();
+    ok(j3.dl.state === "ok", "trend key alone is enough for the rising topics (image search key not required)");
+    caches.default.store.clear(); seen.length = 0; await worker.fetch(req("/api/trends"), E);
+  }
   const b0 = JSON.parse(dlCalls[0].opt.body);
   ok(b0.timeUnit === "date" && b0.keywordGroups.length === 5 && b0.keywordGroups[0].groupName === "사진" && /^\d{4}-\d\d-\d\d$/.test(b0.startDate), "request body: anchor + 4 topics, daily");
   ok(jt.rising.length >= 3 && jt.rising[0].q === "벚꽃" && jt.rising[0].note === "▲700%" || jt.rising[0].q === "벚꽃", "fastest riser first: " + JSON.stringify(jt.rising.slice(0, 3)));
