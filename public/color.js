@@ -95,7 +95,77 @@
     return tot ? sk / tot : 0;
   }
 
-  const api = { classify, bucket, shares, similarity, topColor, skin };
+  // ---------- 톤(분위기) 분류 ----------
+  // 이미지 한 장을 "밝기·채도 분위기(tone)"와 "색 온도(temp)"로 나눕니다. (핀터레스트의 톤 검색처럼, 사진에서 톤만 뽑아 필터로 씀)
+  //  tone: mono(흑백·무채색) / dark(어두운) / vivid(선명한) / pastel(파스텔) / bright(밝은) / muted(차분한)
+  //  temp: warm(따뜻한) / cool(차가운) / neutral(중립)
+  const TONE_KO = { mono: "흑백", dark: "어두운", vivid: "비비드", pastel: "파스텔", bright: "밝은", muted: "차분한", warm: "따뜻한", cool: "차가운", neutral: "중립" };
+  function hsvOf(r, g, b) {
+    const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+    let h = 0;
+    if (d) {
+      if (mx === r) h = 60 * (((g - b) / d) % 6); else if (mx === g) h = 60 * ((b - r) / d + 2); else h = 60 * ((r - g) / d + 4);
+      if (h < 0) h += 360;
+    }
+    return [h, mx ? d / mx : 0, mx / 255];
+  }
+  function tone(rgba) {
+    const n = rgba.length >> 2;
+    let tot = 0, sumS = 0, sumV = 0, lowS = 0, hiS = 0, warm = 0, cool = 0;
+    for (let i = 0; i < n; i++) {
+      if (rgba[i * 4 + 3] < 128) continue;
+      const [h, s, v] = hsvOf(rgba[i * 4], rgba[i * 4 + 1], rgba[i * 4 + 2]);
+      tot++; sumS += s; sumV += v;
+      if (s < 0.1) lowS++;
+      if (s > 0.6) hiS++;
+      if (s >= 0.18 && v >= 0.2) { if (h < 70 || h >= 330) warm++; else if (h >= 165 && h < 285) cool++; }
+    }
+    if (!tot) return null;
+    const meanS = sumS / tot, meanV = sumV / tot, lowShare = lowS / tot, hiShare = hiS / tot;
+    let t;
+    if (lowShare >= 0.8) t = "mono";
+    else if (meanV < 0.33) t = "dark";
+    else if (meanS >= 0.5 && meanV >= 0.45 || hiShare > 0.4) t = "vivid";
+    else if (meanV >= 0.6 && meanS >= 0.1 && meanS < 0.42) t = "pastel";
+    else if (meanV >= 0.72) t = "bright";
+    else t = "muted";
+    const chroma = (warm + cool) / tot;
+    const temp = chroma < 0.15 ? "neutral" : warm > cool * 1.5 ? "warm" : cool > warm * 1.5 ? "cool" : "neutral";
+    return { tone: t, temp, v: +meanV.toFixed(2), s: +meanS.toFixed(2) };
+  }
+
+  // ---------- 팔레트 ----------
+  // 이미지에서 눈에 띄는 색 n 가지(실제 색값 hex + 12가지 색 이름 + 비율). 가운데·선명한 색에 더 큰 비중을 둡니다.
+  // 비슷한 색(RGB 거리 가까움)은 하나로 합칩니다.
+  const hex2 = (v) => Math.round(v).toString(16).padStart(2, "0");
+  function palette(rgba, w, h, n = 5) {
+    const px = rgba.length >> 2;
+    if (!px) return [];
+    if (!w || !h) { w = h = Math.round(Math.sqrt(px)); }
+    const bins = new Map(); let tot = 0;
+    for (let i = 0; i < px; i++) {
+      if (rgba[i * 4 + 3] < 128) continue;
+      const r = rgba[i * 4], g = rgba[i * 4 + 1], b = rgba[i * 4 + 2];
+      const x = ((i % w) + 0.5) / w - 0.5, y = (Math.floor(i / w) + 0.5) / h - 0.5;
+      const mx = Math.max(r, g, b), sat = mx ? (mx - Math.min(r, g, b)) / mx : 0;
+      const wt = (1 + 1.2 * Math.max(0, 1 - Math.hypot(x, y) / 0.5)) * (0.6 + sat);
+      const k = ((r >> 4) << 8) | ((g >> 4) << 4) | (b >> 4);
+      const e = bins.get(k) || { w: 0, r: 0, g: 0, b: 0 };
+      e.w += wt; e.r += r * wt; e.g += g * wt; e.b += b * wt; bins.set(k, e); tot += wt;
+    }
+    if (!tot) return [];
+    const rows = [...bins.values()].map((e) => ({ w: e.w, r: e.r / e.w, g: e.g / e.w, b: e.b / e.w })).sort((a, b) => b.w - a.w);
+    const out = [];
+    for (const c of rows) {
+      const hit = out.find((o) => Math.hypot(o.r - c.r, o.g - c.g, o.b - c.b) < 56);
+      if (hit) { const t = hit.w + c.w; hit.r = (hit.r * hit.w + c.r * c.w) / t; hit.g = (hit.g * hit.w + c.g * c.w) / t; hit.b = (hit.b * hit.w + c.b * c.w) / t; hit.w = t; }
+      else out.push({ ...c });
+    }
+    return out.sort((a, b) => b.w - a.w).slice(0, n)
+      .map((c) => ({ hex: "#" + hex2(c.r) + hex2(c.g) + hex2(c.b), name: bucket(c.r, c.g, c.b), share: +(c.w / tot).toFixed(3) }));
+  }
+
+  const api = { classify, bucket, shares, similarity, topColor, skin, tone, palette, TONE_KO };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.ColorTools = api;
 })(typeof self !== "undefined" ? self : this);

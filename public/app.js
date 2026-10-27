@@ -78,7 +78,19 @@ const S = {
   pass: LS.get("pass", ""), blur: LS.get("blur", true), ml: LS.get("ml", true), off: new Set(LS.get("off", [])), only: new Set(),
   color: "", orient: "", board: "__all", view: "feed", list: [], bmIds: new Set(),
   bmq: "", bmsort: LS.get("bmsort", "new"), offline: false, colorWide: LS.get("cw", false),
+  tone: "", bmTone: "", bmColor: "", priv: LS.get("priv", false), taste: LS.get("tasteOn", false),
 };
+// 취향 저장소(이 기기 안에서만): 비공개 모드이거나 설정에서 꺼져 있으면 쓰지도, 배우지도 않습니다.
+const Taste = TasteStore.create(LS);
+const tasteOn = () => S.taste && !S.priv;
+const toneMatch = (an, t) => !!an && (t === "warm" || t === "cool" ? an.temp === t : an.tone === t);
+const TONE_LIST = [["", "전체"], ["pastel", "파스텔"], ["vivid", "비비드"], ["bright", "밝은"], ["muted", "차분한"], ["dark", "어두운"], ["mono", "흑백"], ["warm", "따뜻한"], ["cool", "차가운"]];
+// 이미지 하나에서 취향을 배웁니다 (선정적인 이미지·비공개 모드·학습 꺼짐이면 아무것도 하지 않음)
+function learnFrom(it, w) {
+  if (!tasteOn() || !it || (it.adult && !it.safe)) return;
+  const a = it.an && it.an.tone ? it.an : null;
+  Taste.learn(TasteStore.keysOf(it), w, { colors: (a?.cols || it.cols || []).slice(0, 2), tone: a?.tone, temp: a?.temp });
+}
 let cfg = null;
 const srcName = (id) => cfg?.sources.find((s) => s.id === id)?.name || EXTRA_SRC[id] || id;
 document.body.classList.toggle("noblur", !S.blur);
@@ -121,13 +133,16 @@ const DB = {
 const updateCount = () => { $("#bmc").textContent = S.bmIds.size ? `(${S.bmIds.size})` : ""; };
 
 async function toggleBookmark(it) {
-  if (S.bmIds.has(it.id)) { await DB.del(it.id); S.bmIds.delete(it.id); toast("북마크에서 뺐어요"); }
+  if (S.priv) return toast("비공개 모드에서는 북마크를 쓸 수 없어요");
+  if (S.bmIds.has(it.id)) { await DB.del(it.id); S.bmIds.delete(it.id); toast("북마크에서 뺐어요"); learnFrom(it, -2); }
   else {
     let blob = it.blob;
     if (!blob) { try { blob = await fetchBlob(`/api/img?u=${enc(it.thumb)}`); } catch {} }
-    const ok = await DB.put({ id: it.id, title: it.title, thumb: it.thumb, alt: it.alt, full: it.full, page: it.page, src: it.src, w: it.w, h: it.h, tags: it.tags, adult: !!it.adult && !it.safe, adultSrc: it.safe ? "" : it.ai ? "ai" : it.adult ? "kw" : "", safe: !!it.safe, ts: Date.now(), blob });
+    let an = it.an && it.an.tone ? it.an : null;
+    if (!an && blob) { try { an = (await blobInfo(blob))?.an || null; if (an) it.an = an; } catch { /* 분석 없이 저장 */ } } // 톤·팔레트를 저장 때 한 번 분석해 둠
+    const ok = await DB.put({ an, id: it.id, title: it.title, thumb: it.thumb, alt: it.alt, full: it.full, page: it.page, src: it.src, w: it.w, h: it.h, tags: it.tags, adult: !!it.adult && !it.safe, adultSrc: it.safe ? "" : it.ai ? "ai" : it.adult ? "kw" : "", safe: !!it.safe, ts: Date.now(), blob });
     if (!ok) return toast("이 브라우저에서는 북마크를 저장할 수 없어요");
-    S.bmIds.add(it.id); toast("북마크에 담았어요");
+    S.bmIds.add(it.id); toast("북마크에 담았어요"); learnFrom(it, 3);
   }
   refreshStars(); updateCount();
   if (S.view === "bm" && $("#viewer").hidden) renderBm();
@@ -173,7 +188,7 @@ class Masonry {
 const feedM = new Masonry($("#grid"));
 const bmM = new Masonry($("#bmgrid"));
 const trM = new Masonry($("#trGrid"));
-let rzT; addEventListener("resize", () => { clearTimeout(rzT); rzT = setTimeout(() => { feedM.check(); bmM.check(); trM.check(); lv()?.m.check(); }, 200); });
+let rzT; addEventListener("resize", () => { clearTimeout(rzT); rzT = setTimeout(() => { feedM.check(); bmM.check(); trM.check(); lv()?.m.check(); if (typeof REC !== "undefined") REC.m?.check(); }, 200); });
 
 // ---------- 카드 ----------
 const io = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) { io.unobserve(e.target); loadCard(e.target); } }), { rootMargin: "800px 0px" });
@@ -203,8 +218,10 @@ function pixelInfo(img) {
     const N = 32, c = document.createElement("canvas"); c.width = c.height = N;
     const x = c.getContext("2d", { willReadFrequently: true });
     x.drawImage(img, 0, 0, N, N);
-    const d = x.getImageData(0, 0, N, N).data;
-    return { cols: window.ColorTools.classify(d, N, N), sh: window.ColorTools.shares(d, N, N) };
+    const d = x.getImageData(0, 0, N, N).data, CT = window.ColorTools, cols = CT.classify(d, N, N);
+    let an = null;
+    try { const t = CT.tone(d); if (t) an = { tone: t.tone, temp: t.temp, cols, pal: CT.palette(d, N, N, 5) }; } catch { /* 톤 없이 진행 */ }
+    return { cols, sh: CT.shares(d, N, N), an };
   } catch { return null; }
 }
 // 살색 비율 (선정성 판단 보조). 못 읽으면 null.
@@ -219,9 +236,9 @@ function skinOf(img) {
 // blob(작은 이미지)에서 색 정보만 뽑습니다. 화면에는 표시하지 않음.
 function blobInfo(blob) {
   return new Promise((res) => {
-    const u = URL.createObjectURL(blob), im = new Image();
-    im.onload = () => { const r = pixelInfo(im); URL.revokeObjectURL(u); res(r); };
-    im.onerror = () => { URL.revokeObjectURL(u); res(null); };
+    const u = URL.createObjectURL(blob), im = new Image(), t = setTimeout(() => { URL.revokeObjectURL(u); res(null); }, 6000);
+    im.onload = () => { clearTimeout(t); const r = pixelInfo(im); URL.revokeObjectURL(u); res(r); };
+    im.onerror = () => { clearTimeout(t); URL.revokeObjectURL(u); res(null); };
     im.src = u;
   });
 }
@@ -252,8 +269,8 @@ async function loadCard(el) {
   const needML = S.ml && (S.blur || inTr) && !it.adult && !it.safe && it.src !== "nasa" && (!it.fromBm || !!it.blob); // NASA(우주·과학 사진)는 검사 생략
   const inMain = !!el.closest("#grid");
   const simLevel = el.closest(".simlevel") ? V.stack.find((l) => l.wrap.contains(el)) : null;
-  const wantColor = !!S.color && inMain && !it.sc && !it.cols;
-  const wantSh = !!simLevel && !it.sh;
+  const wantColor = inMain && ((!!S.color && !it.sc && !it.cols) || (!!S.tone && !it.an)); // 색·톤 필터가 켜져 있으면 이미지에서 직접 분석
+  const wantSh = !!simLevel && (!it.sh || !it.an);
   // 색만 알면 되는 경우(색 필터)에는 작은 이미지(alt)로 분석해서 느린 원본 내려받기를 피합니다.
   const colorFromAlt = wantColor && !!it.alt && !it.blob && !needML;
   el.dataset.st = it.adult ? "flag" : needML && !it.fromBm ? "pending" : "ok"; // 북마크는 먼저 보여 주고 뒤에서 검사
@@ -277,8 +294,11 @@ async function loadCard(el) {
       it.w = img.naturalWidth; it.h = img.naturalHeight;
       el._r = clamp(it.w / it.h, 0.5, 2.2); el.style.aspectRatio = String(el._r);
     }
-    if (wantColor) { const inf = altInfo || (it.blob ? pixelInfo(img) : null); it.cols = inf?.cols || null; it.sh = inf?.sh || it.sh; }
-    if (wantSh && it.blob) { const inf = pixelInfo(img); if (inf?.sh) { it.sh = inf.sh; simRerankSoon(simLevel); } }
+    if (wantColor) { const inf = altInfo || (it.blob ? pixelInfo(img) : null); if (!it.cols || inf?.cols) it.cols = inf?.cols || null; it.sh = inf?.sh || it.sh; it.an = inf?.an || it.an; }
+    if (wantSh && it.blob) {
+      const inf = pixelInfo(img);
+      if (inf?.sh) { it.sh = inf.sh; it.an = inf.an || it.an; simRerankSoon(simLevel); if (simLevel.toneOnly) simLevel.m.recheck(el); }
+    }
     if (inMain) feedM.recheck(el); // 방향·색이 조건과 다르면 목록에서 뺌
     if (needML && it.blob) enqueueClassify(el, img, it);
   } catch (e) {
@@ -457,7 +477,9 @@ class Feed {
       const avg = known.length >= 8 ? known.reduce((t, p) => t + p.j.rel, 0) / known.length : 0.6;
       const scale = 0.6 + 0.4 * Math.min(1, avg / 0.6), bias = Relevance.bias(src.id, T, pinned);
       for (const { it, k, i, j } of part) {
-        const sc = src.w * bias * scale * Relevance.mul(j.tier) / (60 + base + i); // 소스 순위 × 소스 가중치 × 관련도 등급. 여러 소스에 나오면 점수가 합쳐짐
+        // 취향 학습을 켰을 때만: 이 기기의 취향 점수로 순서를 최대 ±50% 조정 (검색어·요청은 그대로, 받아 온 결과를 다시 줄 세울 뿐)
+        const aff = this.o.taste && tasteOn() && it.grp !== "news" ? Taste.affinity(TasteStore.keysOf(it)) : 0;
+        const sc = src.w * bias * scale * Relevance.mul(j.tier) / (60 + base + i) * (1 + 0.5 * aff); // 소스 순위 × 소스 가중치 × 관련도 등급. 여러 소스에 나오면 점수가 합쳐짐
         const ex = this.pend.get(k);
         if (ex) {
           ex.score += sc; if (j.rel > ex.rel) { ex.rel = j.rel; ex.tier = j.tier; }
@@ -542,7 +564,7 @@ function bindMore(box, f) { box.querySelector(".mbtn").onclick = () => f.more();
 
 // ---------- 메인 검색 ----------
 const M = new Feed(feedM, {
-  filters: true, chunk: 60, // 한 번에 60장씩 보여 주고 [더 보기]로 이어 봅니다
+  filters: true, taste: true, chunk: 60, // 한 번에 60장씩 보여 주고 [더 보기]로 이어 봅니다
   open: (f, it) => openViewer(f.items, f.items.indexOf(it)),
   onMore: () => renderMore($("#more"), M),
   onProgress: () => { renderStat(); renderChips(); },
@@ -558,9 +580,11 @@ const predOrient = () => !S.orient ? null : (c) => {
 };
 // 서버가 색을 맞춰 준 이미지(sc)와 아직 색을 모르는 이미지는 통과, 대표 색을 알게 되면 고른 색이 포함될 때만 남깁니다.
 const predColor = () => !S.color ? null : (c) => !c._it.cols || !!c._it.sc || c._it.cols.includes(S.color);
+// 톤: 아직 분석하지 못한 이미지는 통과, 분석되면 고른 톤일 때만 남깁니다.
+const predTone = () => !S.tone ? null : (c) => !c._it.an || !c._it.an.tone || toneMatch(c._it.an, S.tone);
 const feedPred = () => {
-  const po = predOrient(), pc = predColor();
-  return po || pc ? (c) => (!po || po(c)) && (!pc || pc(c)) : null;
+  const ps = [predOrient(), predColor(), predTone()].filter(Boolean);
+  return ps.length ? (c) => ps.every((f) => f(c)) : null;
 };
 // 필터로 카드가 빠지면 목록이 비거나 화면이 덜 찰 수 있으니 안내를 갱신하고 다음 페이지를 불러옵니다.
 let kickT;
@@ -629,7 +653,7 @@ function checkEmpty() {
   if (feedM.cards.length) { if (M.items.length) $("#msg").hidden = true; return; }
   if (M.items.length) { // 결과는 있었지만 화면에 남은 카드가 없음
     if (!M.sources().length && Object.keys(DEAD).length) showMsg("이미지가 열리지 않아 쉬고 있는 소스예요. 위의 [소스]에서 ⚠ 를 누르면 이유를, 소스 이름을 누르면 다시 시도해요.");
-    else if (M.ended) showMsg("방향·색상 조건에 맞는 이미지를 찾지 못했어요. 필터를 바꾸거나 다른 말로 검색해 보세요.");
+    else if (M.ended) showMsg("방향·색상·톤 조건에 맞는 이미지를 찾지 못했어요. 필터를 바꾸거나 다른 말로 검색해 보세요.");
     return;
   }
   if (M.pend.size) { $("#msg").hidden = true; return; } // 접어 둔 결과가 있음 → 아래 [관련도 낮은 결과 보기] 안내로 대신함
@@ -656,8 +680,12 @@ function renderHome(reshuffle) {
   if (!cat) {
     if (reshuffle || !HOME.picks.length) HOME.picks = shuffle(CATS).slice(0, 10);
     HOME.picks.forEach((c) => chip(`${c[0]} ${c[1]}`, "cat", () => { HOME.cat = c; renderHome(); }));
-    // 북마크가 있으면 내 취향 태그를 한두 개 섞어 줍니다
-    bmTopTags(6).then((tags) => { if (tok === HOME.tok && !HOME.cat) shuffle(tags).slice(0, 2).forEach((t) => chip(`⭐ ${t}`, "mine", () => startSearch(t))); });
+    // 비공개 모드가 아닐 때, 북마크·학습한 취향의 태그를 두세 개 섞어 줍니다
+    if (!S.priv) bmTopTags(6).then((tags) => {
+      if (tok !== HOME.tok || HOME.cat || S.priv) return;
+      const pool = [...new Set([...(tasteOn() ? Taste.top(8) : []), ...tags])];
+      shuffle(pool).slice(0, tasteOn() ? 3 : 2).forEach((t) => chip(`⭐ ${t}`, "mine", () => startSearch(t)));
+    });
   } else {
     chip(`‘${cat[1]}’ 전체 보기`, "cat", () => startSearch(cat[1]));
     cat[2].forEach((s) => chip(s, "", () => startSearch(s)));
@@ -670,7 +698,7 @@ function goHome() {
   if (S.offline) return;
   if (V.stack.length) closeViewer();
   M.reset(); feedM.clear(); feedM.pred = null; renderMore($("#more"), M);
-  S.color = ""; S.orient = ""; S.only.clear(); markFilters();
+  S.color = ""; S.orient = ""; S.tone = ""; S.only.clear(); markFilters();
   $("#q").value = ""; syncQ(); $("#q").blur(); $("#msg").hidden = true; $("#msg").textContent = ""; $("#filters").hidden = true; $("#srcPanel").hidden = true;
   HOME.cat = null;
   setView("feed"); renderChips(); renderStat(); renderHome(true); scrollTo(0, 0);
@@ -692,8 +720,9 @@ const syncQ = bindClear($("#q"), $("#qClear"));
 $("#exRand").onclick = () => { const c = pick(CATS); startSearch(pick(c[2])); };
 $("#exTrend").onclick = () => setView("tr");
 $("#exBm").onclick = async () => {
-  const top = await bmTopTags(8);
-  if (!top.length) { toast("북마크한 이미지에 태그가 아직 없어서 아무 주제로 찾아요"); const c = pick(CATS); return startSearch(pick(c[2])); }
+  if (S.priv) return;
+  const top = tasteOn() && !Taste.isEmpty() ? Taste.top(8) : await bmTopTags(8);
+  if (!top.length) { toast("북마크·취향 정보가 아직 없어서 아무 주제로 찾아요"); const c = pick(CATS); return startSearch(pick(c[2])); }
   startSearch(pick(top));
 };
 
@@ -705,33 +734,114 @@ function setView(v) {
   $("#srcBtn").hidden = v !== "feed"; $("#filterBtn").hidden = v !== "feed"; if (v !== "feed") { $("#filters").hidden = true; $("#srcPanel").hidden = true; }
   $("#home").hidden = !(v === "feed" && !M.q);
   if (v !== "feed") $("#more").hidden = true;
+  if (v !== "bm") recClose();
   if (v === "feed") { feedM.check(); renderChips(); const m = $("#msg"); m.hidden = !(M.q && !M.items.length && m.textContent); renderMore($("#more"), M); }
   else if (v === "tr") { $("#msg").hidden = true; renderChips(); trM.check(); loadTrends(); scrollTo(0, 0); }
 }
-async function showBm() { setView("bm"); await renderBm(); }
+async function showBm() {
+  if (S.priv) return toast("비공개 모드에서는 북마크를 볼 수 없어요");
+  setView("bm"); await renderBm();
+}
 // 북마크 목록 그리기: 보드 · 검색어 · 정렬을 적용합니다. (검색어는 저장하지 않고 이 화면에만 둡니다)
 async function renderBm() {
   // 키워드로 걸린 선정성(adultSrc "kw")만 저장된 값을 따르고, AI가 걸었던 것은 지금 기준으로 다시 검사합니다. (예전 기준의 오탐이 북마크에 남지 않게)
   const all = (await DB.all()).map((x) => ({ ...x, fromBm: true, tags: x.tags || [], adult: !x.safe && x.adultSrc === "kw" }));
   renderBoardChips(all);
+  renderBmFil(all);
   const q = (S.bmq || "").trim().toLowerCase();
   let shown = all.filter((x) => S.board === "__all" || (x.board || "") === S.board);
+  S.boardItems = S.board !== "__all" && S.board !== "" ? shown : [];
+  $("#bmrecRow").hidden = S.boardItems.length < 2;
+  if ($("#bmrecRow").hidden) recClose();
+  if (S.bmTone) shown = shown.filter((x) => x.an?.tone && toneMatch(x.an, S.bmTone));
+  if (S.bmColor) shown = shown.filter((x) => (x.an?.cols || []).includes(S.bmColor));
   if (q) shown = shown.filter((x) => [x.title, srcName(x.src), x.board, x.note, ...x.tags].join(" ").toLowerCase().includes(q));
   const by = S.bmsort;
   shown.sort(by === "old" ? (a, b) => a.ts - b.ts : by === "title" ? (a, b) => String(a.title || srcName(a.src)).localeCompare(String(b.title || srcName(b.src)), "ko") : (a, b) => b.ts - a.ts);
   S.list = shown; bmM.clear();
-  if (!shown.length) { showMsg(!all.length ? "아직 북마크가 없어요. 이미지의 ☆ 를 눌러 담아 보세요." : q ? "찾는 북마크가 없어요. 다른 말로 검색해 보세요." : "이 보드는 비어 있어요."); return; }
+  backfillAn(all);
+  if (!shown.length) { showMsg(!all.length ? "아직 북마크가 없어요. 이미지의 ☆ 를 눌러 담아 보세요." : S.bmTone || S.bmColor ? "이 톤·색의 북마크가 없어요. (아직 분석 중인 북마크는 잠시 뒤 나타나요)" : q ? "찾는 북마크가 없어요. 다른 말로 검색해 보세요." : "이 보드는 비어 있어요."); return; }
   $("#msg").hidden = true;
   bmM.add(shown.map((it) => makeCard(it, () => openViewer(S.list, S.list.indexOf(it)))));
 }
 let bmT; $("#bmq").oninput = (e) => { S.bmq = e.target.value; clearTimeout(bmT); bmT = setTimeout(renderBm, 200); };
 bindClear($("#bmq"), $("#bmClear"), () => { S.bmq = ""; renderBm(); });
 $("#bmsort").value = S.bmsort; $("#bmsort").onchange = (e) => { S.bmsort = e.target.value; LS.set("bmsort", S.bmsort); renderBm(); };
+// 북마크 톤·색 분석: 저장할 때 분석하지만, 예전에 저장한 북마크는 이 화면을 열 때 뒤에서 조금씩 분석해 둡니다 (결과는 북마크 안에만 저장)
+let backfilling = false;
+async function backfillAn(all) {
+  if (backfilling || !all.some((x) => !x.an && x.blob)) return;
+  backfilling = true;
+  try {
+    const raw = await DB.all(); let n = 0;
+    for (const r of raw) {
+      if (r.an || !r.blob) continue;
+      if (n >= 30 || S.view !== "bm") break;
+      const inf = await blobInfo(r.blob); n++;
+      r.an = inf?.an || { none: true }; await DB.put(r);
+    }
+    if (n && S.view === "bm" && $("#viewer").hidden) { backfilling = false; renderBm(); }
+  } finally { backfilling = false; }
+}
+// 북마크의 톤·색 필터 칩 (분석된 북마크에 있는 톤·색만 보여 줌)
+function renderBmFil(all) {
+  const box = $("#bmfil"); box.textContent = "";
+  const pool = all.filter((x) => (S.board === "__all" || (x.board || "") === S.board) && x.an?.tone);
+  const tones = new Map(), cols = new Map();
+  for (const x of pool) { tones.set(x.an.tone, (tones.get(x.an.tone) || 0) + 1); if (x.an.temp !== "neutral") tones.set(x.an.temp, (tones.get(x.an.temp) || 0) + 1); for (const c of (x.an.cols || []).slice(0, 3)) cols.set(c, (cols.get(c) || 0) + 1); }
+  if (S.bmTone && !tones.has(S.bmTone)) S.bmTone = "";
+  if (S.bmColor && !cols.has(S.bmColor)) S.bmColor = "";
+  box.hidden = pool.length < 3;
+  if (box.hidden) return;
+  const mk = (label, on, fn, cls) => { const b = document.createElement("button"); b.type = "button"; b.textContent = label; if (cls) b.className = cls; if (on) b.classList.add("on"); b.onclick = fn; box.appendChild(b); return b; };
+  TONE_LIST.slice(1).filter(([v]) => tones.has(v)).forEach(([v, l]) => mk(`${l} ${tones.get(v)}`, S.bmTone === v, () => { S.bmTone = S.bmTone === v ? "" : v; renderBm(); }));
+  [...cols.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).forEach(([c]) => { const b = mk("", S.bmColor === c, () => { S.bmColor = S.bmColor === c ? "" : c; renderBm(); }, "dot"); b.style.background = COLORS[c] || "#888"; b.setAttribute("aria-label", KO_COLOR[c] || c); });
+}
+
+// ----- 보드에 어울리는 이미지: 이 보드 북마크의 태그로 새 이미지를 찾아 보여 줍니다 (검색어는 저장하지 않음) -----
+const REC = { on: false, feed: null, m: null, cands: [], ci: 0 };
+const rio = new IntersectionObserver((es) => { if (REC.on && es.some((e) => e.isIntersecting)) REC.feed?.next(); }, { rootMargin: "1200px 0px" });
+function boardQueries(items) {
+  const cnt = new Map();
+  for (const x of items) for (const t of new Set([...(x.tags || []).map((v) => String(v).toLowerCase().trim()), ...tokens(x.title || "")])) if (t.length > 1) cnt.set(t, (cnt.get(t) || 0) + 1);
+  const top = [...cnt.entries()].sort((a, b) => b[1] - a[1]).map(([t]) => t).slice(0, 4);
+  const c = []; if (top.length > 1) c.push(top.slice(0, 2).join(" ")); if (top.length) c.push(top[0]); if (top.length > 2) c.push(top.slice(1, 3).join(" "));
+  return [...new Set(c)];
+}
+function recStart(ci) {
+  const f = REC.feed, q = REC.cands[ci]; REC.ci = ci;
+  REC.m.clear(); f.reset(); $("#bmrecMsg").hidden = true;
+  if (!q) { $("#bmrecMsg").textContent = "이 보드에서 찾을 단서(태그·제목)가 없어요."; $("#bmrecMsg").hidden = false; return; }
+  $("#bmrecq").textContent = `‘${q}’ 기준`;
+  for (const x of S.boardItems) f.keys.set(keyOf(x), x); // 이미 담은 이미지는 제외
+  f.begin(q); renderMore($("#bmrecMore"), f); f.next();
+}
+function openBoardRec() {
+  if (!cfg || S.offline || S.priv || S.boardItems.length < 2) return;
+  if (!REC.feed) {
+    REC.m = new Masonry($("#bmrecGrid"));
+    REC.feed = new Feed(REC.m, {
+      filters: false, chunk: 30, fold: false,
+      open: (f, it) => openViewer(f.items, f.items.indexOf(it)),
+      onMore: () => renderMore($("#bmrecMore"), REC.feed),
+      onAfter: () => { const f = REC.feed; if (!REC.on || f.items.length || !f.ended) return; if (REC.ci + 1 < REC.cands.length) return recStart(REC.ci + 1); $("#bmrecMsg").textContent = "어울리는 이미지를 찾지 못했어요."; $("#bmrecMsg").hidden = false; },
+      reobserve: () => { rio.unobserve($("#bmrecSent")); rio.observe($("#bmrecSent")); },
+    });
+    bindMore($("#bmrecMore"), REC.feed);
+  }
+  REC.on = true; $("#bmrec").hidden = false; REC.cands = boardQueries(S.boardItems);
+  recStart(0); rio.observe($("#bmrecSent"));
+  $("#bmrec").scrollIntoView?.({ behavior: "smooth", block: "start" });
+}
+function recClose() { if (!REC.on && !REC.feed) return; REC.on = false; $("#bmrec").hidden = true; if (REC.feed) { REC.feed.reset(); REC.m.clear(); rio.unobserve($("#bmrecSent")); } }
+$("#bmrecBtn").onclick = openBoardRec;
+$("#bmrecClose").onclick = recClose;
+
 function renderBoardChips(all) {
   const box = $("#chips"); box.textContent = ""; $("#chipsLbl").textContent = "보드";
   const boards = [...new Set(all.map((x) => x.board).filter(Boolean))].sort();
   if (!boards.length) { if (S.board !== "__all") S.board = "__all"; $("#chipsWrap").hidden = true; return; }
-  const mk = (label, val) => { const b = document.createElement("button"); b.textContent = label; if (S.board === val) b.classList.add("on"); b.onclick = () => { S.board = val; showBm(); }; box.appendChild(b); };
+  const mk = (label, val) => { const b = document.createElement("button"); b.textContent = label; if (S.board === val) b.classList.add("on"); b.onclick = () => { S.board = val; S.bmTone = ""; S.bmColor = ""; recClose(); showBm(); }; box.appendChild(b); };
   mk("전체", "__all"); boards.forEach((n) => mk(n, n)); if (all.some((x) => !x.board)) mk("미분류", "");
   $("#chipsWrap").hidden = false;
 }
@@ -743,7 +853,7 @@ $("#tabBm").onclick = showBm;
 // V.stack 의 각 칸(level)이 "지금 보는 이미지 + 그 아래 비슷한 이미지 피드" 한 세트입니다.
 // 비슷한 이미지를 누르면 새 칸이 쌓이고, 뒤로 가기(또는 스와이프 뒤로)로 이전 칸에 돌아갑니다.
 const V = { stack: [], pushed: 0, unwinding: false };
-let vTok = 0, vUrl = null;
+let vTok = 0, vUrl = null, dwellT = null;
 const lv = () => V.stack[V.stack.length - 1];
 const curItem = () => { const l = lv(); return l ? l.list[l.cur] : null; };
 const vio = new IntersectionObserver((es) => es.forEach((e) => {
@@ -794,6 +904,7 @@ function popLevel() {
   $("#viewer").scrollTop = l.scrollTop;
 }
 function finishClose() {
+  clearTimeout(dwellT); cropClose();
   V.stack.forEach((l) => { l.feed.reset(); clearTimeout(l.rrT); vio.unobserve(l.sent); });
   V.stack = []; V.pushed = 0; $("#vsimlevels").textContent = ""; zReset();
   $("#viewer").hidden = true; document.body.classList.remove("lock"); vTok++;
@@ -816,7 +927,10 @@ addEventListener("popstate", () => {
 function showItem(keepSim) {
   const level = lv(), it = level?.list[level.cur]; if (!it) return;
   const img = $("#vimg"), token = ++vTok;
-  zReset();
+  zReset(); cropClose(); clearTimeout(dwellT);
+  dwellT = setTimeout(() => { if (lv() && curItem() === it) learnFrom(it, 1); }, 7000); // 7초 넘게 보면 관심이 있는 것으로 보고 약하게 배움
+  $("#vlike").hidden = $("#vdis").hidden = !tasteOn(); $("#vcrop").hidden = !captionOn() || (it.adult && !it.safe);
+  renderVInfo(it);
   const hide = it.adult && S.blur && !it.revealed;
   img.classList.toggle("blur", hide); $("#vveil").hidden = !hide;
   $("#vsafe").hidden = !(it.adult && S.blur); // 블러가 걸린 이미지에서만 "블러 해제" 버튼
@@ -830,7 +944,7 @@ function showItem(keepSim) {
     if (token !== vTok) return;
     it.fullBlob = b; if (vUrl) URL.revokeObjectURL(vUrl); vUrl = URL.createObjectURL(b); img.src = vUrl;
     // 큰 이미지에서 색 분포를 다시 뽑아, 비슷한 이미지를 색이 가까운 순으로 정리하는 기준으로 씁니다.
-    img.decode().then(() => { if (token !== vTok || !V.stack.includes(level)) return; const inf = pixelInfo(img); if (inf?.sh) { level.sig = inf.sh; simRerankSoon(level); } }).catch(() => {});
+    img.decode().then(() => { if (token !== vTok || !V.stack.includes(level)) return; const inf = pixelInfo(img); if (inf?.sh) { level.sig = inf.sh; simRerankSoon(level); } if (inf?.an) { it.an = inf.an; if (curItem() === it) renderVInfo(it); } }).catch(() => {});
   }).catch(() => {
     if (token !== vTok) return;
     const t = new Image(); t.referrerPolicy = "no-referrer"; t.onload = () => { if (token === vTok) img.src = it.full; }; t.src = it.full;
@@ -841,7 +955,7 @@ function showItem(keepSim) {
 let simT = null;
 function simSchedule(level) {
   clearTimeout(simT); clearTimeout(level.rrT);
-  level.feed.reset(); level.m.clear(); level.msg.hidden = true; renderMore(level.more, level.feed); level.simQ = ""; level.sig = null; level.cw = ""; level.rrDone = 0; updateSimHead();
+  level.feed.reset(); level.m.clear(); level.msg.hidden = true; renderMore(level.more, level.feed); level.simQ = ""; level.sig = null; level.cw = ""; level.rrDone = 0; level.toneOnly = false; level.m.pred = null; level.crop = false; updateSimHead();
   if (S.offline) return;
   const it = level.list[level.cur];
   simT = setTimeout(() => { if (V.stack.includes(level) && level.list[level.cur] === it) simBegin(level, it); }, 400);
@@ -913,7 +1027,100 @@ function simAfter(level) {
   level.msg.textContent = allErr ? "비슷한 이미지를 불러오지 못했어요. 잠시 뒤 다시 시도해 주세요." : "비슷한 이미지를 찾지 못했어요.";
   level.msg.hidden = false;
 }
-function updateSimHead() { const l = lv(); $("#vsimq").textContent = l?.simQ ? `‘${l.simQ}’` : ""; }
+function updateSimHead() {
+  const l = lv(); $("#vsimq").textContent = l?.simQ ? `${l.crop ? "✂ " : ""}‘${l.simQ}’` : "";
+  const it = l?.list[l.cur], b = $("#vsimtone");
+  b.hidden = !it?.an?.tone || !!l?.crop; b.classList.toggle("on", !!l?.toneOnly);
+  if (!b.hidden) b.textContent = `${l.toneOnly ? "✓ " : ""}같은 톤만 (${window.ColorTools.TONE_KO[it.an.tone]})`;
+}
+// 현재 이미지의 팔레트(대표 색)와 톤을 보여 줍니다. 색 점을 누르면 그 색 필터로 같은 주제를 다시 찾아요.
+function renderVInfo(it) {
+  const box = $("#vinfo"), pal = $("#vpal"), a = it?.an; pal.textContent = ""; $("#vtone").textContent = "";
+  box.hidden = !a?.tone; updateSimHead();
+  if (!a?.tone) return;
+  const KO = window.ColorTools.TONE_KO;
+  (a.pal || []).forEach((p) => {
+    const b = document.createElement("button"); b.type = "button"; b.className = "sw"; b.style.background = p.hex;
+    b.title = `${KO_COLOR[p.name] || p.name} ${Math.round(p.share * 100)}% — 눌러서 이 색감으로 찾기`; b.setAttribute("aria-label", b.title);
+    b.onclick = () => {
+      const q = M.q || (it.tags || [])[0] || tokens(it.title || "")[0];
+      if (!q) return toast("이 색감으로 찾을 주제가 없어요. 먼저 검색어로 찾아 주세요.");
+      S.color = COLORS[p.name] ? p.name : ""; S.tone = ""; markFilters(); startSearch(q);
+    };
+    pal.appendChild(b);
+  });
+  $("#vtone").textContent = `${KO[a.tone]}${a.temp && a.temp !== "neutral" ? " · " + KO[a.temp] : ""}`;
+}
+$("#vsimtone").onclick = () => {
+  const l = lv(), it = l?.list[l.cur]; if (!l || !it?.an?.tone) return;
+  l.toneOnly = !l.toneOnly; l.tone = it.an.tone;
+  l.m.setFilter(l.toneOnly ? (c) => !c._it.an?.tone || c._it.an.tone === l.tone : null); updateSimHead();
+};
+$("#vlike").onclick = () => { const it = curItem(); if (it) { learnFrom(it, 2); toast("이런 이미지를 더 보여 드릴게요"); } };
+$("#vdis").onclick = () => { const it = curItem(); if (it) { learnFrom(it, -3); toast("이런 이미지는 덜 보여 드릴게요"); } };
+
+// ----- 부분 검색: 이미지에서 찾고 싶은 영역을 그려서, 그 부분만 AI로 설명해 비슷한 이미지를 찾습니다 -----
+const CR = { r: { x: 0.2, y: 0.2, w: 0.6, h: 0.6 }, drag: null };
+function setCr(r) { CR.r = r; const e = $("#vcr").style; e.left = r.x * 100 + "%"; e.top = r.y * 100 + "%"; e.width = r.w * 100 + "%"; e.height = r.h * 100 + "%"; }
+function cropOpen() {
+  const it = curItem(); if (!it) return;
+  if (!captionOn()) return toast("AI 설명을 쓸 수 없어요. 설정에서 켜져 있는지 확인해 주세요.");
+  if (it.adult && !it.safe) return toast("민감할 수 있는 이미지는 부분 검색을 쓸 수 없어요");
+  zReset(); $("#vcropui").hidden = false; setCr({ x: 0.2, y: 0.2, w: 0.6, h: 0.6 });
+}
+function cropClose() { $("#vcropui").hidden = true; CR.drag = null; }
+(() => {
+  const ui = $("#vcropui");
+  ui.addEventListener("pointerdown", (e) => {
+    if (e.target.closest(".vcbar")) return;
+    e.stopPropagation(); try { ui.setPointerCapture(e.pointerId); } catch { /* 무시 */ }
+    const b = ui.getBoundingClientRect(), fx = (e.clientX - b.left) / b.width, fy = (e.clientY - b.top) / b.height, r = CR.r;
+    const inside = fx > r.x && fx < r.x + r.w && fy > r.y && fy < r.y + r.h;
+    CR.drag = inside ? { mode: "move", fx, fy, r: { ...r } } : { mode: "new", fx, fy };
+  });
+  ui.addEventListener("pointermove", (e) => {
+    const d = CR.drag; if (!d) return; e.stopPropagation();
+    const b = ui.getBoundingClientRect(), fx = clamp((e.clientX - b.left) / b.width, 0, 1), fy = clamp((e.clientY - b.top) / b.height, 0, 1);
+    if (d.mode === "new") setCr({ x: Math.min(d.fx, fx), y: Math.min(d.fy, fy), w: Math.abs(fx - d.fx), h: Math.abs(fy - d.fy) });
+    else setCr({ ...d.r, x: clamp(d.r.x + fx - d.fx, 0, 1 - d.r.w), y: clamp(d.r.y + fy - d.fy, 0, 1 - d.r.h) });
+  });
+  const end = (e) => { if (CR.drag) { e.stopPropagation(); CR.drag = null; } };
+  ui.addEventListener("pointerup", end); ui.addEventListener("pointercancel", end);
+})();
+// 선택한 영역(이미지 안의 비율 좌표)만 잘라 JPEG 로 만듭니다.
+function cropBlob(blob, [x0, y0, x1, y1]) {
+  return new Promise((res, rej) => {
+    const u = URL.createObjectURL(blob), im = new Image();
+    im.onload = () => {
+      const W = im.naturalWidth, H = im.naturalHeight, sx = Math.round(x0 * W), sy = Math.round(y0 * H), sw = Math.max(1, Math.round((x1 - x0) * W)), sh = Math.max(1, Math.round((y1 - y0) * H));
+      const k = Math.min(1, 512 / Math.max(sw, sh)), c = document.createElement("canvas"); c.width = Math.max(1, Math.round(sw * k)); c.height = Math.max(1, Math.round(sh * k));
+      c.getContext("2d").drawImage(im, sx, sy, sw, sh, 0, 0, c.width, c.height); URL.revokeObjectURL(u);
+      c.toBlob((b) => (b ? res(b) : rej(new Error("toBlob"))), "image/jpeg", 0.8);
+    };
+    im.onerror = () => { URL.revokeObjectURL(u); rej(new Error("img")); };
+    im.src = u;
+  });
+}
+async function cropGo() {
+  const l = lv(), it = curItem(); if (!l || !it) return;
+  const ib = $("#vimg").getBoundingClientRect(), ub = $("#vcropui").getBoundingClientRect(), r = CR.r;
+  const L = ub.left + r.x * ub.width, T = ub.top + r.y * ub.height, R = L + r.w * ub.width, B = T + r.h * ub.height;
+  const box = [clamp((L - ib.left) / (ib.width || 1), 0, 1), clamp((T - ib.top) / (ib.height || 1), 0, 1), clamp((R - ib.left) / (ib.width || 1), 0, 1), clamp((B - ib.top) / (ib.height || 1), 0, 1)];
+  if (box[2] - box[0] < 0.06 || box[3] - box[1] < 0.06) return toast("조금 더 넓게 골라 주세요");
+  cropClose(); toast("선택한 부분을 AI가 보는 중…", 6000);
+  try {
+    const src = it.fullBlob || it.blob || (await fetchBlob(`/api/img?u=${enc(it.thumb)}`, true));
+    const crop = await cropBlob(src, box);
+    const [inf, cap] = [await blobInfo(crop), await captionOfBlob(crop)];
+    if (!cap.q) return cap.why === "auth" ? 0 : toast(cap.why === "blocked" ? "이 부분은 검색할 수 없는 주제로 보여요." : "이 부분을 설명하지 못했어요. 다른 부분을 골라 보세요.", 5000);
+    if (!V.stack.includes(l) || curItem() !== it) return;
+    clearTimeout(simT); clearTimeout(l.rrT); l.feed.reset(); l.m.clear(); l.m.pred = null; l.toneOnly = false; l.crop = true;
+    l.cap = cap.q; l.sig = inf?.sh || null; l.cw = window.ColorTools.topColor(l.sig); l.rrDone = 0;
+    simStart(l, 0);
+    $("#viewer").scrollTo({ top: $("#vsimbox").offsetTop - 56, behavior: "smooth" });
+  } catch (e) { if (e.message !== "auth") toast("부분 검색에 실패했어요. 잠시 뒤 다시 시도해 주세요."); }
+}
+$("#vcrop").onclick = cropOpen; $("#vcno").onclick = cropClose; $("#vcgo").onclick = cropGo;
 
 // 이 이미지는 선정적이지 않다고 알려 주면 블러를 풉니다. (북마크한 이미지는 북마크에 기억)
 function markSafe(it) {
@@ -929,7 +1136,7 @@ addEventListener("keydown", (e) => {
   if (!$("#bmSheet").hidden) { if (e.key === "Escape") closeSheet(); return; }
   if (!$("#settings").hidden) { if (e.key === "Escape") closeSettings(); return; }
   if ($("#viewer").hidden || e.target.closest?.("input,textarea,select")) return;
-  if (e.key === "Escape") closeViewer(); if (e.key === "ArrowLeft") step(-1); if (e.key === "ArrowRight") step(1);
+  if (e.key === "Escape") { if (!$("#vcropui").hidden) cropClose(); else closeViewer(); } if (e.key === "ArrowLeft") step(-1); if (e.key === "ArrowRight") step(1);
 });
 // ----- 이미지 확대·축소: 화면 전체는 확대되지 않고, 뷰어의 이미지에서만 핀치·더블탭·끌기로 확대합니다 -----
 // 확대 전(1배)에는 좌우로 밀어서 이전·다음 이미지, 세로로 밀면 평소처럼 화면 스크롤(비슷한 이미지 보기).
@@ -1025,9 +1232,11 @@ $("#vdl").onclick = async () => {
   } catch (e) { if (e.name !== "AbortError") toast("다운로드에 실패했어요. '원본 페이지'에서 받아 보세요."); }
 };
 
-// ---------- 트렌드: 단어 대신 이미지로 ----------
-// 서버가 위키백과(한국어·영어)에서 많이 본 문서의 대표 사진(grp "news")과 Pixabay·Unsplash 인기 사진(grp "pop")을 섞어서 줍니다.
-const TR = { g: "", at: 0, items: [], date: "", loading: false };
+// ---------- 트렌드 ----------
+// 서버가 주는 것: 요즘 뜨는 주제(rising: 네이버 데이터랩 검색량 변화), 다가오는 행사·계절(season), 이미지(items).
+// 이미지 grp: pop = Pixabay·Unsplash 인기 사진, pick = 위키미디어 커먼즈 우수 사진, news = 위키백과 화제 문서(참고용, 추천에는 안 섞음)
+const TR = { g: "rec", at: 0, items: [], date: "", loading: false, rising: [], season: [], dl: { state: "off" } };
+const DL_WHY = { denied: "네이버 API HUB에서 ‘검색어트렌드’ 이용 신청이 필요해요", limit: "요청 한도를 넘었어요", timeout: "응답이 늦어요", gone: "주소를 찾을 수 없어요 (NAVER_TREND_BASE 확인)", network: "연결하지 못했어요" };
 async function loadTrends(force) {
   if (TR.loading) return;
   if (!force && TR.items.length && Date.now() - TR.at < 30 * 60000) { renderTrends(); return; }
@@ -1035,17 +1244,28 @@ async function loadTrends(force) {
   try {
     const j = await (await api("/api/trends")).json();
     TR.items = (j.items || []).map((it) => { const key = keyOf(it); return { ...it, id: hashId(key), key, tags: it.tags || [] }; });
-    TR.date = j.date || ""; TR.at = Date.now();
+    TR.date = j.date || ""; TR.rising = j.rising || []; TR.season = j.season || []; TR.dl = j.dl || { state: "off" }; TR.at = Date.now();
     renderTrends();
   } catch (e) { if (e.message !== "auth") $("#trNote").textContent = "트렌드를 불러오지 못했어요. 잠시 후 [새로고침]을 눌러 주세요."; }
   finally { TR.loading = false; }
 }
+function renderTrTopics() {
+  const box = $("#trTopics"); box.textContent = "";
+  const chip = (label, q, cls) => { const b = document.createElement("button"); b.textContent = label; b.className = cls; b.onclick = () => startSearch(q); box.appendChild(b); };
+  TR.season.forEach((x) => chip(`${x.kind === "event" ? "🗓" : "🍂"} ${x.label}${x.kind === "event" ? (x.days > 0 ? ` D-${x.days}` : " 오늘") : ""}`, x.q, "season"));
+  TR.rising.forEach((x) => chip(`🔥 ${x.label || x.q}${x.note ? " " + x.note : ""}`, x.q, "rising"));
+  box.hidden = !box.children.length;
+}
 function renderTrends() {
-  const list = TR.items.filter((it) => !it.dropped && (!TR.g || it.grp === TR.g));
+  let list = TR.items.filter((it) => !it.dropped && (TR.g === "rec" ? it.grp !== "news" : it.grp === TR.g));
+  // 취향 학습을 켰으면 내 취향에 맞는 사진을 위로 (그 밖의 순서는 그대로)
+  if (tasteOn() && !Taste.isEmpty() && TR.g !== "news") list = list.map((it, i) => ({ it, i, a: Taste.affinity(TasteStore.keysOf(it)) })).sort((x, y) => (y.a - x.a) || (x.i - y.i)).map((x) => x.it);
   trM.clear();
   document.querySelectorAll("#trSeg button").forEach((b) => b.classList.toggle("on", b.dataset.g === TR.g));
-  $("#trNote").textContent = !list.length ? "이 분류에 보여 줄 이미지가 없어요. (인기 사진은 Pixabay·Unsplash 키가 있어야 나와요)"
-    : `${TR.date ? TR.date + " 기준 · " : ""}위키백과(한국어·영어)에서 많이 본 문서의 대표 사진과 인기 사진이에요. 탭하면 크게 보고 비슷한 이미지도 찾아요.`;
+  renderTrTopics();
+  const dl = TR.dl.state === "err" ? ` ‘뜨는 주제’는 가져오지 못했어요 (${DL_WHY[TR.dl.why] || TR.dl.why || "오류"}).` : TR.dl.state === "off" ? " (네이버 데이터랩 키를 등록하면 ‘뜨는 주제’가 나와요.)" : "";
+  const info = { rec: "인기 사진과 잘 찍은 사진을 모았어요.", pop: "Pixabay·Unsplash에서 많이 찾는 인기 사진이에요.", pick: "위키미디어 커먼즈 우수 사진 중에서 골랐어요. 날마다 다른 사진이 나와요.", news: "위키백과에서 많이 본 문서의 대표 사진이에요. 사람들의 취향보다는 화제성을 보여 줘요." }[TR.g];
+  $("#trNote").textContent = !list.length ? "이 분류에 보여 줄 이미지가 없어요. (인기 사진은 Pixabay·Unsplash 키가 있어야 나와요)" : `${TR.date ? TR.date + " 기준 · " : ""}${info}${TR.g === "rec" ? dl : ""}`;
   trM.add(list.map((it) => makeCard(it, () => openViewer(list, list.indexOf(it)))));
 }
 document.querySelectorAll("#trSeg button").forEach((b) => { b.onclick = () => { TR.g = b.dataset.g; renderTrends(); }; });
@@ -1057,7 +1277,8 @@ const colorSources = () => (cfg?.sources || []).filter((s) => s.colors && !S.off
 function markFilters() {
   document.querySelectorAll("#colors .dot").forEach((b) => b.classList.toggle("on", b.dataset.c === S.color));
   document.querySelectorAll("#orient button").forEach((b) => b.classList.toggle("on", b.dataset.o === S.orient));
-  const n = (S.color ? 1 : 0) + (S.orient ? 1 : 0);
+  document.querySelectorAll("#tones button").forEach((b) => b.classList.toggle("on", b.dataset.t === S.tone));
+  const n = (S.color ? 1 : 0) + (S.orient ? 1 : 0) + (S.tone ? 1 : 0);
   $("#filterBadge").textContent = n ? String(n) : "";
   const cs = colorSources(), names = cs.map((s) => s.name).join("·");
   $("#colors").classList.remove("dis");
@@ -1068,6 +1289,7 @@ function markFilters() {
     : !S.color ? `${names}는 검색할 때 색을 직접 걸러 줘서 빠르고 정확해요.`
     : !S.colorWide ? `${names}가 색을 직접 걸러 줘서 빠르고 정확해요. 다른 소스까지 쓰려면 ‘넓게’를 고르세요. (이미지를 불러온 뒤 대표 색으로 걸러서 느려요)`
     : `모든 소스에서 찾아요. ${names}는 검색할 때 걸러 주고, 나머지는 이미지를 불러온 뒤 대표 색으로 걸러서 천천히 채워져요.`;
+  if (cfg && S.tone) $("#colorNote").textContent += " 톤은 이미지를 불러온 뒤 브라우저가 판별해서 걸러요 (천천히 채워져요).";
 }
 const rerun = () => { markFilters(); if (M.q) startSearch(M.q, { sl: M.sl }); else feedM.pred = feedPred(); };
 Object.entries(COLORS).forEach(([k, c]) => {
@@ -1076,13 +1298,14 @@ Object.entries(COLORS).forEach(([k, c]) => {
   $("#colors").appendChild(b);
 });
 document.querySelectorAll("#orient button").forEach((b) => { b.onclick = () => { S.orient = b.dataset.o; rerun(); }; });
+TONE_LIST.forEach(([v, label]) => { const b = document.createElement("button"); b.textContent = label; b.dataset.t = v; b.onclick = () => { S.tone = S.tone === v ? "" : v; rerun(); }; $("#tones").appendChild(b); });
 document.querySelectorAll("#cwSeg button").forEach((b) => { b.onclick = () => { S.colorWide = b.dataset.w === "1"; LS.set("cw", S.colorWide); rerun(); }; });
 $("#filterBtn").onclick = () => { markFilters(); $("#srcPanel").hidden = true; $("#filters").hidden = !$("#filters").hidden; };
 $("#srcBtn").onclick = () => { renderStat(); $("#filters").hidden = true; $("#srcPanel").hidden = !$("#srcPanel").hidden; };
 $("#srcAll").onclick = () => { S.only.clear(); renderStat(); queueRerun(); };
 $("#srcClose").onclick = () => { $("#srcPanel").hidden = true; };
 $("#filterClose").onclick = () => { $("#filters").hidden = true; };
-$("#filterReset").onclick = () => { S.color = ""; S.orient = ""; rerun(); };
+$("#filterReset").onclick = () => { S.color = ""; S.orient = ""; S.tone = ""; rerun(); };
 
 // ---------- 보드·메모 (입력창 대신 시트) ----------
 const sheet = { it: null, rec: null, board: "", names: [] };
@@ -1188,6 +1411,7 @@ $("#upFile").onchange = async (e) => {
 function renderSettings() {
   $("#sBlur").checked = S.blur; $("#sMl").checked = S.ml;
   $("#capRow").hidden = !cfg?.caption; $("#sCap").checked = LS.get("cap", true);
+  $("#sTaste").checked = S.taste; renderTasteView();
   const box = $("#srcList"); box.textContent = "";
   (cfg?.sources || []).forEach((s) => {
     const l = document.createElement("label"); l.className = "row src";
@@ -1202,6 +1426,18 @@ function renderSettings() {
   const lb = $("#lockList"); lb.textContent = "";
   locked.forEach((s) => { const d = document.createElement("div"); d.className = "lockrow"; d.textContent = s.name + " "; const sm = document.createElement("small"); sm.textContent = `${s.desc ? s.desc + " · " : ""}변수 이름: ${s.need.join(", ")}`; d.appendChild(sm); lb.appendChild(d); });
 }
+function renderTasteView() {
+  const box = $("#tasteView"), v = Taste.view(), KO = window.ColorTools.TONE_KO; box.textContent = "";
+  const add = (t, cls) => { const s = document.createElement("span"); s.textContent = t; if (cls) s.className = cls; box.appendChild(s); };
+  v.tags.slice(0, 10).forEach((x) => add(x.k)); v.tones.forEach((x) => add(KO[x.k] || x.k, "t")); v.colors.forEach((x) => add(KO_COLOR[x.k] || x.k, "t"));
+  v.less.slice(0, 4).forEach((x) => add(`덜 · ${x.k}`, "less"));
+  const empty = Taste.isEmpty(); box.hidden = !S.taste || empty; $("#tasteClear").hidden = empty;
+}
+$("#sTaste").onchange = (e) => {
+  S.taste = e.target.checked; LS.set("tasteOn", S.taste); renderTasteView();
+  toast(S.taste ? "이 기기에서만 취향을 기억해요 (다음 검색부터 반영)" : "취향 학습을 껐어요. 저장된 점수는 [취향 지우기]로 지울 수 있어요", 4500);
+};
+$("#tasteClear").onclick = () => { Taste.clear(); renderTasteView(); toast("취향을 모두 지웠어요"); };
 $("#gear").onclick = () => { renderSettings(); $("#settings").hidden = false; };
 $("#closeSet").onclick = closeSettings;
 $("#sBlur").onchange = (e) => {
@@ -1235,6 +1471,20 @@ $("#impBm").onchange = async (e) => {
   e.target.value = "";
 };
 
+// ---------- 비공개 모드 (아이콘 하나로) ----------
+// 켜면 북마크·취향이 화면에서 사라지고(저장된 것은 그대로), 취향 학습과 추천 반영이 멈춥니다. 수업 화면 공유 때 쓰세요.
+function applyPriv() {
+  document.body.classList.toggle("priv", S.priv);
+  $("#privBtn").classList.toggle("on", S.priv); $("#privBtn").setAttribute("aria-pressed", String(S.priv));
+  if (S.priv) { if (S.view === "bm") setView("feed"); recClose(); }
+  if (S.priv && !$("#viewer").hidden) { $("#vlike").hidden = $("#vdis").hidden = true; }
+}
+$("#privBtn").onclick = () => {
+  S.priv = !S.priv; LS.set("priv", S.priv); applyPriv();
+  if (S.view === "feed" && !M.q) renderHome(); if (S.view === "tr") renderTrends();
+  toast(S.priv ? "🕶 비공개 모드: 북마크와 취향이 보이지 않고, 학습도 멈췄어요" : "비공개 모드를 껐어요");
+};
+
 // ---------- 시작 ----------
 // 오프라인(또는 서버에 닿지 않을 때)에는 저장해 둔 북마크만 볼 수 있게 시작합니다.
 function setOffline(on) {
@@ -1253,8 +1503,8 @@ async function boot() {
   if (!DB.db) await DB.open();
   S.bmIds = new Set((await DB.all()).map((x) => x.id)); updateCount();
   setOffline(off); $("#upBtn").hidden = !cfg.caption;
-  markFilters();
-  if (off) { await showBm(); return; }
+  applyPriv(); markFilters();
+  if (off) { if (S.priv) setView("feed"); else await showBm(); return; }
   setView("feed"); renderHome(); renderStat();
   // AI 검사 모델은 접속 직후에 내려받지 않고, 첫 이미지를 검사할 때 준비합니다 (첫 화면이 굳는 문제 완화)
 }

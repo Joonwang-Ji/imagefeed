@@ -182,3 +182,41 @@ body.offline header .hrow:first-child,body.offline #tabFeed,body.offline #tabTr,
 #bmBoards{margin-bottom:8px}
 #bmSheet textarea{font:inherit;font-size:16px;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px;width:100%;outline:none;resize:vertical}
 #bmSheet textarea:focus{border-color:var(--acc)}
+
+/* ---------- 9차 추가: 비공개 모드, 톤·팔레트, 부분 검색, 트렌드 주제, 북마크 분석 (기능 위주 스타일. 디자인 다듬기는 10차) ---------- */
+#privBtn{font-size:15px;line-height:1}
+#privBtn.on{background:var(--accbg);border-color:var(--acc)}
+body.priv header{border-bottom-color:var(--acc)}
+body.priv #tabBm,body.priv #exBm,body.priv .star,body.priv #vstar,body.priv #vboard,body.priv #vlike,body.priv #vdis,body.priv #tasteBox,body.priv .mine{display:none!important}
+#tones{display:flex;gap:6px;flex-wrap:wrap}
+#tones button{padding:3px 12px;font-size:13px;background:transparent}
+#tones button.on{background:var(--accbg);border-color:var(--acc)}
+#trTopics{margin:2px 2px 10px}
+#trTopics button{padding:5px 13px;font-size:13px;background:var(--card);white-space:nowrap}
+#trTopics .rising{border-color:var(--acc)}
+.vinfo{display:flex;gap:12px;align-items:center;justify-content:center;padding:8px 12px 0;color:#bbb;font-size:13px}
+.vinfo[hidden]{display:none}
+#vpal{display:flex;gap:6px}
+.sw{width:26px;height:26px;padding:0;border-radius:50%;border:2px solid #444}
+.vbar .tl{padding:8px 12px}
+#vcropui{position:absolute;inset:0;z-index:4;touch-action:none;background:rgba(0,0,0,.45)}
+#vcr{position:absolute;border:2px solid #fff;box-shadow:0 0 0 9999px rgba(0,0,0,.45);border-radius:4px;pointer-events:none}
+.vcbar{position:absolute;left:0;right:0;bottom:8px;display:flex;gap:8px;align-items:center;justify-content:center;flex-wrap:wrap;font-size:13px;color:#fff;padding:0 10px}
+.vcbar span{width:100%;text-align:center}
+.vcbar button{background:#1d2027;border-color:#444;color:#fff}
+.vcbar .pri{background:var(--acc)}
+#vsimtone.on{background:var(--acc)}
+#bmtools{display:block;padding:4px 2px 10px}
+.bmrow{display:flex;gap:8px;align-items:center}
+.bmrow+#bmfil,#bmfil+.bmrow,.bmrow+.bmrow{margin-top:8px}
+#bmfil{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+#bmfil button{padding:3px 11px;font-size:13px;background:transparent}
+#bmfil button.on{background:var(--accbg);border-color:var(--acc)}
+#bmfil .dot{width:22px;height:22px;padding:0;border-radius:50%}
+#bmrec{margin-top:18px;padding-top:12px;border-top:1px solid var(--line)}
+.rechead{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+.rechead span:not(.grow){color:var(--mut);font-size:13px}
+#tasteView{margin:6px 0}
+#tasteView span{padding:3px 11px;font-size:13px;border:1px solid var(--line);border-radius:999px}
+#tasteView .t{border-color:var(--acc)}
+#tasteView .less{color:var(--mut);border-style:dashed}

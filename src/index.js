@@ -1,4 +1,6 @@
 import { hardBlocked, isAdult, isExplicit, isNude, hasArtContext } from "./filters.js";
+import { seasonTopics } from "./season.js";
+import { TOPIC_POOL, ANCHOR } from "./topics.js";
 
 const UA = "Mozilla/5.0 (compatible; ImageFeed/1.0; personal use)";
 const enc = encodeURIComponent;
@@ -437,9 +439,93 @@ async function popularPhotos(env, day) {
   }
   return rr(...out);
 }
+
+// ---- 잘 찍은 사진: 위키미디어 커먼즈 "우수 사진(Featured pictures)" ----
+// 커뮤니티 투표로 뽑힌 사진이라 화제성이 아니라 "품질"을 기준으로 한 목록입니다. 날짜에 따라 둘러보는 시기를 바꿔서 매일 조금씩 다르게 보여 줍니다.
+// 큰 원본은 수십 MB 일 수 있어, 폭이 크면 1600px 짜리 축소본 주소를 씁니다.
+const wikiBig = (ii) => (ii.width > 1800 && ii.thumburl ? ii.thumburl.replace(/\/\d+px-/, "/1600px-") : ii.url);
+const CAT_SKIP = /featured|quality|valued|taken with|uploaded|pictures? by|photographs? by|photos? by|cc-|license|self-published|media of the day|^pd-|commons|wikimedia|^files? |^images? |by country|by year|by date|\d{4}/i;
+async function featuredPicks(day) {
+  const base = "https://commons.wikimedia.org/w/api.php?action=query&format=json&generator=categorymembers&gcmtitle=" + enc("Category:Featured_pictures_on_Wikimedia_Commons") +
+    "&gcmtype=file&gcmsort=timestamp&gcmdir=older&gcmlimit=50&prop=imageinfo&iiprop=" + enc("url|size|mime|extmetadata") + "&iiurlwidth=640&iiextmetadatafilter=" + enc("ObjectName|ImageDescription|Categories");
+  const start = new Date(Date.now() - (day % 90) * 7 * 86400000).toISOString().replace(/\.\d+Z$/, "Z");
+  let d;
+  try { d = await getJson(`${base}&gcmstart=${enc(start)}`, {}, 21600, 9000); } catch { d = null; }
+  if (!Object.keys(d?.query?.pages || {}).length) d = await getJson(base, {}, 21600, 9000); // 시기 지정이 안 되면 가장 최근 것으로
+  return Object.values(d.query?.pages || {}).sort((a, b) => (a.index || 0) - (b.index || 0)).map((p) => {
+    const ii = p.imageinfo?.[0];
+    if (!ii || !ii.thumburl || !/^image\/(jpeg|png|webp)$/.test(ii.mime)) return null;
+    const md = ii.extmetadata || {};
+    const name = clean(md.ObjectName?.value || p.title.replace(/^File:/, "").replace(/\.\w+$/, "").replace(/_/g, " "));
+    const cats = clean(md.Categories?.value || "").split("|").map((s) => s.trim()).filter((s) => s && s.length <= 40 && !CAT_SKIP.test(s));
+    return {
+      title: name.slice(0, 100), thumb: ii.thumburl, full: wikiBig(ii), page: ii.descriptionurl || ii.url,
+      w: num(ii.thumbwidth) || num(ii.width), h: num(ii.thumbheight) || num(ii.height), tags: cats.slice(0, 6), src: "wikimedia", grp: "pick", adult: false,
+      ctx: [clean(md.ImageDescription?.value || "").slice(0, 200), cats.join(" "), p.title].join(" "),
+    };
+  }).filter(Boolean).slice(0, 40);
+}
+
+// ---- 요즘 뜨는 주제: 네이버 데이터랩 검색어트렌드 ----
+// 후보 단어(topics.js)를 4개씩 묶어(+기준 단어) 요청하고, 최근 7일 평균이 그 앞 3주 평균보다 얼마나 늘었는지로 "뜨는 주제"를 가립니다.
+// 데이터랩은 비율(상대값)만 주므로 기준 단어 대비 검색량이 너무 적은 말은 뺍니다. 결과는 12시간 캐시.
+// 네이버 키(NAVER_ID/SECRET)가 있어야 하고, API HUB 에서 "검색어트렌드" 상품을 쓸 수 있어야 합니다. 안 되면 state 가 "err" 로 와서 화면에 이유를 알립니다.
+const kstDate = (ms) => new Date(ms + 9 * 3600000).toISOString().slice(0, 10);
+const avg = (a) => (a.length ? a.reduce((t, x) => t + x, 0) / a.length : 0);
+function datalabEndpoint(env) {
+  if (env.NAVER_TREND_BASE) return env.NAVER_TREND_BASE;
+  return (env.NAVER_BASE || "").includes("openapi.naver.com") ? "https://openapi.naver.com/v1/datalab/search" : "https://naverapihub.apigw.ntruss.com/search-trend/v1/search";
+}
+async function datalabTopics(env, now) {
+  if (!(env.NAVER_ID && env.NAVER_SECRET) || env.TREND_TOPICS === "off") return { state: "off", list: [] };
+  const key = new Request(`https://cache.local/dl3?h=${Math.floor(now / 43200000)}`);
+  try { const hit = await caches.default.match(key); if (hit) return await hit.json(); } catch { /* 캐시가 없으면 새로 물어봄 */ }
+  const url = datalabEndpoint(env), legacy = url.includes("openapi.naver.com");
+  const headers = { "content-type": "application/json", "user-agent": UA, ...(legacy ? { "X-Naver-Client-Id": env.NAVER_ID, "X-Naver-Client-Secret": env.NAVER_SECRET } : { "X-NCP-APIGW-API-KEY-ID": env.NAVER_ID, "X-NCP-APIGW-API-KEY": env.NAVER_SECRET }) };
+  const startDate = kstDate(now - 28 * 86400000), endDate = kstDate(now - 86400000);
+  const chunks = []; for (let i = 0; i < TOPIC_POOL.length; i += 4) chunks.push(TOPIC_POOL.slice(i, i + 4));
+  const rs = await Promise.allSettled(chunks.map(async (c) => {
+    let r;
+    try {
+      r = await fetch(url, { method: "POST", headers, signal: AbortSignal.timeout(7000),
+        body: JSON.stringify({ startDate, endDate, timeUnit: "date", keywordGroups: [ANCHOR, ...c].map((g) => ({ groupName: g, keywords: [g] })) }) });
+    } catch (e) { throw fail(e?.name === "TimeoutError" || e?.name === "AbortError" ? "timeout" : "network", String(e?.message || e)); }
+    if (!r.ok) throw fail(reasonOfStatus(r.status), `HTTP ${r.status}`, r.status);
+    let j; try { j = await r.json(); } catch { throw fail("badjson"); }
+    return j.results || [];
+  }));
+  const rows = [];
+  for (const r of rs) {
+    if (r.status !== "fulfilled") continue;
+    const res = r.value, a = res.find((x) => x.title === ANCHOR), aRecent = a ? avg((a.data || []).slice(-7).map((d) => +d.ratio || 0)) : 0;
+    for (const x of res) {
+      if (x.title === ANCHOR) continue;
+      const arr = (x.data || []).map((d) => +d.ratio || 0); if (arr.length < 14) continue;
+      const recent = avg(arr.slice(-7)), prev = avg(arr.slice(0, -7));
+      rows.push({ label: x.title, q: x.title, vol: aRecent ? recent / aRecent : recent, growth: prev > 0.05 ? recent / prev - 1 : 0, prev });
+    }
+  }
+  let out;
+  if (!rows.length) {
+    const e = rs.find((r) => r.status === "rejected")?.reason;
+    out = { state: "err", why: e?.code || "error", status: e?.status || 0, list: [] };
+    try { await caches.default.put(key, new Response(JSON.stringify(out), { headers: { "cache-control": "max-age=1800" } })); } catch { /* 캐시 실패는 무시 */ }
+    return out;
+  }
+  const ok = rows.filter((x) => !hardBlocked(x.label) && !isAdult(x.label));
+  const rising = ok.filter((x) => x.vol >= 0.02 && x.growth >= 0.15).sort((a, b) => b.growth - a.growth).slice(0, 8)
+    .map((x) => ({ label: x.label, q: x.q, kind: "rising", note: `▲${Math.round(x.growth * 100)}%` }));
+  const hot = ok.filter((x) => !rising.some((r) => r.q === x.q)).sort((a, b) => b.vol - a.vol).slice(0, Math.max(0, 6 - rising.length))
+    .map((x) => ({ label: x.label, q: x.q, kind: "hot", note: "" }));
+  out = { state: "ok", list: [...rising, ...hot] };
+  try { await caches.default.put(key, new Response(JSON.stringify(out), { headers: { "cache-control": "max-age=43200" } })); } catch { /* 캐시 실패는 무시 */ }
+  return out;
+}
+
 async function trends(env) {
-  const day = Math.floor(Date.now() / 86400000);
-  const [ko, en, pop] = await Promise.all([wikiTrend("ko").catch(() => null), wikiTrend("en").catch(() => null), popularPhotos(env, day).catch(() => [])]);
+  const now = Date.now(), day = Math.floor(now / 86400000);
+  const [ko, en, pop, pick, dl] = await Promise.all([wikiTrend("ko").catch(() => null), wikiTrend("en").catch(() => null), popularPhotos(env, day).catch(() => []),
+    featuredPicks(day).catch(() => []), datalabTopics(env, now).catch((e) => ({ state: "err", why: e?.code || "error", list: [] }))]);
   const seen = new Set();
   // 트렌드는 훑어 올리다 놀라지 않게 더 엄격하게 거릅니다.
   //  - 성행위·성기 표현이 제목·태그·짧은 설명·파일 이름에 있으면 미술·역사 자료라도 뺍니다.
@@ -450,14 +536,16 @@ async function trends(env) {
     if (isNude(t)) return hasArtContext(t) ? "blur" : "drop";
     return isAdult(t) ? "blur" : "ok";
   };
-  const items = rr(ko?.items || [], en?.items || [], pop)
+  const items = rr(ko?.items || [], en?.items || [], pop, pick)
     .filter((it) => it.thumb && it.full)
     .map((it) => ({ it, v: verdict(it) })).filter((x) => x.v !== "drop")
     .map(({ it, v }) => { const { ctx, ...rest } = it; return { ...rest, thumb: https(it.thumb), full: https(it.full), page: https(it.page || it.full), adult: it.adult || v === "blur" }; })
     .filter((it) => (seen.has(it.thumb) ? false : seen.add(it.thumb)))
-    .slice(0, 100);
-  if (!items.length) return json({ error: "no data", items: [] }, 502);
-  return json({ date: ko?.date || en?.date || "", items });
+    .slice(0, 160);
+  // 화면 구성: rising(데이터랩이 가려낸 뜨는 주제) / season(곧 다가오는 기념일·계절 주제) / items(사진: grp "pop" 인기, "pick" 잘 찍은 사진, "news" 오늘의 화제)
+  // dl: 데이터랩 상태("ok" | "off"=키 없음 | "err"=사용할 수 없음, why=이유)
+  // 사진이 하나도 없어도 주제는 보여 줄 수 있으므로 502 가 아니라 빈 목록으로 응답합니다.
+  return json({ date: ko?.date || en?.date || "", rising: dl.list || [], season: seasonTopics(now), items, dl: { state: dl.state, why: dl.why || "", status: dl.status || 0 } });
 }
 
 // ---------- 이미지 중계 ----------

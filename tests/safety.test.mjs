@@ -50,7 +50,7 @@ w.fetch = async (url) => {
   if (u.startsWith("/api/img")) return res({});
   return { ok: false, status: 404, json: async () => ({}) };
 };
-for (const f of ["color.js", "relevance.js", "safety.js"]) run(fs.readFileSync(ROOT + f, "utf8").replace(/^"use strict";/, ""));
+for (const f of ["color.js", "relevance.js", "safety.js", "taste.js"]) run(fs.readFileSync(ROOT + f, "utf8").replace(/^"use strict";/, ""));
 vm.runInContext(fs.readFileSync(ROOT + "app.js", "utf8"), ctx);
 // 가짜 AI 모델: 카드 제목에 따라 점수를 돌려줌
 const SCORES = { "Normal view": { Neutral: 0.95 }, "Explicit thing": { Porn: 0.9 }, "Marble statue": { Sexy: 0.95 }, "Bible with hand": { Sexy: 0.9, Neutral: 0.1 }, "beach photo": { Sexy: 0.92 }, "Saved bible": { Sexy: 0.9 }, "Saved normal": { Neutral: 0.9 } };
@@ -60,14 +60,14 @@ const $ = (s) => w.document.querySelector(s), $$ = (s) => [...w.document.querySe
 const stOf = (grid) => Object.fromEntries($$(grid + " .card").map((c) => [c._it.title, c.dataset.st]));
 
 // -- 트렌드 --
-trends = [{ ...it(1, "Normal view"), grp: "news" }, { ...it(2, "Explicit thing"), grp: "news" }, { ...it(3, "Marble statue"), grp: "news", adult: false }];
+trends = [{ ...it(1, "Normal view"), grp: "pop" }, { ...it(2, "Explicit thing"), grp: "pop" }, { ...it(3, "Marble statue"), grp: "pop", adult: false }];
 $("#tabTr").click(); await tick(400);
 let st = stOf("#trGrid");
 ok(st["Normal view"] === "ok", "trends: normal image shown normally");
 ok(!("Explicit thing" in st), "trends: explicit image (AI Porn score) is removed, not blurred: " + JSON.stringify(st));
 ok(st["Marble statue"] === "flag", "trends: non-explicit nude-looking art stays but is blurred");
 run("S.blur = false");
-trends = [{ ...it(4, "Explicit thing"), grp: "news" }, { ...it(5, "Normal view"), grp: "news" }];
+trends = [{ ...it(4, "Explicit thing"), grp: "pop" }, { ...it(5, "Normal view"), grp: "pop" }];
 $("#trRefresh").click(); await tick(400);
 st = stOf("#trGrid");
 ok(!("Explicit thing" in st) && st["Normal view"] === "ok", "trends: explicit image is removed even when the blur setting is off");

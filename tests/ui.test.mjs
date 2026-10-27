@@ -39,11 +39,11 @@ w.fetch = async (url) => {
   if (u.startsWith("/api/img")) { if (!imgFail) return res({}); const f = { ok: false, status: 502, json: async () => ({ error: "upstream 403" }) }; f.clone = () => f; return f; }
   return { ok: false, status: 404, json: async () => ({}) };
 };
-trendsPayload = { date: "2026-10-24", items: [
+trendsPayload = { date: "2026-10-24", season: [{ label: "할로윈", q: "할로윈 호박", days: 4, kind: "event" }], rising: [{ label: "벚꽃", q: "벚꽃", kind: "rising", note: "▲40%" }, { label: "한옥", q: "한옥", kind: "hot", note: "" }], dl: { state: "ok" }, items: [
   { ...mk(1, "wiki", [], "손흥민"), grp: "news" }, { ...mk(2, "wiki", [], "Mount Fuji"), grp: "news" }, { ...mk(3, "wiki", [], "서울 야경"), grp: "news" },
-  { ...mk(4, "pixabay", ["lake"], ""), grp: "pop" }, { ...mk(5, "pixabay", ["tree"], ""), grp: "pop" } ] };
+  { ...mk(4, "pixabay", ["lake"], ""), grp: "pop" }, { ...mk(5, "pixabay", ["tree"], ""), grp: "pop" }, { ...mk(6, "wikimedia", ["sunset"], "Sunset"), grp: "pick" } ] };
 
-run(fs.readFileSync(ROOT + "color.js", "utf8").replace(/^"use strict";/, "")); run(fs.readFileSync(ROOT + "relevance.js", "utf8").replace(/^"use strict";/, "")); run(fs.readFileSync(ROOT + "safety.js", "utf8").replace(/^"use strict";/, ""));
+run(fs.readFileSync(ROOT + "color.js", "utf8").replace(/^"use strict";/, "")); run(fs.readFileSync(ROOT + "relevance.js", "utf8").replace(/^"use strict";/, "")); run(fs.readFileSync(ROOT + "safety.js", "utf8").replace(/^"use strict";/, "")); run(fs.readFileSync(ROOT + "taste.js", "utf8").replace(/^"use strict";/, ""));
 vm.runInContext(fs.readFileSync(ROOT + "app.js", "utf8"), ctx);
 await tick(150);
 const $ = (s) => w.document.querySelector(s), $$ = (s) => [...w.document.querySelectorAll(s)];
@@ -197,12 +197,17 @@ $("#vclose").click(); await tick(60);
 
 // ---- 트렌드: 이미지 그리드 ----
 $("#tabTr").click(); await tick(100);
-ok(!$("#trends").hidden && $$("#trGrid .card").length === 5, `trends tab shows an image grid: ${$$("#trGrid .card").length} cards`);
+ok(!$("#trends").hidden && $$("#trGrid .card").length === 3, `trends tab (추천) shows popular+featured photos but not the wiki news: ${$$("#trGrid .card").length} cards`);
 ok(!$("#trLang") && !$("#trChips"), "no country/language selector or word chips");
 ok(/2026-10-24/.test($("#trNote").textContent), "trend note shows date");
-$$("#trSeg button")[2].click(); ok($$("#trGrid .card").length === 2, "인기 사진 filter shows only popular photos");
-$$("#trSeg button")[1].click(); ok($$("#trGrid .card").length === 3, "요즘 화제 filter shows only wiki news photos");
-$$("#trSeg button")[0].click(); ok($$("#trGrid .card").length === 5, "전체 shows all");
+ok($$("#trTopics button").length === 3 && /할로윈 D-4/.test($("#trTopics").textContent) && /벚꽃 ▲40%/.test($("#trTopics").textContent), "trend topic chips: season/event + rising with growth: " + $("#trTopics").textContent);
+ok(/가져오지 못했어요 \(네이버 API HUB/.test($("#trNote").textContent) === false, "dl ok -> no error note");
+$$("#trSeg button")[1].click(); ok($$("#trGrid .card").length === 2, "인기 사진 filter shows only popular photos");
+$$("#trSeg button")[2].click(); ok($$("#trGrid .card").length === 1, "잘 찍은 사진 filter shows featured pictures");
+$$("#trSeg button")[3].click(); ok($$("#trGrid .card").length === 3, "오늘의 화제 filter shows only wiki news photos");
+$$("#trSeg button")[0].click(); ok($$("#trGrid .card").length === 3, "추천 excludes news");
+$$("#trTopics button")[0].click(); await tick(100); ok($("#q").value === "할로윈 호박" && searchCalls.some((u) => u.includes(encodeURIComponent("할로윈 호박"))), "topic chip starts a search");
+$("#tabTr").click(); await tick(60); $$("#trSeg button")[3].click();
 ok($$("#trGrid .card .tag").some((t) => t.textContent === "위키백과"), "wiki items labelled 위키백과");
 $("#trGrid .card").click(); await tick(60); ok(!$("#viewer").hidden && /손흥민/.test($("#vtitle").textContent), "trend image opens in viewer");
 $("#vfab").click(); await tick(60);
@@ -229,6 +234,105 @@ $("#gear").click(); w.dispatchEvent(Object.assign(new w.Event("keydown", { bubbl
 $("#tabBm").click(); await tick(60);
 $("#bmq").value = "abc"; $("#bmq").dispatchEvent(new w.Event("input", { bubbles: true })); ok(!$("#bmClear").hidden, "bookmark search ✕ shows");
 $("#bmClear").click(); ok($("#bmq").value === "" && run("S.bmq") === "", "bookmark search ✕ clears");
+
+// ======== 9차: 비공개 모드 · 취향 학습 · 톤/팔레트 · 북마크 분석 · 부분 검색 ========
+// 캔버스·이미지 로딩·IndexedDB 는 jsdom 에 없으므로 가짜로 대체합니다.
+const pastel = new Uint8ClampedArray(32 * 32 * 4); for (let i = 0; i < 32 * 32; i++) pastel.set([255, 200, 200, 255], i * 4);
+let canvasData = pastel;
+w.HTMLCanvasElement.prototype.getContext = () => ({ drawImage() {}, getImageData: () => ({ data: canvasData }) });
+w.HTMLCanvasElement.prototype.toBlob = function (cb) { cb(new w.Blob(["c"], { type: "image/jpeg" })); };
+w.Image = class { set src(v) { this._s = v; setTimeout(() => this.onload && this.onload(), 0); } get src() { return this._s; } get naturalWidth() { return 400; } get naturalHeight() { return 300; } };
+run('DB._m = []; DB.all = async () => DB._m.map((x) => ({ ...x })); DB.put = async (o) => { DB._m = DB._m.filter((x) => x.id !== o.id); DB._m.push(o); return true; }; DB.del = async (id) => { DB._m = DB._m.filter((x) => x.id !== id); return true; };');
+const item = (id, tags, extra = {}) => ({ id, key: id, title: "t" + id, thumb: `https://x.test/${id}.jpg`, full: `https://x.test/${id}_f.jpg`, page: "p", src: "pixabay", w: 400, h: 300, tags, ...extra });
+run(`globalThis.__i = ${JSON.stringify(item("n1", ["cat", "sofa"]))}`);
+
+// 톤/팔레트 분석
+const pi = run("pixelInfo({})");
+ok(pi && pi.an && pi.an.tone === "pastel" && pi.an.temp === "warm" && pi.an.pal.length >= 1 && /^#[0-9a-f]{6}$/.test(pi.an.pal[0].hex), "pixelInfo adds tone/temp/palette: " + JSON.stringify(pi?.an && { t: pi.an.tone, w: pi.an.temp, p: pi.an.pal[0] }));
+// 톤 필터 판정 (모르는 이미지는 통과)
+ok(JSON.stringify(run('(() => { S.tone = "pastel"; const p = predTone(), r = [p({ _it: { an: { tone: "pastel" } } }), p({ _it: { an: { tone: "dark" } } }), p({ _it: {} })]; S.tone = ""; return r; })()')) === "[true,false,true]", "tone filter: match passes, other tone dropped, unknown passes");
+ok(JSON.stringify(run('(() => { S.tone = "warm"; const p = predTone(), r = [p({ _it: { an: { tone: "dark", temp: "warm" } } }), p({ _it: { an: { tone: "dark", temp: "cool" } } })]; S.tone = ""; return r; })()')) === "[true,false]", "warm/cool filter uses color temperature");
+ok($$("#tones button").length === 9 && $$("#tones button")[0].textContent === "전체", "filter panel has tone row");
+$("#filterBtn").click(); $$("#tones button")[1].click(); ok(run("S.tone") === "pastel" && $("#filterBadge").textContent === "1", "tone button sets the filter and badge"); $("#filterReset").click(); ok(run("S.tone") === "" && $("#filterBadge").textContent === "", "reset clears tone"); $("#filterClose").click();
+
+// 취향 학습: 기본 꺼짐, 켜면 학습, 비공개 모드에서는 멈춤
+ok(run("S.taste") === false && run("Taste.isEmpty()"), "taste learning is OFF by default and empty");
+run("learnFrom(__i, 3)"); ok(run("Taste.isEmpty()"), "off -> nothing learned");
+$("#gear").click(); ok($("#sTaste").checked === false && $("#tasteView").hidden, "settings: taste checkbox off"); $("#sTaste").checked = true; $("#sTaste").dispatchEvent(new w.Event("change")); ok(run("S.taste") === true && run("LS.get('tasteOn', false)") === true, "taste turned on and saved"); $("#closeSet").click();
+run("learnFrom(__i, 3); learnFrom(__i, 3)"); ok(run("Taste.top(3).includes('cat')") && run("Taste.affinity(['cat'])") > 0.5, "learns tags from a liked image: " + run("Taste.top(3)"));
+ok(w.localStorage.getItem("taste") && !/cat.*x\.test/.test(w.localStorage.getItem("taste")) && !/https?:/.test(w.localStorage.getItem("taste")), "stored taste has only aggregated scores (no urls)");
+run('learnFrom({ ...__i, adult: true, tags: ["secret", "adultx"] }, 3)'); ok(!run("Taste.top(20)").includes("secret"), "adult-flagged images are never learned");
+run('learnFrom({ ...__i, grp: "news", tags: [], title: "손흥민 경기" }, 3)'); ok(!run("Taste.top(20)").some((k) => k.includes("손흥민")), "news (person/event) titles are not learned");
+// 순서 조정: 취향에 맞는 이미지가 같은 순위의 다른 이미지보다 위로
+const scores = run(`(() => { M.reset(); M.begin("sea"); M.merge([{ src: { id: "pixabay", w: 1 }, items: [{ ...__i, tags: ["plain", "other"], full: "https://x.test/a", title: "A" }, { ...__i, tags: ["cat", "sofa"], full: "https://x.test/b", title: "B" }], base: 0 }]); const r = [...M.pend.values()].map((e) => [e.it.title, e.score]); M.reset(); return r; })()`);
+const sa = Object.fromEntries(scores);
+ok(sa.B > sa.A, `taste re-ranks results (rank 2 liked image beats rank 1 neutral): A=${sa.A?.toFixed(5)} B=${sa.B?.toFixed(5)}`);
+
+// 비공개 모드
+ok(!$("#privBtn").hidden && $("#privBtn").getAttribute("aria-label") === "비공개 모드" && run("S.priv") === false, "private mode icon exists, off by default");
+$("#privBtn").click(); ok(run("S.priv") === true && w.document.body.classList.contains("priv") && $("#privBtn").getAttribute("aria-pressed") === "true", "private mode on: body.priv + pressed");
+ok(run("tasteOn()") === false, "private mode disables taste");
+const tvBefore = run("JSON.stringify(Taste.view())"); run("learnFrom(__i, 5); learnFrom({ ...__i, tags: ['brandnew1', 'brandnew2'] }, 5)"); ok(run("JSON.stringify(Taste.view())") === tvBefore, "private mode: learning paused");
+const scoresP = Object.fromEntries(run(`(() => { M.reset(); M.begin("sea"); M.merge([{ src: { id: "pixabay", w: 1 }, items: [{ ...__i, tags: ["plain", "other"], full: "https://x.test/a", title: "A" }, { ...__i, tags: ["cat", "sofa"], full: "https://x.test/b", title: "B" }], base: 0 }]); const r = [...M.pend.values()].map((e) => [e.it.title, e.score]); M.reset(); return r; })()`));
+ok(scoresP.A > scoresP.B, "private mode: no taste re-ranking");
+$("#tabBm").click(); await tick(40); ok(run("S.view") !== "bm", "private mode: bookmarks cannot be opened");
+run("toggleBookmark(__i)"); await tick(40); ok(run("DB._m.length") === 0, "private mode: bookmarking blocked");
+$("#homeBtn").click(); await tick(60); ok($$("#homeChips button.mine").length === 0, "private mode: no personalised home chips");
+$("#privBtn").click(); ok(run("S.priv") === false && !w.document.body.classList.contains("priv"), "private mode off again");
+ok(w.localStorage.getItem("priv") === "false", "private mode state is remembered");
+
+// 북마크 분석 (저장할 때 톤·팔레트) + 취향 반영
+run("toggleBookmark(__i)"); await tick(80);
+const rec = run("DB._m[0]"); ok(rec && rec.an && rec.an.tone === "pastel" && rec.an.pal.length >= 1, "bookmark stores tone/palette analysis: " + JSON.stringify(rec?.an?.tone));
+ok(run("Taste.affinity(['sofa'])") > 0.5, "bookmarking teaches taste");
+// 예전 북마크(분석 없음)는 북마크 화면에서 뒤에서 분석
+run(`DB._m.push({ id: "old1", title: "old", thumb: "https://x.test/old1.jpg", full: "https://x.test/old1_f.jpg", page: "p", src: "pixabay", w: 400, h: 300, tags: ["old"], ts: 1, blob: new Blob(["x"]) }); DB._m.push({ id: "old2", title: "old2", thumb: "https://x.test/old2.jpg", full: "https://x.test/old2_f.jpg", page: "p", src: "pixabay", w: 400, h: 300, tags: ["old"], ts: 2, blob: new Blob(["x"]) });`);
+$("#tabBm").click(); await tick(300);
+ok(run("DB._m.every((x) => x.an)"), "old bookmarks get analysed in the background (stored inside the bookmark)");
+await tick(200);
+ok(!$("#bmfil").hidden && $$("#bmfil button").some((b) => /파스텔/.test(b.textContent)) && $$("#bmfil .dot").length >= 1, "bookmark tone/color filter chips shown: " + $$("#bmfil button").map((b) => b.textContent).join("|"));
+const nAll = $$("#bmgrid .card").length; $$("#bmfil button").find((b) => /파스텔/.test(b.textContent)).click(); await tick(60);
+ok(nAll === 3 && $$("#bmgrid .card").length === 3, "tone filter keeps pastel bookmarks (" + nAll + ")");
+run('DB._m[1].an = { tone: "dark", temp: "cool", cols: ["blue"], pal: [] }'); $$("#bmfil button").find((b) => /파스텔/.test(b.textContent)).click(); await tick(40);
+$("#tabFeed").click(); $("#tabBm").click(); await tick(60);
+const dk = $$("#bmfil button").find((b) => /어두운/.test(b.textContent)); dk.click(); await tick(60);
+ok($$("#bmgrid .card").length === 1, "choosing 어두운 shows only dark bookmarks");
+run("S.bmTone = ''; S.bmColor = ''");
+
+// 보드 기반 추천
+run(`DB._m.forEach((x) => { x.board = "여행"; x.tags = ["beach", "summer"]; })`); run('S.board = "여행"'); $("#tabFeed").click(); $("#tabBm").click(); await tick(80);
+ok(!$("#bmrecRow").hidden, "board with 2+ bookmarks offers 어울리는 이미지");
+searchCalls.length = 0; $("#bmrecBtn").click(); await tick(900);
+ok(!$("#bmrec").hidden && /beach summer/.test($("#bmrecq").textContent) && searchCalls.some((u) => u.includes(encodeURIComponent("beach summer"))), "board recommendation searches by the board's top tags: " + $("#bmrecq").textContent);
+ok($$("#bmrecGrid .card").length >= 1, "board recommendation shows images");
+$("#bmrecClose").click(); ok($("#bmrec").hidden, "board recommendation closes");
+run('S.board = "__all"');
+
+// 부분 검색
+cfgCaption = true; run("cfg.caption = true; capOff = false");
+const calls = []; const oldFetch = w.fetch;
+w.fetch = async (url, opt) => { if (String(url).startsWith("/api/caption")) { calls.push(opt); return { ok: true, status: 200, json: async () => ({ q: "red flower" }) }; } return oldFetch(url, opt); };
+$("#tabFeed").click(); run('startSearch("sunset")'); await tick(900);
+$("#grid .card").click(); await tick(120);
+ok(!$("#viewer").hidden && !$("#vcrop").hidden, "viewer shows 부분 검색 button when AI caption is available");
+$("#vcrop").click(); ok(!$("#vcropui").hidden, "crop overlay opens");
+// 너무 작은 영역은 거절
+run("setCr({ x: 0.4, y: 0.4, w: 0.01, h: 0.01 })"); w.HTMLElement.prototype.getBoundingClientRect = function () { return { left: 0, top: 0, width: 400, height: 300, right: 400, bottom: 300 }; };
+$("#vcropui").hidden = false; await run("cropGo()"); ok(!calls.length, "tiny crop area is rejected without calling AI");
+$("#vcrop").click(); run("setCr({ x: 0.1, y: 0.2, w: 0.5, h: 0.5 })"); await run("cropGo()"); await tick(200);
+ok(calls.length === 1 && calls[0].method === "POST", "crop sends only the selected region to AI caption");
+ok(/red flower/.test($("#vsimq").textContent) && /✂/.test($("#vsimq").textContent), "similar images now follow the cropped part: " + $("#vsimq").textContent);
+ok($("#vcropui").hidden, "crop overlay closes after search");
+$("#vcrop").click(); $("#vcno").click(); ok($("#vcropui").hidden, "취소 closes crop overlay");
+w.fetch = oldFetch;
+// 뷰어 팔레트·톤·👍
+run("lv().list[lv().cur].an = { tone: 'pastel', temp: 'warm', cols: ['pink'], pal: [{ hex: '#ffc8c8', name: 'pink', share: 0.6 }] }; renderVInfo(lv().list[lv().cur])"); run("lv().crop = false; updateSimHead()");
+ok(!$("#vinfo").hidden && $$("#vpal .sw").length === 1 && /파스텔 · 따뜻한/.test($("#vtone").textContent), "viewer shows palette swatches and tone: " + $("#vtone").textContent);
+ok(!$("#vsimtone").hidden && /같은 톤만/.test($("#vsimtone").textContent), "same-tone toggle available");
+$("#vsimtone").click(); ok(run("lv().toneOnly") === true && /✓/.test($("#vsimtone").textContent), "same-tone toggle turns on");
+ok(!$("#vlike").hidden && !$("#vdis").hidden, "👍/👎 shown while taste learning is on");
+const aff0 = run("Taste.affinity(['sunset'])"); run("curItem().tags = ['sunset']"); $("#vlike").click(); ok(run("Taste.affinity(['sunset'])") > aff0, "👍 teaches taste");
+$("#vdis").click(); run("S.taste = false"); $("#vfab").click(); await tick(60);
 
 ok(errors.length === 0, "no script errors" + (errors.length ? ": " + errors.slice(0, 3).join(" ; ") : ""));
 console.log(fail ? `\n${fail} failed` : "\nall passed"); process.exit(fail ? 1 : 0);
