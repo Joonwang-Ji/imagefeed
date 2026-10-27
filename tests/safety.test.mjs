@@ -21,10 +21,15 @@ ok(!judge(sc({ Porn: 0.7 }), 0.03, "").adult, "Porn score with no skin at all is
 ok(judge(sc({ Porn: 0.9 }), 0.5, "church service").explicit, "even in a safe context, overwhelming evidence still flags");
 ok(!judge(sc({ Sexy: 0.5, Porn: 0.2 }), 0.4, "").adult, "moderate scores are not flagged");
 ok(judge(sc({ Sexy: 0.5, Porn: 0.5 }), 0.4, "").adult, "combined Porn+Sexy evidence is flagged");
+ok(!judge(sc({ Sexy: 0.9 }), 0.5, "", 0.2).adult, "warm wood table with colorful props (other colors >=8%) is NOT flagged by Sexy alone");
+ok(!judge(sc({ Sexy: 0.9 }), 0.5, "brown wooden table with candy canes").adult, "wood/table/christmas context is strict");
+ok(judge(sc({ Porn: 0.95 }), 0.5, "", 0.2).explicit, "overwhelming Porn still flags even with props");
 const px = (r, g, b, n = 100) => Array.from({ length: n }).flatMap(() => [r, g, b, 255]);
 ok(CT.skin(px(224, 172, 135)) > 0.9, "skin tone pixels -> high skin share");
 ok(CT.skin(px(30, 90, 200)) === 0 && CT.skin(px(240, 240, 240)) === 0, "blue and white pixels -> no skin");
 ok(CT.skin(px(60, 40, 30)) === 0, "dark brown book cover -> no skin");
+ok(CT.vivid(px(220, 30, 60)) > 0.9 && CT.vivid(px(30, 140, 60)) > 0.9, "red/green props count as vivid non-skin colors");
+ok(CT.vivid(px(224, 172, 135)) === 0 && CT.vivid(px(200, 150, 100)) === 0, "skin/wood tones are not vivid");
 
 // ======== 2) 화면: 트렌드에서 노골적 이미지 제거, 블러 오탐 줄이기, 이미지별 블러 해제, 북마크 재검사 ========
 const html = fs.readFileSync(ROOT + "index.html", "utf8").replace(/<script[^>]*><\/script>/g, "");

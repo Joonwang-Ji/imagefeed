@@ -95,6 +95,19 @@
     return tot ? sk / tot : 0;
   }
 
+  // 살색이 아닌 '선명한 색' 픽셀의 비율(0~1): 빨강·초록·파랑처럼 채도가 높고 살색 계열(주황~노랑 사이)이 아닌 색.
+  // 나무 탁자 위에 소품(사탕·솔잎·장식)을 놓은 사진처럼 살색 비슷한 배경에 다른 물건이 많이 보이는 사진을 가려내는 데 씁니다.
+  function vivid(rgba) {
+    const n = rgba.length >> 2; let v = 0, tot = 0;
+    for (let i = 0; i < n; i++) {
+      if (rgba[i * 4 + 3] < 128) continue;
+      const r = rgba[i * 4], g = rgba[i * 4 + 1], b = rgba[i * 4 + 2]; tot++;
+      const [h, s, val] = hsvOf(r, g, b);
+      if (s > 0.5 && val > 0.3 && (h < 5 || h > 55)) v++;
+    }
+    return tot ? v / tot : 0;
+  }
+
   // ---------- 톤(분위기) 분류 ----------
   // 이미지 한 장을 "밝기·채도 분위기(tone)"와 "색 온도(temp)"로 나눕니다. (핀터레스트의 톤 검색처럼, 사진에서 톤만 뽑아 필터로 씀)
   //  tone: mono(흑백·무채색) / dark(어두운) / vivid(선명한) / pastel(파스텔) / bright(밝은) / muted(차분한)
@@ -165,7 +178,7 @@
       .map((c) => ({ hex: "#" + hex2(c.r) + hex2(c.g) + hex2(c.b), name: bucket(c.r, c.g, c.b), share: +(c.w / tot).toFixed(3) }));
   }
 
-  const api = { classify, bucket, shares, similarity, topColor, skin, tone, palette, TONE_KO };
+  const api = { classify, bucket, shares, similarity, topColor, skin, vivid, tone, palette, TONE_KO };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.ColorTools = api;
 })(typeof self !== "undefined" ? self : this);

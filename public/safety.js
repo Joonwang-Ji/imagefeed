@@ -6,12 +6,13 @@
 //  - adult   : 블러 처리할 이미지
 //  - explicit: 노골적인 이미지(Porn·Hentai 점수가 높음). 트렌드에서는 블러가 아니라 아예 뺍니다.
 (function (root) {
-  const SAFE_CTX = /bible|scripture|gospel|church|cross|pray|worship|hymn|sermon|book|pages?|reading|library|study|food|cake|dessert|baby|성경|말씀|교회|십자가|기도|예배|찬양|설교|책|도서|공부|음식|요리|아기/i;
+  const SAFE_CTX = /wood(en)?|table|desk|christmas|xmas|decor|candy|candle|ornament|pine|flat.?lay|still.?life|나무|목재|테이블|탁자|책상|크리스마스|장식|소품|사탕|캔들|bible|scripture|gospel|church|cross|pray|worship|hymn|sermon|book|pages?|reading|library|study|food|cake|dessert|baby|성경|말씀|교회|십자가|기도|예배|찬양|설교|책|도서|공부|음식|요리|아기/i;
   // scores: { Porn, Hentai, Sexy, Neutral, Drawing }, skin: 살색 비율(모르면 null), ctx: 제목·태그 글
-  function judge(scores, skin, ctx) {
+  function judge(scores, skin, ctx, other) {
     const s = scores || {}, ps = (s.Porn || 0) + (s.Hentai || 0), sx = s.Sexy || 0, hen = s.Hentai || 0;
     const sk = skin == null ? 0.3 : skin; // 살색 비율을 못 구하면 중간값으로 보아 점수만으로 판단
-    if (SAFE_CTX.test(String(ctx || ""))) { // 성경·책·교회처럼 평범한 맥락: 아주 확실할 때만
+    // other: 살색 아닌 선명한 색의 비율. 8% 이상이면 소품이 놓인 정물 사진일 가능성이 커서 평범한 맥락처럼 엄격하게 봅니다.
+    if (SAFE_CTX.test(String(ctx || "")) || (other || 0) >= 0.08) { // 성경·책·교회처럼 평범한 맥락: 아주 확실할 때만
       const explicit = ps > 0.85 && sk >= 0.3;
       return { adult: explicit || (sx > 0.97 && sk >= 0.4), explicit };
     }

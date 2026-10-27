@@ -375,9 +375,9 @@ run("lv().list[lv().cur].an = { tone: 'pastel', temp: 'warm', cols: ['pink'], pa
 ok(!$("#vinfo").hidden && $$("#vpal .sw").length === 1 && /파스텔 · 따뜻한/.test($("#vtone").textContent), "viewer shows palette swatches and tone: " + $("#vtone").textContent);
 ok(!$("#vsimtone").hidden && /같은 톤만/.test($("#vsimtone").textContent), "same-tone toggle available");
 $("#vsimtone").click(); ok(run("lv().toneOnly") === true && /✓/.test($("#vsimtone").textContent), "same-tone toggle turns on");
-ok(!$("#vlike").hidden && !$("#vdis").hidden, "👍/👎 shown while taste learning is on");
+ok(!$("#vlike").hidden && !$("#vdis"), "👍 shown while taste learning is on; 👎 merged into 추천 안 함");
 const aff0 = run("Taste.affinity(['sunset'])"); run("curItem().tags = ['sunset']"); $("#vlike").click(); ok(run("Taste.affinity(['sunset'])") > aff0, "👍 teaches taste");
-$("#vdis").click(); run("S.taste = false"); $("#vfab").click(); await tick(60);
+run("S.taste = false"); $("#vfab").click(); await tick(60);
 
 // ======== 10차: 종교 주제 제외 · 부분 검색 상자 · 보정 칩 · 취향/추천 안 함 지우기 ========
 const { offTopic } = await import("../src/topics.js");
@@ -470,7 +470,8 @@ run('S.taste = true; S.priv = false; startSearch("sunset")'); await tick(900);
   fireP(card, "pointerdown"); await tick(200); ok($("#cardMenu").hidden, "menu does not open before the hold time");
   await tick(380);
   ok(!$("#cardMenu").hidden && !$("#cardMenuBg").hidden, "holding a card opens the small menu");
-  ok(["더 보기", "덜 보기", "추천 안 함", "북마크·보드"].every((t) => $$("#cardMenu button").some((b) => !b.hidden && b.textContent.trim() === t)), "menu has 더 보기 / 덜 보기 / 추천 안 함 / 북마크·보드: " + $$("#cardMenu button").map((b) => b.textContent.trim()));
+  ok(["더 보기", "추천 안 함", "북마크·보드"].every((t) => $$("#cardMenu button").some((b) => !b.hidden && b.textContent.trim() === t)), "menu has 더 보기 / 추천 안 함 / 북마크·보드 (덜 보기 merged): " + $$("#cardMenu button").map((b) => b.textContent.trim()));
+  { const ev = new w.Event("selectstart", { bubbles: true, cancelable: true }); card.dispatchEvent(ev); ok(ev.defaultPrevented, "text selection (selectstart) is blocked on cards"); const inp = $("#q"); const e2 = new w.Event("selectstart", { bubbles: true, cancelable: true }); inp.dispatchEvent(e2); ok(!e2.defaultPrevented, "inputs stay selectable"); };
   fireP(card, "pointerup"); card.click(); await tick(30);
   ok($("#viewer").hidden && !$("#cardMenu").hidden, "releasing the finger after a long press does not open the viewer or close the menu");
   $("#cardMenuBg").click(); ok(!$("#cardMenu").hidden, "a tap right after opening (the release) is ignored by the backdrop");
@@ -484,10 +485,11 @@ run('S.taste = true; S.priv = false; startSearch("sunset")'); await tick(900);
   const openMenu = async (c) => { await tick(760); c.dispatchEvent(new w.Event("contextmenu", { bubbles: true, cancelable: true })); await tick(460); };
   // 더 보기 / 덜 보기
   $("#cmLike").click(); ok($("#cardMenu").hidden && /더 보여/.test($("#toast").textContent), "더 보기 closes the menu and confirms");
-  await openMenu(card); $("#cmDis").click(); ok(/덜 보여/.test($("#toast").textContent), "덜 보기 confirms");
+  ok(!$("#cmDis"), "덜 보기 button no longer exists (merged into 추천 안 함 > 관심 없어요)");
+  await openMenu(card);
   // 학습이 꺼져 있으면 두 버튼은 숨김
   run("S.taste = false"); await tick(760); card.dispatchEvent(new w.Event("contextmenu", { bubbles: true, cancelable: true }));
-  ok($("#cmLike").hidden && $("#cmDis").hidden && !$("#cmHide").hidden, "taste off: 더 보기/덜 보기 are hidden, 추천 안 함 stays"); await tick(460); $("#cardMenuBg").click(); run("S.taste = true");
+  ok($("#cmLike").hidden && !$("#cmHide").hidden, "taste off: 더 보기 is hidden, 추천 안 함 stays"); await tick(460); $("#cardMenuBg").click(); run("S.taste = true");
   // 추천 안 함 (뷰어 없이)
   const key = run("keyOf")(card._it);
   await openMenu(card); $("#cmHide").click();

@@ -178,30 +178,48 @@ class Masonry {
   // 이미지를 불러온 뒤 비율·색을 알게 되어 필터 조건에서 벗어난 카드는 목록에서 뺍니다.
   recheck(c) {
     if (!this.pred || this.pred(c) || !this.cards.includes(c)) return;
-    this.cards = this.cards.filter((x) => x !== c); c.remove(); this.onChange?.();
+    this.cards = this.cards.filter((x) => x !== c); c.remove(); this.onChange?.(); this.balLater();
   }
   // 이미지가 열리지 않는 카드를 목록에서 완전히 뺍니다. (필터가 바뀌어도 되살아나지 않음)
   drop(c) {
     const had = this.cards.includes(c);
     this.all = this.all.filter((x) => x !== c); this.cards = this.cards.filter((x) => x !== c); c.remove();
     if (had) this.onChange?.();
+    this.balLater();
   }
   count() { const w = this.el.clientWidth || innerWidth; return w < 560 ? 2 : w < 860 ? 3 : w < 1180 ? 4 : 5; }
   build() {
     this.n = this.count(); this.el.textContent = ""; this.cols = []; this.hs = Array(this.n).fill(0);
     for (let i = 0; i < this.n; i++) { const c = document.createElement("div"); c.className = "col"; this.el.appendChild(c); this.cols.push(c); }
     for (const c of this.cards) this.place(c);
+    this.balLater();
   }
+  // 칸 높이를 실제로 재서, 가장 긴 칸의 맨 아래 카드를 가장 짧은 칸으로 옮겨 양쪽 길이를 맞춥니다.
+  // (카드가 빠지거나 이미지 비율이 달라져 한쪽만 길어진 채 [더 보기]가 나오는 것을 막음. 맨 아래 몇 장의 순서만 바뀔 수 있어요.)
+  balance() {
+    if (this.n < 2 || !this.cols.length || !this.el.offsetParent) return;
+    const H = (c) => { const l = c.lastElementChild; return l ? l.getBoundingClientRect().bottom - c.getBoundingClientRect().top : 0; };
+    for (let g = 0; g < 40; g++) {
+      const hs = this.cols.map(H); let hi = 0, lo = 0;
+      hs.forEach((h, i) => { if (h > hs[hi]) hi = i; if (h < hs[lo]) lo = i; });
+      const card = this.cols[hi].lastElementChild; if (hi === lo || !card) return;
+      const ch = card.getBoundingClientRect().height + 8, diff = hs[hi] - hs[lo];
+      if (this.cols[hi].children.length < 2 || Math.abs(diff - 2 * ch) >= diff) return; // 옮겨서 더 좋아질 때만
+      this.cols[lo].appendChild(card);
+    }
+  }
+  balLater() { clearTimeout(this._bt); this._bt = setTimeout(() => this.balance(), 250); clearTimeout(this._bt2); this._bt2 = setTimeout(() => this.balance(), 1500); }
   place(c) { let k = 0; for (let i = 1; i < this.n; i++) if (this.hs[i] < this.hs[k]) k = i; this.cols[k].appendChild(c); this.hs[k] += 1 / c._r + 0.04; }
   add(cards) {
     this.all.push(...cards);
     const ok = this.pred ? cards.filter(this.pred) : cards;
     if (!this.cols.length || this.n !== this.count()) { this.cards.push(...ok); this.build(); return; }
     for (const c of ok) { this.cards.push(c); this.place(c); }
+    this.balLater();
   }
   setFilter(p) { this.pred = p; this.cards = p ? this.all.filter(p) : this.all.slice(); this.build(); }
   clear() { this.all = []; this.cards = []; this.cols = []; this.hs = []; this.el.textContent = ""; }
-  check() { if (this.cols.length && this.n !== this.count()) this.build(); }
+  check() { if (this.cols.length && this.n !== this.count()) this.build(); else this.balLater(); }
   // 카드 순서를 다시 매깁니다 (이미 불러온 이미지는 그대로 두고 칸만 옮김)
   reorder(cmp) { this.cards.sort(cmp); this.build(); }
 }
@@ -280,7 +298,8 @@ function skinOf(img) {
     const N = 48, c = document.createElement("canvas"); c.width = c.height = N;
     const x = c.getContext("2d", { willReadFrequently: true });
     x.drawImage(img, 0, 0, N, N);
-    return window.ColorTools.skin(x.getImageData(0, 0, N, N).data);
+    const d = x.getImageData(0, 0, N, N).data;
+    return { skin: window.ColorTools.skin(d), other: window.ColorTools.vivid(d) };
   } catch { return null; }
 }
 // blob(작은 이미지)에서 색 정보만 뽑습니다. 화면에는 표시하지 않음.
@@ -388,7 +407,7 @@ async function pump() {
         const p = await m.classify(img);
         const s = Object.fromEntries(p.map((x) => [x.className, x.probability]));
         // 점수만 보지 않고 살색 비율·제목·태그 맥락도 함께 봅니다 (성경책 위의 손 같은 오탐 방지)
-        const v = window.Safety.judge(s, skinOf(img), `${it.title || ""} ${(it.tags || []).join(" ")}`);
+        const sk = skinOf(img), v = window.Safety.judge(s, sk ? sk.skin : null, `${it.title || ""} ${(it.tags || []).join(" ")}`, sk ? sk.other : 0);
         if (v.explicit && el.closest("#trGrid")) { it.dropped = true; trM.drop(el); } // 트렌드: 노골적인 이미지는 블러가 아니라 아예 뺌
         else if (v.adult) { it.adult = true; it.ai = true; el.dataset.st = "flag"; }
         else el.dataset.st = "ok";
@@ -1005,7 +1024,7 @@ function showItem(keepSim) {
   const img = $("#vimg"), token = ++vTok;
   zReset(); cropClose(); clearTimeout(dwellT);
   dwellT = setTimeout(() => { if (lv() && curItem() === it) learnFrom(it, 1); }, 7000); // 7초 넘게 보면 관심이 있는 것으로 보고 약하게 배움
-  $("#vlike").hidden = $("#vdis").hidden = !tasteOn(); $("#vcrop").hidden = !captionOn() || (it.adult && !it.safe);
+  $("#vlike").hidden = !tasteOn(); $("#vcrop").hidden = !captionOn() || (it.adult && !it.safe);
   renderVInfo(it);
   const hide = it.adult && (S.blur || it.avoidBlur) && !it.revealed;
   img.classList.toggle("blur", hide); $("#vveil").hidden = !hide;
@@ -1174,7 +1193,6 @@ $("#vsimtone").onclick = () => {
   l.m.setFilter(l.toneOnly ? (c) => !c._it.an?.tone || c._it.an.tone === l.tone : null); updateSimHead();
 };
 $("#vlike").onclick = () => { const it = curItem(); if (it) { learnFrom(it, 2); toast("이런 이미지를 더 보여 드릴게요"); } };
-$("#vdis").onclick = () => { const it = curItem(); if (it) { learnFrom(it, -3); toast("이런 이미지는 덜 보여 드릴게요"); } };
 
 // ----- 부분 검색: 이미지에서 찾고 싶은 영역을 상자로 고르고, 그 부분만 AI로 설명해 비슷한 이미지를 찾습니다 -----
 // 상자는 처음부터 이미지 가운데에 떠 있고, 안쪽을 끌면 옮기고, 네 모서리를 끌면 크기가 바뀝니다. (이미지 밖으로는 나가지 않음)
@@ -1646,12 +1664,16 @@ $("#selDel").onclick = async () => { // 실수 방지: 한 번 누르면 확인 
   updateCount(); exitSel(); toast(`${n}장을 북마크에서 삭제했어요`); renderBm();
 };
 
+// 길게 누를 때 글자가 파랗게 선택되는 것을 막습니다 (입력칸은 제외). 이미지를 끌어 가는 동작도 막습니다.
+document.addEventListener("selectstart", (e) => { const t = e.target, el = t && (t.nodeType === 1 ? t : t.parentElement); if (!el?.closest?.("input,textarea,select,[contenteditable],.selectable")) e.preventDefault(); });
+document.addEventListener("dragstart", (e) => { if (e.target?.tagName === "IMG") e.preventDefault(); });
+
 // ---------- 카드 길게 누르기 메뉴 ----------
 const CM = { it: null, at: 0 };
 function closeCardMenu() { $("#cardMenu").hidden = true; $("#cardMenuBg").hidden = true; CM.it = null; }
 function showCardMenu(el, it) {
   CM.it = it; CM.at = Date.now();
-  $("#cmLike").hidden = $("#cmDis").hidden = !tasteOn();
+  $("#cmLike").hidden = !tasteOn();
   $("#cmBoard").hidden = S.priv; setLbl($("#cmBoard"), S.bmIds.has(it.id) ? "보드·메모" : "북마크·보드");
   const m = $("#cardMenu"); $("#cardMenuBg").hidden = false; m.hidden = false;
   const r = el.getBoundingClientRect(), mw = m.offsetWidth, mh = m.offsetHeight;
@@ -1664,7 +1686,6 @@ const cmGuard = (fn) => () => { if (Date.now() - CM.at < 450) return; fn(CM.it);
 $("#cardMenuBg").addEventListener("click", cmGuard(closeCardMenu));
 addEventListener("scroll", () => { if (!$("#cardMenu").hidden) closeCardMenu(); }, { passive: true, capture: true });
 $("#cmLike").onclick = cmGuard((it) => { closeCardMenu(); if (it) { learnFrom(it, 2); toast("이런 이미지를 더 보여 드릴게요"); } });
-$("#cmDis").onclick = cmGuard((it) => { closeCardMenu(); if (it) { learnFrom(it, -3); toast("이런 이미지는 덜 보여 드릴게요"); } });
 $("#cmHide").onclick = cmGuard((it) => { closeCardMenu(); if (it) openHide(it, null); });
 $("#cmBoard").onclick = cmGuard((it) => { closeCardMenu(); if (it) openBoardSheet(it); });
 
@@ -1807,7 +1828,7 @@ function applyPriv() {
   document.body.classList.toggle("priv", S.priv);
   $("#privBtn").classList.toggle("on", S.priv); $("#privBtn").setAttribute("aria-pressed", String(S.priv));
   if (S.priv) { if (S.view === "bm") setView("feed"); recClose(); }
-  if (S.priv && !$("#viewer").hidden) { $("#vlike").hidden = $("#vdis").hidden = true; }
+  if (S.priv && !$("#viewer").hidden) { $("#vlike").hidden = true; }
 }
 $("#privBtn").onclick = () => {
   S.priv = !S.priv; LS.set("priv", S.priv); applyPriv();
