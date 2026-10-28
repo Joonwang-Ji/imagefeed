@@ -14,10 +14,18 @@ for (const d of ["2026-10-10", "2026-10-31", "2027-10-25"]) ok(!seasonTopics(at(
 for (const d of ["2026-05-10", "2026-05-24", "2027-05-01"]) ok(!seasonTopics(at(d), 20).some((x) => /부처님|연등/.test(x.label + x.q)), "no other-faith holiday on " + d);
 ok(seasonTopics(at("2026-04-01"), 20).some((x) => x.label === "부활절") && seasonTopics(at("2026-12-10"), 20).some((x) => x.label === "크리스마스"), "Easter and Christmas still shown");
 const labels = now.filter((x) => x.kind === "event").map((x) => x.label);
-ok(!labels.includes("빼빼로데이"), "Pepero day (15 days away, lead 12) not shown yet");
+ok(labels.includes("빼빼로데이") && labels.includes("수능"), "Oct 27: Pepero day (15 days) and CSAT (23 days) are inside the 30-day preview");
+ok(!labels.includes("대림절") && !labels.includes("크리스마스"), "Oct 27: Advent (33 days) and Christmas (59 days) are beyond the 30-day preview");
 ok(now.some((x) => x.kind === "season"), "month season topics included");
 ok(now.filter((x) => x.kind === "season").every((x) => x.q && x.label), "season topics have label and query");
 
+// 한 달 앞 미리보기: 행사는 최소 30일 전부터, 달 끝(마지막 10일)이면 다음 달 계절 주제도 하나
+ok(seasonTopics(at("2026-10-12")).some((x) => x.label === "빼빼로데이" && x.days === 30), "Oct 12: Pepero day shown exactly 30 days ahead");
+ok(!seasonTopics(at("2026-10-11")).some((x) => x.label === "빼빼로데이"), "Oct 11: 31 days ahead is still too early");
+const prev = seasonTopics(at("2026-10-28")).filter((x) => x.kind === "season");
+ok(prev.some((x) => x.label === "늦가을" && x.days === 4), "Oct 28: next month's (November) season topic previewed, 4 days ahead: " + prev.map((x) => x.label + ":" + x.days));
+ok(!seasonTopics(at("2026-10-15")).some((x) => x.label === "늦가을"), "Oct 15: no next-month preview yet");
+ok(seasonTopics(at("2026-12-27")).some((x) => x.label === "한겨울" && x.days === 5), "Dec 27: January topic previewed across the year boundary");
 // 수능: 2026-11-19, 2027-11-18 (11월 셋째 주 목요일)
 ok(seasonTopics(at("2026-11-12")).some((x) => x.label === "수능" && x.days === 7), "Nov 12 2026: CSAT in 7 days");
 ok(seasonTopics(at("2027-11-10")).some((x) => x.label === "수능" && x.days === 8), "Nov 10 2027: CSAT in 8 days (Thursday Nov 18)");

@@ -15,3 +15,13 @@ binding = "AI"
 
 [observability]
 enabled = false
+
+# (선택) 트렌드 "최근 7일 누적"을 더 확실하게 하려면 아래 두 가지를 켜세요. 안 켜도 앱은 동작합니다(Cloudflare 캐시에 best-effort 로 쌓임).
+#  1) KV: Cloudflare 대시보드 Storage & Databases → KV 에서 네임스페이스를 만들고, 이 워커의 Bindings 에 변수 이름 TREND_KV 로 연결하거나 아래처럼 id 를 적습니다.
+#  2) 크론: 앱을 안 열어도 하루 한 번(매일 오전 6시 KST = 21:00 UTC) 인기 검색어를 쌓아 둡니다. (KV 가 있을 때 가장 확실)
+# [[kv_namespaces]]
+# binding = "TREND_KV"
+# id = "여기에_네임스페이스_ID"
+#
+# [triggers]
+# crons = ["0 21 * * *"]

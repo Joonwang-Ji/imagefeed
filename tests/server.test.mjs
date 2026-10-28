@@ -52,11 +52,14 @@ r = await worker.fetch(req("/api/trends?g=best&page=2"), { ...env, PIXABAY_KEY: 
 const pops = j.items.filter((i) => i.grp === "best");
 ok(pops.length === 2 && pops.some((i) => i.src === "pixabay") && pops.some((i) => i.src === "unsplash") && j.items.length === 2, "best: photos from pixabay + unsplash only: " + pops.map((p) => p.src));
 ok(!pops.some((i) => i.tags.includes("gore")), "hard-blocked tags dropped from best");
-ok(urlsOf(/pixabay\.com\/api\/.*editors_choice/).every((c) => /per_page=20&page=2/.test(c)) && urlsOf(/api\.unsplash\.com\/photos\?/).every((c) => /per_page=20&page=2/.test(c)), "best page 2 asks 20 per source from page 2");
+const pxc = urlsOf(/pixabay\.com\/api\/.*editors_choice/);
+ok(pxc.length === 2 && pxc.some((c) => /order=latest/.test(c)) && pxc.some((c) => /order=popular/.test(c)) && pxc.every((c) => /per_page=10&page=2/.test(c)), "best page 2: pixabay asks latest + popular (10 each) from page 2: " + pxc.length);
+ok(urlsOf(/api\.unsplash\.com\/photos\?/).length === 1 && urlsOf(/api\.unsplash\.com\/photos\?/).every((c) => /order_by=popular&per_page=20&page=1/.test(c)), "best page 2: unsplash makes ONE request (even page = popular, its page 1)");
 ok(!calls.some((c) => c.includes("commons.wikimedia.org")), "best-only view does not touch commons");
 calls.length = 0;
 r = await worker.fetch(req("/api/trends?page=1"), { ...env, PIXABAY_KEY: "k1", UNSPLASH_KEY: "k2" }); j = await r.json();
-ok(urlsOf(/pixabay\.com\/api\//).every((c) => /per_page=7&page=1/.test(c)), "all view asks only 7 per photo source");
+ok(urlsOf(/pixabay\.com\/api\//).length === 2 && urlsOf(/pixabay\.com\/api\//).every((c) => /per_page=4&page=1/.test(c)), "all view asks only a few (4+4 latest/popular) from pixabay");
+ok(urlsOf(/api\.unsplash\.com\/photos\?/).length === 1 && urlsOf(/api\.unsplash\.com\/photos\?/).every((c) => /order_by=latest&per_page=7&page=1/.test(c)), "all view: unsplash odd page asks latest, one request");
 ok(j.items.slice(0, 3).map((i) => i.grp).join() === "best,pick,best", "all view mixes best and pick: " + j.items.slice(0, 6).map((i) => i.grp));
 // 에디터 픽 이어 받기: 표를 되돌려 주면 같은 목록의 다음 쪽을 요청
 calls.length = 0;
@@ -388,6 +391,79 @@ ok(CATS.every((c) => c[2].length >= 5), "each category has >= 5 sub topics");
   caches.default.store.clear(); globalThis.fetch = mock("ok"); let sys = "";
   await worker.fetch(req("/api/trends"), { ...E4, AI: { run: async (m, b) => { sys = b.messages[0].content; return { response: "[0]" }; } } });
   ok(/names of people/i.test(sys) && /politics/i.test(sys) && /personal name/i.test(sys) && !/entertainment/i.test(sys), "AI prompt excludes people and name-like words, no entertainment allowance");
+  globalThis.fetch = base;
+}
+
+// ---- 15차: 구글 인기 검색어 7일 누적 ----
+{
+  const kst = (ms) => new Date(ms + 9 * 3600000).toISOString().slice(0, 10);
+  const day = (n) => kst(Date.now() - n * 86400000);
+  const item = (t, n) => `<item><title>${t}</title><ht:approx_traffic>1,000+</ht:approx_traffic><ht:news_item><ht:news_item_title>${n}</ht:news_item_title></ht:news_item></item>`;
+  const rssOf = (rows) => `<?xml version="1.0"?><rss xmlns:ht="https://trends.google.com/trending/rss"><channel>${rows.map((r) => item(r[0], r[1])).join("")}</channel></rss>`;
+  globalThis.caches = { default: { store: new Map(), match: async function (k) { const v = this.store.get(k.url); return v ? new Response(v) : undefined; }, put: async function (k, r) { this.store.set(k.url, await r.text()); } } };
+  const seed = (n, rows) => caches.default.store.set(`https://cache.local/gth?d=${day(n)}`, JSON.stringify(rows.map(([label, news]) => ({ label, q: label, news: [news], traffic: 0 }))));
+  const base = globalThis.fetch; let googleOk = true, today = [];
+  globalThis.fetch = async (url, opt) => { const u = String(url);
+    if (u.includes("trends.google.com")) { if (!googleOk) throw new Error("blocked"); return new Response(rssOf(today), { status: 200 }); }
+    if (u.includes("ko.wikipedia.org")) return new Response(JSON.stringify({ query: { pages: {} } }), { status: 200, headers: { "content-type": "application/json" } });
+    return base(url, opt); };
+  const E5 = { ...env, NAVER_ID: "id", NAVER_SECRET: "sec", PIXABAY_KEY: "pk", UNSPLASH_KEY: "uk", KAKAO_KEY: "kk" };
+  const liveOf = async (E = E5) => (await (await worker.fetch(req("/api/trends"), E)).json()).topics.filter((t) => t.kind === "live").map((t) => t.q);
+
+  // 어제·그제에도 올라온 말이 오늘 순위가 낮아도 앞에 옴 / 이틀 이상 보였지만 오늘 사라진 말도 남음 / 며칠 전 하루만 떴던 말은 뺌
+  seed(1, [["제주 감귤", "감귤 수확"], ["억새 명소", "억새 절정"], ["하루짜리 유행", "반짝 인기"]]);
+  seed(2, [["제주 감귤", "감귤 수확"], ["억새 명소", "억새 절정"]]);
+  seed(5, [["옛날 한 번", "지난주 인기"]]);
+  today = [["단풍 명소", "내장산 단풍 절정"], ["신상 디저트", "새 디저트 인기"], ["제주 감귤", "감귤 수확 한창"]];
+  let live = await liveOf();
+  ok(live[0] === "제주 감귤", "a keyword seen on 3 days ranks first even though it is last in today's list: " + live);
+  ok(live.indexOf("제주 감귤") < live.indexOf("단풍 명소") && live.indexOf("단풍 명소") < live.indexOf("신상 디저트"), "one-day keywords keep today's order after the multi-day ones: " + live);
+  ok(live.includes("억새 명소"), "a keyword seen on 2 recent days stays even if it is not in today's list: " + live);
+  ok(!live.includes("하루짜리 유행") && !live.includes("옛날 한 번"), "keywords seen only once before today (yesterday or 5 days ago) do not come back: " + live);
+  const saved = JSON.parse(caches.default.store.get(`https://cache.local/gth?d=${day(0)}`) || "[]");
+  ok(saved.length === 3 && saved[0].q === "단풍 명소" && saved.every((x) => x.q && Array.isArray(x.news)), "today's list is saved as today's snapshot: " + saved.map((x) => x.q));
+
+  // 오늘 목록을 다시 받아도 같은 날 저장분과 합쳐질 뿐 날 수가 늘어나지 않음 (같은 날 여러 번 받아도 하루로 셈)
+  caches.default.store.delete([...caches.default.store.keys()].find((k) => k.includes("gt2")));
+  today = [["새 목록", "방금"], ["단풍 명소", "내장산 단풍 절정"]];
+  live = await liveOf();
+  const saved2 = JSON.parse(caches.default.store.get(`https://cache.local/gth?d=${day(0)}`));
+  ok(saved2.map((x) => x.q).join() === "새 목록,단풍 명소,신상 디저트,제주 감귤" && live[0] === "제주 감귤", "re-fetching the same day merges snapshots without double counting: " + saved2.map((x) => x.q));
+
+  // 필터는 누적된 목록에도 적용: 어제 저장분에 있던 뉴스 단어·인물·선정 단어는 나오지 않음
+  seed(1, [["제주 감귤", "감귤 수확"], ["사고 소식", "고속도로 추돌 사고"], ["누드 전시", "전시"]]);
+  seed(2, [["사고 소식", "고속도로 추돌 사고"], ["누드 전시", "전시"]]);
+  caches.default.store.delete([...caches.default.store.keys()].find((k) => k.includes("gt2")));
+  live = await liveOf();
+  ok(!live.includes("사고 소식") && !live.includes("누드 전시") && live.includes("제주 감귤"), "news and adult filters apply to accumulated keywords too: " + live);
+
+  // 구글을 못 받아도 지난 며칠 기록으로 칩을 채움
+  caches.default.store.clear();
+  seed(1, [["제주 감귤", "감귤 수확"], ["억새 명소", "억새 절정"]]); seed(2, [["제주 감귤", "감귤 수확"], ["억새 명소", "억새 절정"]]);
+  googleOk = false;
+  live = await liveOf();
+  ok(live.join() === "제주 감귤,억새 명소", "google unreachable today: chips come from the last days' records: " + live);
+  ok(!caches.default.store.has(`https://cache.local/gth?d=${day(0)}`), "nothing is saved for today when google gave nothing");
+
+  // KV 바인딩이 있으면 KV 에 저장하고 거기서 읽음 (캐시는 쓰지 않음)
+  googleOk = true; caches.default.store.clear();
+  const kv = new Map(); let kvTtl = 0;
+  const KV = { get: async (k) => (kv.has(k) ? JSON.parse(kv.get(k)) : null), put: async (k, v, o) => { kv.set(k, v); kvTtl = o?.expirationTtl || 0; } };
+  kv.set(`gt:${day(1)}`, JSON.stringify([{ label: "제주 감귤", q: "제주 감귤", news: [], traffic: 0 }]));
+  today = [["단풍 명소", "내장산 단풍 절정"], ["제주 감귤", "감귤 수확"]];
+  live = await liveOf({ ...E5, TREND_KV: KV });
+  ok(live[0] === "제주 감귤" && kv.has(`gt:${day(0)}`) && kvTtl >= 8 * 86400, "TREND_KV is used for reading yesterday and saving today (kept 9 days)");
+  ok(![...caches.default.store.keys()].some((k) => k.includes("gth")), "with KV, history is not written to the cache");
+
+  // 저장소가 고장 나도 오늘 목록으로 동작
+  caches.default.store.clear();
+  live = await liveOf({ ...E5, TREND_KV: { get: async () => { throw new Error("kv down"); }, put: async () => { throw new Error("kv down"); } } });
+  ok(live.includes("단풍 명소") && live.includes("제주 감귤"), "storage failure falls back to today's list: " + live);
+
+  // 예약 실행(scheduled): 앱을 안 열어도 오늘 목록을 쌓음
+  caches.default.store.clear(); const waits = [];
+  await worker.scheduled({}, E5, { waitUntil: (p) => waits.push(p) }); await Promise.all(waits);
+  ok(caches.default.store.has(`https://cache.local/gth?d=${day(0)}`), "scheduled handler saves today's keywords without a page visit");
   globalThis.fetch = base;
 }
 

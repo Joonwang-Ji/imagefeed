@@ -1,7 +1,8 @@
 import { offTopic } from "./topics.js";
 // 계절·기념일 주제: 날짜만으로 "곧 다가오는 때"의 이미지 검색어를 만듭니다. (외부 호출 없음)
 // 기독교 세계관에 맞춰 할로윈과 다른 종교의 행사(부처님오신날 등)는 넣지 않았고, topics.js 의 offTopic 으로 한 번 더 걸러 냅니다.
-// 핀터레스트도 사람들이 때가 되기 몇 주 전부터 검색한다고 알려져 있어서, 행사 며칠~몇 주 전부터 미리 보여 줍니다.
+// 핀터레스트도 사람들이 때가 되기 몇 주 전부터 검색한다고 알려져 있어서, 행사는 최소 한 달(30일) 전부터 미리 보여 줍니다.
+// 달이 끝나갈 때(마지막 10일)는 다음 달의 계절 주제도 하나 미리 보여 줍니다.
 //
 // 고치는 법
 //  - FIXED: 매년 같은 날짜(월-일)인 기념일. [이름, 월, 일, 검색어, 며칠 전부터 보일지]
@@ -39,6 +40,8 @@ const SEASON = {
   12: [["겨울 시작", "눈 내린 마을"], ["연말 분위기", "겨울 조명"]],
 };
 const DAY = 86400000;
+const PREVIEW_DAYS = 30; // 행사는 이 날수 전부터 보임(행사마다 더 길게 잡은 값이 있으면 그 값)
+const NEXT_MONTH_DAYS = 10; // 달 마지막 며칠 동안 다음 달 계절 주제를 하나 미리 보임
 const utc = (y, m, d) => Date.UTC(y, m - 1, d);
 
 // 부활절 (그레고리력, Anonymous 알고리즘)
@@ -66,17 +69,22 @@ function events(y) {
   return out;
 }
 
-// 지금(KST 기준 날짜)에서 가까운 기념일과 이달의 계절 주제. 반환: [{ label, q, days, kind: "event" | "season" }]
+// 지금(KST 기준 날짜)에서 한 달 안에 다가오는 기념일과 이달의 계절 주제(달 끝이면 다음 달 것도 하나). 반환: [{ label, q, days, kind: "event" | "season" }]
 export function seasonTopics(now = Date.now(), max = 6) {
   const k = new Date(now + 9 * 3600000); // 한국 시간의 날짜로 계산
   const y = k.getUTCFullYear(), today = utc(y, k.getUTCMonth() + 1, k.getUTCDate());
   const list = [];
   for (const yy of [y, y + 1]) for (const e of events(yy).filter((x) => !offTopic(x.label, x.q))) {
     const days = Math.round((e.at - today) / DAY);
-    if (days >= -1 && days <= e.lead) list.push({ label: e.label, q: e.q, days: Math.max(0, days), kind: "event" });
+    if (days >= -1 && days <= Math.max(e.lead, PREVIEW_DAYS)) list.push({ label: e.label, q: e.q, days: Math.max(0, days), kind: "event" });
   }
   list.sort((a, b) => a.days - b.days);
   const out = list.slice(0, max);
-  for (const [label, q] of (SEASON[k.getUTCMonth() + 1] || []).filter(([l, qq]) => !offTopic(l, qq))) if (out.length < max + 2) out.push({ label, q, days: 0, kind: "season" });
+  const mo = k.getUTCMonth() + 1, left = new Date(Date.UTC(y, mo, 0)).getUTCDate() - k.getUTCDate(); // 이번 달이 끝나기까지 남은 날
+  for (const [label, q] of (SEASON[mo] || []).filter(([l, qq]) => !offTopic(l, qq))) if (out.length < max + 2) out.push({ label, q, days: 0, kind: "season" });
+  if (left < NEXT_MONTH_DAYS) { // 다음 달 계절 주제 미리보기 (12월 → 1월)
+    const nx = (SEASON[mo % 12 + 1] || []).find(([l, qq]) => !offTopic(l, qq));
+    if (nx) out.push({ label: nx[0], q: nx[1], days: left + 1, kind: "season" });
+  }
   return out;
 }

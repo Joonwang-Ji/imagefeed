@@ -1,6 +1,7 @@
 import { hardBlocked, isAdult, isExplicit, isNude, hasArtContext } from "./filters.js";
 import { seasonTopics } from "./season.js";
 import { TOPIC_POOL, ANCHOR, offTopic } from "./topics.js";
+import { HIST_DAYS, mergeHistory, mergeToday } from "./history.js";
 
 const UA = "Mozilla/5.0 (compatible; ImageFeed/1.0; personal use)";
 const enc = encodeURIComponent;
@@ -372,21 +373,27 @@ const rr = (...lists) => { // 여러 목록을 번갈아 한 줄로 섞기
   for (let i = 0; lists.some((l) => i < l.length); i++) for (const l of lists) if (i < l.length) out.push(l[i]);
   return out;
 };
-// 키가 등록된 사진 소스의 인기 사진 (Pixabay 에디터 추천 인기순 + Unsplash 인기순). n = 소스마다 한 쪽에 받을 장수
+// 키가 등록된 사진 소스의 "베스트" 사진. 두 소스 모두 "최근 N일" 같은 기간 지정이 없어서(정렬만 popular/latest),
+// 인기순(오래 사랑받은 사진)과 최신순(요즘 올라온 사진)을 섞어 최근 감각을 냅니다. n = 소스마다 한 쪽에 받을 장수
+//  - Pixabay: 에디터 추천 사진의 최신순·인기순을 같은 쪽 번호로 함께 받아 최신을 앞에 번갈아 둡니다. (요청 2번, 30분 캐시)
+//  - Unsplash: 무료 호출 한도(시간당 50회)가 작아서 요청은 1번만: 홀수 쪽은 최신순, 짝수 쪽은 인기순(쪽 번호는 절반으로).
+const pixabayHit = (it) => ({
+  title: "", thumb: it.webformatURL, full: it.largeImageURL || it.webformatURL, page: it.pageURL, w: num(it.imageWidth), h: num(it.imageHeight),
+  tags: String(it.tags || "").split(",").map((t) => t.trim()).filter(Boolean), src: "pixabay", grp: "best",
+});
 async function popularPhotos(env, page, n) {
   const out = [];
   if (env.PIXABAY_KEY) {
-    try {
-      const d = await getJson(`https://pixabay.com/api/?key=${env.PIXABAY_KEY}&image_type=photo&editors_choice=true&safesearch=true&order=popular&per_page=${n}&page=${page}`, {}, 1800);
-      out.push((d.hits || []).map((it) => ({
-        title: "", thumb: it.webformatURL, full: it.largeImageURL || it.webformatURL, page: it.pageURL, w: num(it.imageWidth), h: num(it.imageHeight),
-        tags: String(it.tags || "").split(",").map((t) => t.trim()).filter(Boolean), src: "pixabay", grp: "best",
-      })));
-    } catch { /* 이 소스는 건너뜀 */ }
+    const half = Math.max(3, Math.ceil(n / 2));
+    const one = (order) => getJson(`https://pixabay.com/api/?key=${env.PIXABAY_KEY}&image_type=photo&editors_choice=true&safesearch=true&order=${order}&per_page=${half}&page=${page}`, {}, 1800)
+      .then((d) => (d.hits || []).map(pixabayHit)).catch(() => []);
+    const [latest, popular] = await Promise.all([one("latest"), one("popular")]);
+    out.push(rr(latest, popular));
   }
   if (env.UNSPLASH_KEY) {
     try {
-      const d = await getJson(`https://api.unsplash.com/photos?order_by=popular&per_page=${n}&page=${page}`,
+      const order = page % 2 ? "latest" : "popular", pg = Math.ceil(page / 2);
+      const d = await getJson(`https://api.unsplash.com/photos?order_by=${order}&per_page=${n}&page=${pg}`,
         { Authorization: `Client-ID ${env.UNSPLASH_KEY}`, "Accept-Version": "v1" }, 1800);
       out.push((Array.isArray(d) ? d : []).map((it) => ({
         title: clean(it.alt_description || it.description || ""), thumb: it.urls?.small, full: it.urls?.regular, page: it.links?.html,
@@ -398,7 +405,7 @@ async function popularPhotos(env, page, n) {
 }
 
 // ---- 잘 찍은 사진: 위키미디어 커먼즈 "우수 사진(Featured pictures)" ----
-// 커뮤니티 투표로 뽑힌 사진이라 화제성이 아니라 "품질"을 기준으로 한 목록입니다. 날짜에 따라 시작하는 시기를 바꿔서 매일 조금씩 다르게 보여 주고, 쪽이 넘어갈수록 더 오래된 시기를 이어서 봅니다.
+// 커뮤니티 투표로 뽑힌 사진이라 화제성이 아니라 "품질"을 기준으로 한 목록입니다. 가장 최근에 뽑힌 사진부터 보여 주되, 날짜에 따라 시작 시기를 최근 0~4주 사이로 바꿔 매일 조금씩 다르게 보이게 하고, 쪽이 넘어갈수록 더 오래된 사진을 이어서 봅니다.
 // 큰 원본은 수십 MB 일 수 있어, 폭이 크면 1600px 짜리 축소본 주소를 씁니다.
 const wikiBig = (ii) => (ii.width > 1800 && ii.thumburl ? ii.thumburl.replace(/\/\d+px-/, "/1600px-") : ii.url);
 const CAT_SKIP = /featured|quality|valued|taken with|uploaded|pictures? by|photographs? by|photos? by|cc-|license|self-published|media of the day|^pd-|commons|wikimedia|^files? |^images? |by country|by year|by date|\d{4}/i;
@@ -406,7 +413,7 @@ const CAT_SKIP = /featured|quality|valued|taken with|uploaded|pictures? by|photo
 async function featuredPicks(day, cur, n) {
   const base = "https://commons.wikimedia.org/w/api.php?action=query&format=json&generator=categorymembers&gcmtitle=" + enc("Category:Featured_pictures_on_Wikimedia_Commons") +
     `&gcmtype=file&gcmsort=timestamp&gcmdir=older&gcmlimit=${n}&prop=imageinfo&iiprop=` + enc("url|size|mime|extmetadata") + "&iiurlwidth=640&iiextmetadatafilter=" + enc("ObjectName|ImageDescription|Categories");
-  const start = new Date(Date.now() - (day % 90) * 7 * 86400000).toISOString().replace(/\.\d+Z$/, "Z");
+  const start = new Date(Date.now() - (day % 5) * 7 * 86400000).toISOString().replace(/\.\d+Z$/, "Z");
   const more = cur ? `&gcmcontinue=${enc(cur)}` : "";
   let d;
   try { d = await getJson(`${base}&gcmstart=${enc(start)}${more}`, {}, 21600, 9000); } catch { d = null; }
@@ -489,7 +496,8 @@ async function datalabTopics(env, now) {
 // 40개 후보를 직접 정하는 대신, 지금 사람들이 실제로 많이 찾는 말을 가져옵니다. 다만 인기 검색어는 연예인·경기 결과·사건 소식이 많아서
 //  1) 사건·사고·정치·경기 결과·연예인·가십 같은 뉴스 제목이 붙은 말은 걸러내고(NEWSY), 인물 이름 자체는 한국어 위키백과 분류로 한 번 더 걸러(personLabels),
 //  3) Workers AI 가 있으면 "이미지로 볼 만한 말"(장소·음식·동물·자연·행사·물건·취미)만 한 번 더 고릅니다.
-// 1시간 캐시. 못 가져오면(차단·형식 변경) 빈 목록을 주고, 화면은 기존 방식(데이터랩·계절 주제)으로 채웁니다.
+// 최근 7일 누적: 하루짜리 소음을 줄이려고 날짜별 목록을 쌓아 두고(아래 histRead/histWrite, 합치는 규칙은 history.js) 여러 날 등장한 말을 앞에 둡니다.
+// 1시간 캐시. 못 가져오면(차단·형식 변경) 지난 며칠 기록으로 채우고, 그것도 없으면 빈 목록을 주어 화면이 기존 방식(데이터랩·계절 주제)으로 채웁니다.
 const NEWSY = new RegExp([
   // 사건·사고·재난 ("사고력", "폭발적 인기" 같은 평범한 말은 걸리지 않게 뒤를 확인)
   "사망|숨져|숨진|사고(?!력|방식|팔)|체포|구속|실종|화재|폭행|살인|총격|테러|폭발(?!적)|붕괴|추락|침몰|산불|지진|확진|감염",
@@ -552,15 +560,40 @@ async function personLabels(labels) {
   } catch { /* 위키를 못 가져오면 건너뜀 */ }
   return out;
 }
+// ---- 최근 7일 누적 저장소: 날짜(KST)별로 그날 본 인기 검색어 목록을 보관합니다 ----
+// env.TREND_KV (Cloudflare KV 바인딩)가 있으면 거기에, 없으면 Cloudflare 캐시(8~9일, 데이터센터별 best-effort)에 둡니다.
+// 둘 다 실패해도 오늘 목록만으로 동작합니다. 사용자 기록이 아니라 구글 공개 인기 검색어 목록만 저장합니다.
+const histReq = (d) => new Request(`https://cache.local/gth?d=${d}`);
+async function histRead(env, d) {
+  try {
+    if (env.TREND_KV) { const v = await env.TREND_KV.get(`gt:${d}`, "json"); return Array.isArray(v) ? v : []; }
+    const hit = await caches.default.match(histReq(d));
+    const v = hit ? await hit.json() : [];
+    return Array.isArray(v) ? v : [];
+  } catch { return []; }
+}
+async function histWrite(env, d, rows) {
+  try {
+    const body = JSON.stringify(rows);
+    if (env.TREND_KV) await env.TREND_KV.put(`gt:${d}`, body, { expirationTtl: 9 * 86400 });
+    else await caches.default.put(histReq(d), new Response(body, { headers: { "cache-control": "max-age=777600" } }));
+  } catch { /* 저장 실패는 무시 */ }
+}
 async function realTrends(env, now) {
   if (env.REAL_TRENDS === "off") return [];
-  const key = new Request(`https://cache.local/gt1?h=${Math.floor(now / 3600000)}`);
+  const key = new Request(`https://cache.local/gt2?h=${Math.floor(now / 3600000)}`);
   try { const hit = await caches.default.match(key); if (hit) return await hit.json(); } catch { /* 캐시가 없으면 새로 가져옴 */ }
-  let list = [];
+  let fresh = [];
   try {
     const r = await fetch(env.REAL_TRENDS_URL || "https://trends.google.com/trending/rss?geo=KR", { headers: { "user-agent": UA, accept: "application/rss+xml,text/xml,*/*" }, signal: AbortSignal.timeout(6000) });
-    if (r.ok) list = parseGoogleTrends(await r.text());
+    if (r.ok) fresh = parseGoogleTrends(await r.text());
   } catch { /* 네트워크 오류는 빈 목록 */ }
+  // 오늘 목록은 저장분에 합쳐 두고, 지난 6일치를 불러와 "여러 날 등장한 말"을 앞에 둡니다. 오늘 못 받아도 지난 며칠 기록으로 채울 수 있습니다.
+  const today = kstDate(now);
+  let todayRows = await histRead(env, today);
+  if (fresh.length) { todayRows = mergeToday(todayRows, fresh); await histWrite(env, today, todayRows); }
+  const past = await Promise.all(Array.from({ length: HIST_DAYS - 1 }, (_, i) => histRead(env, kstDate(now - (i + 1) * 86400000))));
+  let list = mergeHistory([todayRows, ...past]);
   list = list.filter((x) => !hardBlocked(x.label) && !isAdult(x.label) && !isExplicit(x.label) && !offTopic(x.label, ...x.news) && !NEWSY.test(x.news.join(" ")) && !NEWSY.test(x.label));
   const people = await personLabels(list.slice(0, 30).map((x) => x.label));
   list = list.filter((x) => !people.has(x.label));
@@ -692,6 +725,8 @@ async function proxyImage(u) {
 
 // ---------- 라우터 ----------
 export default {
+  // 선택: wrangler.toml 의 [triggers] 크론을 켜면 앱을 안 열어도 하루 한 번 인기 검색어를 쌓아 둡니다. (TREND_KV 가 있을 때 가장 확실)
+  async scheduled(_event, env, ctx) { ctx.waitUntil(realTrends(env, Date.now()).catch(() => {})); },
   async fetch(req, env) {
     const u = new URL(req.url);
     if (!u.pathname.startsWith("/api/")) return env.ASSETS.fetch(req);
