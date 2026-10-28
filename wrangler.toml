@@ -9,6 +9,7 @@ binding = "ASSETS"
 run_worker_first = ["/api/*"]
 
 # Workers AI: 한글 검색어를 영어로 번역하고 고유명사인지 판별(영어 전용 소스용)하며, 이미지 설명(비슷한 이미지·사진으로 검색)에도 씁니다.
+# 17차: 같은 AI 로 관심사 묶음용 텍스트 임베딩(/api/embed, bge-m3)도 만듭니다. 끄려면 변수 EMBED=off, 모델 변경은 EMBED_MODEL.
 # 필요 없으면 아래 두 줄을 지우세요. (Workers AI 무료 할당량 사용)
 [ai]
 binding = "AI"

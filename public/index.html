@@ -95,16 +95,19 @@
 <main>
   <div id="offline" hidden><span>오프라인이에요. 저장해 둔 북마크만 볼 수 있어요.</span><button id="retry" class="sm">다시 연결</button></div>
   <div id="home" hidden>
-    <h2 class="hh">무엇을 찾아볼까요?</h2>
-    <p class="hint">검색하거나, 아래 주제를 눌러 보세요.</p>
-    <div class="hsubrow"><h3 class="hsub" id="homeTitle">추천 주제</h3><span class="grow"></span><button id="homeBack" class="sm" hidden><svg class="i"><use href="#i-left"/></svg>모든 주제</button><button id="homeShuffle" class="sm"><svg class="i"><use href="#i-shuffle"/></svg>다른 주제</button></div>
-    <div id="homeChips" class="chips"></div>
-    <h3 class="hsub">둘러보기</h3>
-    <div class="explore">
-      <button id="exRand" class="xbtn"><span class="xic"><svg class="i"><use href="#i-shuffle"/></svg></span><b>아무거나</b><small>세부 주제 중 하나를 무작위로 골라 바로 검색해요</small></button>
-      <button id="exTrend" class="xbtn"><span class="xic"><svg class="i"><use href="#i-trend"/></svg></span><b>트렌드</b><small>지금 인기 · 베스트 · 에디터 픽</small></button>
-      <button id="exBm" class="xbtn"><span class="xic"><svg class="i"><use href="#i-heart"/></svg></span><b>내 취향</b><small>북마크·취향을 종합해 추천해요</small></button>
+    <div class="fyhead">
+      <h2 class="hh" id="fyTitle">당신을 위한 피드</h2>
+      <span class="grow"></span>
+      <button id="homeBack" class="sm" hidden><svg class="i"><use href="#i-left"/></svg>모든 주제</button>
+      <button id="fyRefresh" class="ico" aria-label="피드 새로 고침" title="피드 새로 고침 (주제도 다시 섞어요)"><svg class="i"><use href="#i-refresh"/></svg></button>
     </div>
+    <p class="hint" id="fyHint" hidden></p>
+    <div id="homeChips" class="chips"></div>
+    <div id="recentRow" class="recent" hidden></div>
+  </div>
+  <div id="skel" class="skel" hidden aria-hidden="true">
+    <div><i style="height:150px"></i><i style="height:210px"></i><i style="height:120px"></i></div>
+    <div><i style="height:200px"></i><i style="height:130px"></i><i style="height:180px"></i></div>
   </div>
   <div id="trends" hidden>
     <div class="trhead">
@@ -256,6 +259,18 @@
   </div>
 </div>
 
+<div id="boardMgr" class="overlay wrap" hidden>
+  <div class="sheet bsheet">
+    <div class="grab" aria-hidden="true"><i></i></div>
+    <div class="shead"><h2>보드 관리</h2></div>
+    <div class="sbody">
+      <p class="note">이름을 바꾸고, 순서를 옮기고, 보드를 지울 수 있어요. 보드를 지워도 이미지는 북마크에 그대로 남아요.</p>
+      <div id="bmgList"></div>
+    </div>
+    <div class="sfoot"><button type="button" id="bmgClose" class="pri wide">닫기</button></div>
+  </div>
+</div>
+
 <div id="settings" class="overlay wrap" hidden>
   <div class="sheet bsheet">
     <div class="grab" aria-hidden="true"><i></i></div>
@@ -269,14 +284,15 @@
         <div id="avoidView" class="chips" hidden></div>
         <p class="note" id="avoidNote">이미지 화면의 [추천 안 함]으로 숨긴 것이 여기에 쌓여요. 태그를 누르면 그 태그만 되돌려요.</p>
       </div>
-      <p class="note">공포·잔혹 주제는 해제할 수 없어요. 검색 기록은 저장하지 않아요. 상단의 눈 모양 비공개 모드를 켜면 북마크와 취향이 화면에서 사라지고 학습도 멈춰요.</p>
+      <p class="note">공포·잔혹 주제는 해제할 수 없어요. 취향·활동·최근 검색 기록은 이 기기에만 저장돼요(서버에 쌓지 않아요). 상단의 눈 모양 비공개 모드를 켜면 북마크와 취향이 화면에서 사라지고 기록도 멈춰요.</p>
       <h3>AI</h3>
       <label class="row" id="capRow" hidden><input type="checkbox" id="sCap"> AI 이미지 설명으로 비슷한 이미지 찾기 <small>(작게 줄인 이미지를 Cloudflare Workers AI에 보내요. 무료 사용량을 쓰고, 같은 이미지는 저장해 두었다가 다시 써요)</small></label>
       <div id="tasteBox">
-        <label class="row"><input type="checkbox" id="sTaste"> 내 취향 학습 <small>(북마크하거나 오래 본 이미지의 태그·색·톤을 ‘점수’로만 이 기기에 기억해서, 결과의 순서를 살짝 맞춰 줘요. 검색어·본 이미지 목록은 저장하지 않고, 서버나 검색 소스로 보내지 않아요. 45일이 지나면 절반씩 잊어요)</small></label>
+        <label class="row"><input type="checkbox" id="sTaste"> 내 취향 학습 · 맞춤 피드 <small>(기본으로 켜져 있어요. 북마크·좋아요·오래 본 이미지와 최근 검색을 이 기기에만 기억해서, 홈의 ‘당신을 위한 피드’와 결과 순서를 맞춰 줘요. 서버에 기록을 쌓지 않아요. 상단 눈 모양 비공개 모드를 켜면 기록도 멈춰요.)</small></label>
+        <p class="note" id="actNote" hidden></p>
         <div id="tasteView" class="chips" hidden></div>
         <p class="note" id="tasteNote" hidden>태그를 누르면 그 항목만 지워져요.</p>
-        <div class="btns"><button id="tasteClear" hidden>취향 모두 지우기</button></div>
+        <div class="btns"><button id="tasteClear" hidden>취향·활동 기록 모두 지우기</button></div>
       </div>
       <h3>검색 소스</h3>
       <div id="srcList"></div>
@@ -301,6 +317,7 @@
 <script src="/relevance.js"></script>
 <script src="/safety.js"></script>
 <script src="/taste.js"></script>
+<script src="/interests.js"></script>
 <script src="/avoid.js"></script>
 <script src="/app.js"></script>
 </body>

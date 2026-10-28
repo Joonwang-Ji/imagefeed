@@ -274,7 +274,51 @@ ok(CATS.every((c) => c[2].length >= 5), "each category has >= 5 sub topics");
   ok(j2.t === "Gold River Exclusive Tower" && !("proper" in j2) && !A.calls.includes("@cf/meta/llama-3.1-8b-instruct"), "TR_SMART=off skips the name check");
   A = ai(() => new Promise(() => {})); // 응답이 영영 안 오는 모델
   const t0 = Date.now(); j2 = await trq("금강엑슬루타워", { ...env, AI: A });
-  ok(j2.t === "Gold River Exclusive Tower" && Date.now() - t0 < 6000, "a hanging model is abandoned after ~4 s: " + (Date.now() - t0) + "ms");
+  ok(j2.t === "Gold River Exclusive Tower" && Date.now() - t0 < 4000 && Date.now() - t0 >= 2400, "a hanging model is abandoned after ~2.5 s (the screen waits 3 s): " + (Date.now() - t0) + "ms");
+
+  // 17차: nc=1(비공개 모드)이면 번역을 서버 캐시에 읽지도 쓰지도 않음
+  const store = new Map(); const gets = [], puts = [];
+  globalThis.caches = { default: { match: async (k) => { gets.push(k.url); const v = store.get(k.url); return v ? new Response(v) : undefined; }, put: async (k, r) => { puts.push(k.url); store.set(k.url, await r.text()); } } };
+  A = ai(async () => ({ response: '{"proper": false, "en": "rainy street", "type": ""}' }));
+  const tr2 = async (q, nc) => (await worker.fetch(req("/api/tr?q=" + encodeURIComponent(q) + "&sl=ko" + (nc ? "&nc=1" : "")), { ...env, AI: A })).json();
+  await tr2("비 오는 거리", true);
+  ok(gets.length === 0 && puts.length === 0, "nc=1: nothing read from or written to the cache (private mode)");
+  await tr2("비 오는 거리", false);
+  ok(puts.some((u) => u.includes("cache.local/tr?")) && puts.some((u) => u.includes("cache.local/trn?")), "normal: translation and name check are cached for 7 days");
+  const n0 = A.calls.length; await tr2("비 오는 거리", false);
+  ok(A.calls.length === n0, "normal: the second identical query is served from the cache (no AI call)");
+}
+
+// ---- 임베딩 (/api/embed): 짧은 글 → Int8 벡터(base64) ----
+{
+  const post = (body, e, pass = "pw") => worker.fetch(new Request("https://x.test/api/embed", { method: "POST", headers: { "x-pass": pass, "content-type": "application/json" }, body: typeof body === "string" ? body : JSON.stringify(body) }), e);
+  const vec = (i) => Array.from({ length: 8 }, (_, k) => (k === i ? 2 : 0.1) * (i % 2 ? -1 : 1));
+  const seen = []; const AIe = { run: async (model, input) => { seen.push({ model, input }); return { shape: [input.text.length, 8], data: input.text.map((_, i) => vec(i)), pooling: "cls" }; } };
+  let r2 = await post({ texts: ["a"] }, { ...env, AI: AIe }, "bad"); ok(r2.status === 401, "embed requires the password");
+  r2 = await post({ texts: ["한옥 처마", "nordic kitchen", ""] }, { ...env, AI: AIe }); let j3 = await r2.json();
+  ok(r2.status === 200 && j3.d === 8 && j3.v.length === 3 && j3.v[2] === null && typeof j3.v[0] === "string", "returns one base64 vector per text, null for empty text");
+  ok(seen[0].model === "@cf/baai/bge-m3" && seen[0].input.text.length === 3 && seen[0].input.text[2] !== "", "uses bge-m3, empty text replaced so the model does not reject it");
+  const dec = (b64) => Int8Array.from(Buffer.from(b64, "base64"));
+  const d0 = dec(j3.v[0]), d1 = dec(j3.v[1]);
+  ok(d0.length === 8 && d0[0] > 100 && d1[1] < -100, "decoded vector is Int8 with the unit length scaled to 127: " + Array.from(d0).join(","));
+  ok(Math.abs(Math.hypot(...Array.from(d0)) - 127) < 4, "vector length ≈ 127 after normalising: " + Math.hypot(...Array.from(d0)).toFixed(1));
+  seen.length = 0; await post({ texts: Array.from({ length: 90 }, (_, i) => "t" + i) }, { ...env, AI: AIe });
+  ok(seen[0].input.text.length === 60, "at most 60 texts per call");
+  seen.length = 0; await post({ texts: ["x".repeat(500)] }, { ...env, AI: AIe });
+  ok(seen[0].input.text[0].length === 160, "each text is cut to 160 characters");
+  seen.length = 0; await post({ texts: ["a"] }, { ...env, AI: AIe, EMBED_MODEL: "@cf/custom/model" });
+  ok(seen[0].model === "@cf/custom/model", "EMBED_MODEL overrides the model");
+  r2 = await post({ texts: ["a"] }, { ...env, AI: AIe, EMBED: "off" }); j3 = await r2.json(); ok(j3.error === "unavailable", "EMBED=off disables it");
+  r2 = await post({ texts: ["a"] }, env); j3 = await r2.json(); ok(j3.error === "unavailable", "no AI binding → unavailable (not a crash)");
+  r2 = await post("not json", { ...env, AI: AIe }); ok(r2.status === 400, "bad JSON → 400");
+  r2 = await post({ texts: [] }, { ...env, AI: AIe }); ok(r2.status === 400, "no texts → 400");
+  r2 = await post({ texts: ["a", "b"] }, { ...env, AI: { run: async () => ({ data: [[1, 2]] }) } }); j3 = await r2.json();
+  ok(j3.error === "unavailable" && j3.detail === "shape", "wrong number of vectors is rejected: " + JSON.stringify(j3));
+  r2 = await post({ texts: ["a"] }, { ...env, AI: { run: async () => { throw new Error("model gone"); } } }); j3 = await r2.json();
+  ok(j3.error === "unavailable" && /model gone/.test(j3.detail), "model failure is reported without a crash");
+  const big = await worker.fetch(new Request("https://x.test/api/embed", { method: "POST", headers: { "x-pass": "pw", "content-length": "30000" }, body: "{}" }), { ...env, AI: AIe }); ok(big.status === 413, "body over 24KB → 413");
+  const cj = await (await worker.fetch(req("/api/config"), { ...env, AI: AIe })).json(); ok(cj.embed === true, "config says embeddings are available");
+  const cj2 = await (await worker.fetch(req("/api/config"), { ...env, AI: AIe, EMBED: "off" })).json(); ok(cj2.embed === false, "config says off when EMBED=off");
 }
 
 // ---- 위키 저장소: 고유명사면 한글 원문도 함께 검색 ----

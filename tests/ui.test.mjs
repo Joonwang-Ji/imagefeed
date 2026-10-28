@@ -51,7 +51,7 @@ function trendsFn(u) {
   return { items, topics: page === 1 ? [{ label: "수능", q: "수험생 응원", kind: "season" }, { label: "벚꽃", q: "벚꽃", kind: "rising" }, { label: "한옥", q: "한옥", kind: "rising" }] : [], more: page < 6, pc: g === "pick" || g === "all" ? "cur" + page : "", dl: trDl };
 }
 
-run(fs.readFileSync(ROOT + "color.js", "utf8").replace(/^"use strict";/, "")); run(fs.readFileSync(ROOT + "relevance.js", "utf8").replace(/^"use strict";/, "")); run(fs.readFileSync(ROOT + "safety.js", "utf8").replace(/^"use strict";/, "")); run(fs.readFileSync(ROOT + "taste.js", "utf8").replace(/^"use strict";/, "")); run(fs.readFileSync(ROOT + "avoid.js", "utf8").replace(/^"use strict";/, ""));
+run(fs.readFileSync(ROOT + "color.js", "utf8").replace(/^"use strict";/, "")); run(fs.readFileSync(ROOT + "relevance.js", "utf8").replace(/^"use strict";/, "")); run(fs.readFileSync(ROOT + "safety.js", "utf8").replace(/^"use strict";/, "")); run(fs.readFileSync(ROOT + "taste.js", "utf8").replace(/^"use strict";/, "")); run(fs.readFileSync(ROOT + "interests.js", "utf8").replace(/^"use strict";/, "")); run(fs.readFileSync(ROOT + "avoid.js", "utf8").replace(/^"use strict";/, ""));
 vm.runInContext(fs.readFileSync(ROOT + "app.js", "utf8"), ctx);
 await tick(150);
 const $ = (s) => w.document.querySelector(s), $$ = (s) => [...w.document.querySelectorAll(s)];
@@ -59,15 +59,13 @@ const $ = (s) => w.document.querySelector(s), $$ = (s) => [...w.document.querySe
 // ---- 홈: 카테고리 ----
 ok(!$("#home").hidden && $("#login").hidden, "boot: home visible, login hidden");
 let chips = $$("#homeChips button").map((b) => b.textContent);
-ok(chips.length === 10 && chips.every((t) => /\S+ \S+/.test(t)), `home shows 10 broad categories: ${chips.slice(0, 4).join(", ")}…`);
-const seen = new Set(chips.join("|").split("|")); let changed = false;
-for (let i = 0; i < 6 && !changed; i++) { $("#homeShuffle").click(); const c2 = $$("#homeChips button").map((b) => b.textContent); changed = c2.join() !== chips.join(); }
-ok(changed, "shuffle button gives a different set of categories");
-$("#homeChips button").click(); await tick();
+ok(/^🎲/.test(chips[0]) && chips.filter((t) => /^\S+ \S+/.test(t)).length >= 10, `home: one row of 🎲 + 10 broad categories: ${chips.slice(0, 4).join(", ")}…`);
+ok($$("#homeChips .crow").length === 1 && /당신을 위한 피드/.test($("#fyTitle").textContent) && !$("#fyRefresh").hidden, "home: single chip row, 당신을 위한 피드 title, refresh button");
+ok(!$("#home").hidden && !!$("#skel") && !!$("#boardMgr") && !$("#homeShuffle") && !$("#exRand"), "home: new layout (skeleton + board manager present, old 둘러보기 removed)");
+$$("#homeChips button").find((b) => /^(?!🎲)\S+ \S+/.test(b.textContent) && !/^⭐/.test(b.textContent)).click(); await tick();
 const sub = $$("#homeChips button").map((b) => b.textContent);
-ok(!$("#homeBack").hidden && $("#homeShuffle").hidden && /전체 보기/.test(sub[0]) && sub.length >= 6, `drill-down shows sub topics: ${sub.slice(0, 3).join(", ")}…`);
-ok(/^\S+ \S+/.test($("#homeTitle").textContent), "drill-down title shows category: " + $("#homeTitle").textContent);
-$("#homeBack").click(); ok($("#homeBack").hidden && $$("#homeChips button").length === 10, "back returns to categories");
+ok(!$("#homeBack").hidden && /전체 보기/.test(sub[0]) && sub.length >= 6, `drill-down shows sub topics: ${sub.slice(0, 3).join(", ")}…`);
+$("#homeBack").click(); ok($("#homeBack").hidden && $$("#homeChips button").some((b) => /^🎲/.test(b.textContent)), "back returns to categories");
 
 // ---- 검색창 ✕ ----
 const q = $("#q"), qc = $("#qClear");
@@ -77,7 +75,7 @@ const pd = new w.Event("pointerdown", { cancelable: true, bubbles: true }); qc.d
 qc.click(); ok(q.value === "" && qc.hidden, "clear button empties input in one tap");
 
 // ---- 검색 + 색상 필터 소스 선택 ----
-run('startSearch("sunset")'); await tick(900);
+searchCalls.length = 0; run('startSearch("sunset")'); await tick(900);
 ok(searchCalls.length === 2 && ["pixabay", "openverse"].every((s) => searchCalls.some((c) => c.includes("src=" + s))), "no color: both sources searched");
 ok(!$("#qClear").hidden && $("#q").value === "sunset", "clear button visible after a search fills the box");
 searchCalls.length = 0;
@@ -256,14 +254,13 @@ trEmptyHot = false; trDl = { state: "ok" }; $("#trRefresh").click(); await tick(
 ok(trCards().length === 4 && $("#trNote").hidden, "note disappears once photos arrive");
 $$("#trSeg button")[0].click(); await tick(40);
 $("#tabFeed").click(); $("#homeBtn").click(); await tick(60);
-$("#exTrend").click(); await tick(60); ok(!$("#trends").hidden, "home 트렌드 button opens trends tab");
-ok(!/요즘 화제|위키|뜨는 주제|잘 찍은/.test($("#exTrend").textContent) && /지금 인기/.test($("#exTrend").textContent), "home trend button text matches the new names: " + $("#exTrend").textContent);
+$("#tabTr").click(); await tick(60); ok(!$("#trends").hidden, "트렌드 tab opens trends");
 
 // ---- 12차: 내 취향 (여러 주제어를 종합) ----
 $("#tabFeed").click(); $("#homeBtn").click(); await tick(60);
 run("S.priv = false"); run("S.taste = true"); run("Taste.learn(['sunset','cat','coffee','sunset'], 3)"); run("Taste.learn(['sunset','cat'], 3)");
-trCalls.length = 0; $("#exBm").click(); await tick(150);
-ok(!$("#trends").hidden && run("TR.g") === "mine" && $$("#trSeg button")[1].classList.contains("on"), "home 내 취향 opens the trends tab on the 내 취향 pill");
+trCalls.length = 0; $("#tabTr").click(); $$("#trSeg button")[1].click(); await tick(150);
+ok(!$("#trends").hidden && run("TR.g") === "mine" && $$("#trSeg button")[1].classList.contains("on"), "내 취향 pill selected in trends tab");
 const mc = trCalls.find((c) => c.g === "mine");
 ok(mc && mc.mine.split(",").length >= 2 && mc.mine.includes("sunset"), "내 취향 sends several taste words, not just one: " + (mc && mc.mine));
 run("TR.views.delete('g:all')"); $$("#trSeg button")[0].click(); await tick(100);
@@ -314,9 +311,9 @@ ok($$("#tones button").length === 9 && $$("#tones button")[0].textContent === "�
 $("#filterBtn").click(); $$("#tones button")[1].click(); ok(run("S.tone") === "pastel" && $("#filterBadge").textContent === "1", "tone button sets the filter and badge"); $("#filterReset").click(); ok(run("S.tone") === "" && $("#filterBadge").textContent === "", "reset clears tone"); $("#filterClose").click();
 
 // 취향 학습: 기본 꺼짐, 켜면 학습, 비공개 모드에서는 멈춤
-ok(run("S.taste") === false && run("Taste.isEmpty()"), "taste learning is OFF by default and empty");
-run("learnFrom(__i, 3)"); ok(run("Taste.isEmpty()"), "off -> nothing learned");
-$("#gear").click(); ok($("#sTaste").checked === false && $("#tasteView").hidden, "settings: taste checkbox off"); $("#sTaste").checked = true; $("#sTaste").dispatchEvent(new w.Event("change")); ok(run("S.taste") === true && run("LS.get('tasteOn', false)") === true, "taste turned on and saved"); $("#closeSet").click();
+ok(w.localStorage.getItem("tasteOn") === null, "taste default is not stored as off (17차: default ON)"); run("S.taste = true"); run("Taste.clear()"); ok(run("Taste.isEmpty()"), "…and starts empty after clear");
+run("S.taste = false"); run("learnFrom(__i, 3)"); ok(run("Taste.isEmpty()"), "off -> nothing learned"); run("S.taste = true");
+$("#gear").click(); ok($("#sTaste").checked === true && $("#tasteView").hidden, "settings: taste checkbox on by default"); $("#sTaste").checked = false; $("#sTaste").dispatchEvent(new w.Event("change")); ok(run("S.taste") === false, "taste can be turned off"); $("#sTaste").checked = true; $("#sTaste").dispatchEvent(new w.Event("change")); ok(run("S.taste") === true && run("LS.get('tasteOn', false)") === true, "taste turned on and saved"); $("#closeSet").click();
 run("learnFrom(__i, 3); learnFrom(__i, 3)"); ok(run("Taste.top(3).includes('cat')") && run("Taste.affinity(['cat'])") > 0.5, "learns tags from a liked image: " + run("Taste.top(3)"));
 ok(w.localStorage.getItem("taste") && !/cat.*x\.test/.test(w.localStorage.getItem("taste")) && !/https?:/.test(w.localStorage.getItem("taste")), "stored taste has only aggregated scores (no urls)");
 run('learnFrom({ ...__i, adult: true, tags: ["secret", "adultx"] }, 3)'); ok(!run("Taste.top(20)").includes("secret"), "adult-flagged images are never learned");
@@ -467,10 +464,8 @@ $("#vfab").click(); await tick(60);
 $("#homeBtn").click(); await tick(100);
 {
   const rows = $$("#homeChips .crow");
-  ok(rows.length === 2 && rows.every((r) => r.children.length >= 4) && $$("#homeChips button").length >= 10, "home chips are laid out in two rows (scroll sideways): " + rows.map((r) => r.children.length));
-  const wid = rows.map((r) => [...r.children].reduce((t, b) => t + b.textContent.length, 0));
-  ok(Math.abs(wid[0] - wid[1]) <= 8, "the two rows have similar length: " + wid);
-  ok(/#homeChips\{[^}]*overflow-x:auto/.test(css) && /#homeChips \.crow\{[^}]*width:max-content/.test(css), "css: chips scroll sideways in a fixed two-row block");
+  ok(rows.length === 1 && rows[0].children.length >= 11, "home chips are in a single row (scroll sideways): " + rows.map((r) => r.children.length));
+  ok(/#homeChips\{[^}]*overflow-x:auto/.test(css) && /#homeChips \.crow\{[^}]*width:max-content/.test(css), "css: chips scroll sideways in a single row");
 }
 const fireP = (el, type, x = 10, y = 10, id = 9) => { const e = new w.Event(type, { bubbles: true, cancelable: true }); Object.assign(e, { pointerId: id, clientX: x, clientY: y, pointerType: "touch", button: 0 }); el.dispatchEvent(e); return e; };
 run('S.taste = true; S.priv = false; startSearch("sunset")'); await tick(900);
@@ -557,7 +552,7 @@ run("DB._m = []; S.bmIds = new Set(); LS.set('lastBoard', '')");
   recs.push({ ...base, id: "b8", thumb: "https://x.test/b8.jpg", full: "https://x.test/b8_f.jpg", board: "음식", ts: 30 });
   run(`DB._m = ${JSON.stringify(recs)}; S.bmIds = new Set(DB._m.map((x) => x.id)); updateCount(); S.board = "__all"`);
   $("#tabBm").click(); await tick(120);
-  const tiles = () => $$("#boardStrip .bt");
+  const tiles = () => $$("#boardStrip .bt:not(.mgr)");
   const names = () => tiles().map((b) => b.querySelector(".nm").textContent);
   ok(!$("#boardStrip").hidden && names().join("|") === "전체 8|여행 4|음식 3|보드 없음 2", "strip: 전체 + each board + 보드 없음, with counts: " + names().join("|"));
   ok(tiles()[0].querySelectorAll("img").length === 4 && tiles()[3].querySelectorAll("img").length === 2, "each tile shows up to 4 thumbnails");
@@ -608,6 +603,49 @@ run("DB._m = []; S.bmIds = new Set(); LS.set('lastBoard', '')");
   fireP(bc()[0], "pointerdown"); await tick(560); fireP(bc()[0], "pointerup"); bc()[0].click(); ok(w.document.body.classList.contains("selmode"), "selection mode on again");
   w.dispatchEvent(Object.assign(new w.Event("keydown", { bubbles: true }), { key: "Escape" })); ok(!w.document.body.classList.contains("selmode"), "Esc leaves selection mode");
   fireP(bc()[0], "pointerdown"); await tick(560); fireP(bc()[0], "pointerup"); bc()[0].click(); $("#tabFeed").click(); ok(!w.document.body.classList.contains("selmode"), "switching tabs leaves selection mode");
+}
+
+// ======== 17차: 최근 검색 · 활동 기록 · 보드 관리 · 설정 ========
+{
+  run("S.priv = false; S.taste = true; Recent.clear(); HOME.cat = null"); run("ADB.put = async () => true; ADB.del = async () => true; ADB.clear = async () => true; ACT.m = new Map()");
+  run('startSearch("한옥 마당")'); await tick(200);
+  ok(run("Recent.list()[0].q") === "한옥 마당", "search is remembered in recent searches (on this device)");
+  run('startSearch("재검색", { keep: true })'); await tick(100);
+  ok(!run("Recent.list().some((x) => x.q === '재검색')"), "re-run (keep) is not recorded");
+  run("S.priv = true"); run('startSearch("비밀 검색")'); await tick(100);
+  ok(!run("Recent.list().some((x) => x.q === '비밀 검색')"), "private mode: search is not recorded");
+  run("S.priv = false");
+  $("#homeBtn").click(); await tick(80);
+  const rc = $$("#recentRow .tchip"); ok(!$("#recentRow").hidden && rc.length >= 1 && /한옥 마당/.test(rc[0].textContent), "home shows recent-search chips: " + rc.map((b) => b.textContent));
+  rc[0].querySelector("i").click(); ok(!run("Recent.list().some((x) => x.q === '한옥 마당')"), "✕ removes one recent search");
+  // 활동 기록: 좋아요 = 이미지 단위로 쌓임, 비공개에서는 멈춤
+  await run("ACT.note(__i, 2)"); ok(run("ACT.size()") === 1 && run("ACT.m.get('n1').tags.includes('cat')"), "liked image is recorded as activity");
+  run("S.priv = true"); run("learnFrom({ ...__i, id: 'n9' }, 3)"); await tick(20); ok(!run("ACT.m.has('n9')"), "private mode: activity not recorded");
+  run("S.priv = false");
+  // 보드 관리
+  run(`DB._m = ${JSON.stringify(["a", "b", "c"].map((id, i) => ({ id, title: id, thumb: "https://x.test/" + id + ".jpg", full: "https://x.test/" + id + "_f.jpg", page: "p", src: "pixabay", w: 400, h: 300, tags: ["t"], ts: i + 1, boards: id === "c" ? ["여행"] : ["여행", "음식"] })))}; S.bmIds = new Set(["a", "b", "c"]); updateCount(); S.board = "__all"; LS.set("boardOrder", [])`);
+  $("#tabBm").click(); await tick(120);
+  $("#boardStrip .bt.mgr").click(); await tick(80);
+  const rowsN = () => $$("#bmgList .bmg").map((r) => r.dataset.n);
+  ok(!$("#boardMgr").hidden && rowsN().join("|") === "여행|음식", "board manager lists boards: " + rowsN());
+  $$("#bmgList .bmg")[1].querySelector(".up").click(); await tick(80);
+  ok(rowsN().join("|") === "음식|여행" && run("LS.get('boardOrder', []).join()") === "음식,여행", "↑ reorders and remembers the order");
+  $$("#bmgList .bmg")[1].querySelector(".ed").click();
+  const inp = $("#bmgList input"); inp.value = "여행지"; inp.dispatchEvent(new w.KeyboardEvent("keydown", { key: "Enter", bubbles: true })); await tick(120);
+  ok(rowsN().includes("여행지") && !rowsN().includes("여행") && run("DB._m.every((x) => !bOf(x).includes('여행'))") && run("LS.get('boardOrder', []).includes('여행지')"), "rename updates every bookmark and the saved order: " + rowsN());
+  const delBtn = () => $$("#bmgList .bmg").find((r) => r.dataset.n === "음식").querySelector(".del");
+  delBtn().click(); ok(/한 번 더/.test(delBtn().textContent) && run("DB._m.some((x) => bOf(x).includes('음식'))"), "delete asks once more first");
+  delBtn().click(); await tick(150);
+  ok(!rowsN().includes("음식") && run("DB._m.length") === 3 && run("DB._m.every((x) => !bOf(x).includes('음식'))"), "second press removes the board name only; the bookmarks stay");
+  $("#bmgClose").click(); ok($("#boardMgr").hidden, "board manager closes");
+  // 설정
+  $("#gear").click(); await tick(60);
+  ok(!$("#actNote").hidden && /반응한 이미지 1장/.test($("#actNote").textContent) && !$("#tasteClear").hidden && /활동/.test($("#tasteClear").textContent), "settings shows what is remembered: " + $("#actNote").textContent);
+  $("#tasteClear").click(); await tick(60);
+  ok(run("ACT.size()") === 0 && run("Recent.list().length") === 0 && run("Taste.isEmpty()"), "clear button wipes taste, activity and recent searches");
+  $("#closeSet").click();
+  // 자리 표시
+  run("skel(true)"); ok(!$("#skel").hidden, "skeleton shows while waiting"); run("skel(false)"); ok($("#skel").hidden, "skeleton hides");
 }
 
 ok(errors.length === 0, "no script errors" + (errors.length ? ": " + errors.slice(0, 3).join(" ; ") : ""));

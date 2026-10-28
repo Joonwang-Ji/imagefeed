@@ -273,16 +273,16 @@ const SOURCES = [
 
 // ---------- 번역 (한글 → 영어, 선택 기능) ----------
 const TR_LANGS = ["ko", "ja", "zh", "de", "fr", "es", "pt", "it", "ru", "id", "vi", "th", "tr"];
-async function translate(q, env, sl = "") {
+// nc(no cache)=true 이면 번역 결과를 서버 캐시에 읽지도 쓰지도 않습니다. (비공개 모드에서 검색어가 캐시 키로 남지 않게 함)
+async function translate(q, env, sl = "", nc = false) {
   if (!sl) sl = HANGUL.test(q) ? "ko" : "";
   if (!env.AI || !TR_LANGS.includes(sl)) return q;
   const key = new Request(`https://cache.local/tr?sl=${sl}&q=` + enc(q));
   try {
-    const hit = await caches.default.match(key);
-    if (hit) return await hit.text();
+    if (!nc) { const hit = await caches.default.match(key); if (hit) return await hit.text(); }
     const r = await env.AI.run("@cf/meta/m2m100-1.2b", { text: q, source_lang: sl, target_lang: "en" });
     const t = String(r?.translated_text || "").trim() || q;
-    await caches.default.put(key, new Response(t, { headers: { "cache-control": "max-age=604800" } }));
+    if (!nc) await caches.default.put(key, new Response(t, { headers: { "cache-control": "max-age=604800" } }));
     return t;
   } catch {
     return q;
@@ -313,14 +313,15 @@ async function nameInfo(q, env) {
   return null;
 }
 // 번역 + 고유명사 판별. 반환: { t, proper?, type? } — proper 가 없으면 판별하지 못한 것(화면이 자체 규칙으로 판단)
-async function translateFull(q, env, sl = "") {
+async function translateFull(q, env, sl = "", nc = false) {
   if (!sl) sl = HANGUL.test(q) ? "ko" : "";
-  if (sl !== "ko" || !env.AI || env.TR_SMART === "off") return { t: await translate(q, env, sl) };
+  if (sl !== "ko" || !env.AI || env.TR_SMART === "off") return { t: await translate(q, env, sl, nc) };
   const key = new Request("https://cache.local/trn?q=" + enc(q));
-  const [t, info] = await Promise.all([translate(q, env, sl), (async () => {
-    try { const hit = await caches.default.match(key); if (hit) return await hit.json(); } catch { /* 캐시가 없으면 새로 물어봄 */ }
-    const r = await Promise.race([nameInfo(q, env), new Promise((res) => setTimeout(() => res(null), 4000))]);
-    if (r) { try { await caches.default.put(key, new Response(JSON.stringify(r), { headers: { "cache-control": "max-age=604800" } })); } catch { /* 캐시 실패는 무시 */ } }
+  const [t, info] = await Promise.all([translate(q, env, sl, nc), (async () => {
+    if (!nc) { try { const hit = await caches.default.match(key); if (hit) return await hit.json(); } catch { /* 캐시가 없으면 새로 물어봄 */ } }
+    // 화면이 3초까지만 기다리므로 고유명사 판별도 2.5초 안에 끝내지 못하면 포기하고 기존 번역을 씁니다.
+    const r = await Promise.race([nameInfo(q, env), new Promise((res) => setTimeout(() => res(null), 2500))]);
+    if (r && !nc) { try { await caches.default.put(key, new Response(JSON.stringify(r), { headers: { "cache-control": "max-age=604800" } })); } catch { /* 캐시 실패는 무시 */ } }
     return r;
   })()]);
   if (!info) return { t };
@@ -359,6 +360,36 @@ async function caption(req, env) {
       const body = hardBlocked(text) ? { q: "", blocked: true } : { q: capKeywords(text), text: text.slice(0, 160) };
       try { await caches.default.put(key, new Response(JSON.stringify(body), { headers: { "cache-control": "max-age=604800" } })); } catch { /* 캐시 실패는 무시 */ }
       return json(body);
+    } catch (e) { last = String(e?.message || e).slice(0, 100); }
+  }
+  return json({ error: "unavailable", detail: last });
+}
+
+// ---------- 임베딩 (의미 유사도, 선택 기능) ----------
+// 이미지의 제목·태그 같은 짧은 글을 Workers AI 다국어 임베딩(bge-m3)으로 벡터로 바꿔 돌려줍니다. 화면이 관심사를 묶고 추천 순서를 다듬는 데 씁니다.
+// 한 번에 최대 60개, 한 개는 160자까지. 결과는 길이를 줄이려고 크기 1로 맞춘 뒤 Int8 로 바꿔 base64 로 보냅니다(벡터 하나 약 1.4KB).
+// 서버에는 아무것도 저장하지 않습니다. 모델은 EMBED_MODEL 로 바꿀 수 있고, 끄려면 EMBED=off.
+const EMBED_MODELS = ["@cf/baai/bge-m3"];
+function packVec(v) {
+  let n = 0; for (const x of v) n += x * x; n = Math.sqrt(n) || 1;
+  const b = new Int8Array(v.length); for (let i = 0; i < v.length; i++) b[i] = Math.max(-127, Math.min(127, Math.round((v[i] / n) * 127)));
+  let s = ""; for (let i = 0; i < b.length; i += 0x2000) s += String.fromCharCode(...new Uint8Array(b.buffer, i, Math.min(0x2000, b.length - i)));
+  return btoa(s);
+}
+async function embed(req, env) {
+  if (!env.AI || env.EMBED === "off") return json({ error: "unavailable" });
+  if (num(req.headers.get("content-length")) > 24 * 1024) return json({ error: "size" }, 413);
+  let body; try { body = await req.json(); } catch { return json({ error: "bad json" }, 400); }
+  const texts = (Array.isArray(body?.texts) ? body.texts : []).slice(0, 60).map((t) => String(t == null ? "" : t).replace(/\s+/g, " ").trim().slice(0, 160));
+  if (!texts.length || texts.every((t) => !t)) return json({ error: "empty" }, 400);
+  let last = "";
+  for (const model of [env.EMBED_MODEL, ...EMBED_MODELS].filter(Boolean)) {
+    try {
+      // 빈 글은 모델이 거절하므로 자리만 지키는 글자로 바꿔 보내고, 결과에서는 null 로 돌려줍니다.
+      const out = await env.AI.run(model, { text: texts.map((t) => t || ".") });
+      const data = out?.data ?? out?.result?.data;
+      if (!Array.isArray(data) || data.length !== texts.length || !Array.isArray(data[0])) { last = "shape"; continue; }
+      return json({ d: data[0].length, v: data.map((v, i) => (texts[i] ? packVec(v) : null)) });
     } catch (e) { last = String(e?.message || e).slice(0, 100); }
   }
   return json({ error: "unavailable", detail: last });
@@ -739,14 +770,16 @@ export default {
         locked: SOURCES.filter((s) => !s.ok(env)).map(({ id, name, desc, need, colors }) => ({ id, name, desc: desc || "", need: need || [], colors: !!colors })),
         ai: !!env.AI,
         caption: !!env.AI && env.AI_CAPTION !== "off",
+        embed: !!env.AI && env.EMBED !== "off",
       });
     }
 
     if (u.pathname === "/api/caption" && req.method === "POST") return caption(req, env);
+    if (u.pathname === "/api/embed" && req.method === "POST") return embed(req, env);
 
     if (u.pathname === "/api/tr") {
       const q = (u.searchParams.get("q") || "").trim().slice(0, 100);
-      return json(await translateFull(q, env, u.searchParams.get("sl") || ""));
+      return json(await translateFull(q, env, u.searchParams.get("sl") || "", u.searchParams.get("nc") === "1"));
     }
 
     if (u.pathname === "/api/img") return proxyImage(u);

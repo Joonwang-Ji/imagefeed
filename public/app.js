@@ -82,7 +82,7 @@ const S = {
   pass: LS.get("pass", ""), blur: LS.get("blur", true), ml: LS.get("ml", true), off: new Set(LS.get("off", [])), only: new Set(),
   color: "", orient: "", board: "__all", view: "feed", list: [], bmIds: new Set(),
   bmq: "", bmsort: LS.get("bmsort", "new"), offline: false, colorWide: LS.get("cw", false),
-  tone: "", bmTone: "", bmColor: "", priv: LS.get("priv", false), taste: LS.get("tasteOn", false),
+  tone: "", bmTone: "", bmColor: "", priv: LS.get("priv", false), taste: LS.get("tasteOn", true),
 };
 // 취향 저장소(이 기기 안에서만): 비공개 모드이거나 설정에서 꺼져 있으면 쓰지도, 배우지도 않습니다.
 const Taste = TasteStore.create(LS);
@@ -105,6 +105,7 @@ function learnFrom(it, w) {
   if (!tasteOn() || !it || (it.adult && !it.safe)) return;
   const a = it.an && it.an.tone ? it.an : null;
   Taste.learn(TasteStore.keysOf(it), w, { colors: (a?.cols || it.cols || []).slice(0, 2), tone: a?.tone, temp: a?.temp });
+  ACT.note(it, w); // 17차: 단어 점수뿐 아니라 "어떤 이미지에 반응했는지"도 이 기기에 기록해서 관심사 묶음에 씁니다
 }
 let cfg = null;
 const srcName = (id) => cfg?.sources.find((s) => s.id === id)?.name || id;
@@ -139,7 +140,7 @@ $("#lf").addEventListener("submit", (e) => { e.preventDefault(); S.pass = $("#lp
 // ---------- 북마크 DB ----------
 const DB = {
   db: null,
-  async open() { this.db = await new Promise((res) => { try { const r = indexedDB.open("imgfeed", 1); r.onupgradeneeded = () => r.result.createObjectStore("bm", { keyPath: "id" }); r.onsuccess = () => res(r.result); r.onerror = () => res(null); } catch { res(null); } }); },
+  async open() { this.db = await new Promise((res) => { try { const r = indexedDB.open("imgfeed", 2); r.onupgradeneeded = () => { const d = r.result; if (!d.objectStoreNames.contains("bm")) d.createObjectStore("bm", { keyPath: "id" }); if (!d.objectStoreNames.contains("act")) d.createObjectStore("act", { keyPath: "id" }); }; r.onsuccess = () => res(r.result); r.onerror = () => res(null); r.onblocked = () => {}; } catch { res(null); } }); },
   store(m) { return this.db.transaction("bm", m).objectStore("bm"); },
   all() { return new Promise((res) => { if (!this.db) return res([]); const r = this.store("readonly").getAll(); r.onsuccess = () => res(r.result || []); r.onerror = () => res([]); }); },
   put(o) { return new Promise((res) => { if (!this.db) return res(false); const r = this.store("readwrite").put(o); r.onsuccess = () => res(true); r.onerror = () => res(false); }); },
@@ -147,9 +148,115 @@ const DB = {
 };
 const updateCount = () => { $("#bmc").textContent = S.bmIds.size ? `(${S.bmIds.size})` : ""; };
 
+// ---------- 활동 기록 (17차) ----------
+// 핀터레스트처럼 "어떤 이미지에 반응했는지"를 이미지 단위로 기록해 관심사 묶음(public/interests.js)을 만듭니다.
+// 북마크(+3)·좋아요(+2)·7초 이상 본 것(+1)이 쌓이고, 점수는 하루 1%씩 줄어듭니다(PinnerSage 와 같은 값). 취향 학습이 켜져 있고 비공개 모드가 아닐 때만 기록해요.
+// 모두 이 기기(IndexedDB)에만 저장하고 서버로 보내지 않습니다. 설정에서 모두 지울 수 있어요.
+const ADB = { // DB(북마크)와 같은 연결을 쓰는 "act" 저장소
+  st(m) { return DB.db.transaction("act", m).objectStore("act"); },
+  all() { return new Promise((res) => { if (!DB.db) return res([]); try { const r = this.st("readonly").getAll(); r.onsuccess = () => res(r.result || []); r.onerror = () => res([]); } catch { res([]); } }); },
+  put(o) { return new Promise((res) => { if (!DB.db) return res(false); try { const r = this.st("readwrite").put(o); r.onsuccess = () => res(true); r.onerror = () => res(false); } catch { res(false); } }); },
+  del(id) { return new Promise((res) => { if (!DB.db) return res(false); try { const r = this.st("readwrite").delete(id); r.onsuccess = () => res(true); r.onerror = () => res(false); } catch { res(false); } }); },
+  clear() { return new Promise((res) => { if (!DB.db) return res(false); try { const r = this.st("readwrite").clear(); r.onsuccess = () => res(true); r.onerror = () => res(false); } catch { res(false); } }); },
+};
+const ACT_LAMBDA = 0.01, ACT_MAX = 450, ACT_KEEP = 360;
+const ACT = {
+  m: null, rev: 0, embAt: 0,
+  async load() {
+    if (this.m) return this.m;
+    this.m = new Map((await ADB.all()).map((r) => [r.id, r]));
+    if (!LS.get("actMig1", false)) { await this.migrate(); LS.set("actMig1", true); }
+    return this.m;
+  },
+  size() { return this.m ? [...this.m.values()].filter((r) => r.wt > 0.05).length : 0; },
+  // 17차 이전에 담아 둔 북마크를 활동으로 옮겨 둡니다 (북마크 1개 = 3점, 담은 시각 그대로)
+  async migrate() {
+    for (const x of await DB.all()) { if (this.m.has(x.id)) continue; const r = this.rec(x, x.ts || Date.now(), 3); this.m.set(r.id, r); await ADB.put(r); }
+    this.rev++;
+  },
+  rec(it, ts, wt) {
+    const a = it.an?.tone ? { tone: it.an.tone, temp: it.an.temp, cols: (it.an.cols || it.cols || []).slice(0, 3) } : null;
+    return { id: it.id, key: it.key || keyOf(it), title: String(it.title || "").slice(0, 120), thumb: it.thumb, alt: it.alt || "", full: it.full, page: it.page || "", src: it.src, grp: it.grp || "", w: it.w || 0, h: it.h || 0,
+      tags: (it.tags || []).map((t) => String(t).slice(0, 40)).slice(0, 12), an: a, wt, first: ts, ts };
+  },
+  async note(it, d) {
+    if (!it || !it.id || !d) return;
+    try {
+      const m = await this.load(), now = Date.now(); let r = m.get(it.id);
+      if (!r) { if (d < 0) return; r = this.rec(it, now, 0); m.set(r.id, r); }
+      r.wt = Math.max(-4, Math.min(9, r.wt * Math.exp(-ACT_LAMBDA * Math.max(0, now - r.ts) / 86400000) + d)); r.ts = now;
+      if (!r.tags?.length && it.tags?.length) r.tags = it.tags.map((t) => String(t).slice(0, 40)).slice(0, 12);
+      if (!r.an && it.an?.tone) r.an = { tone: it.an.tone, temp: it.an.temp, cols: (it.an.cols || []).slice(0, 3) };
+      if (r.wt <= 0.05) { m.delete(r.id); await ADB.del(r.id); } else await ADB.put(r);
+      this.rev++;
+      if (m.size > ACT_MAX) await this.prune();
+      this.embSoon();
+    } catch { /* 기록 실패는 조용히 넘어감 */ }
+  },
+  async bump(id, d) { const m = await this.load(), r = m.get(id); if (r) await this.note(r, d); }, // 이미 기록된 이미지의 점수만 바꿈 (북마크 삭제 등)
+  async prune() { // 가장 약한 것부터 지워 ACT_KEEP 개로, 거의 사라진 것(0.15 미만)도 함께
+    const now = Date.now(), arr = [...this.m.values()].map((r) => ({ r, e: r.wt * Math.exp(-ACT_LAMBDA * Math.max(0, now - r.ts) / 86400000) })).sort((a, b) => a.e - b.e);
+    let drop = this.m.size - ACT_KEEP;
+    for (const { r, e } of arr) { if (drop <= 0 && e >= 0.15) break; this.m.delete(r.id); await ADB.del(r.id); drop--; }
+  },
+  async clear() { await ADB.clear(); this.m = new Map(); this.rev++; FYI.sig = ""; },
+  text(r) { return [r.title, ...(r.tags || []).slice(0, 8)].filter(Boolean).join(", ").slice(0, 160); },
+  embSoon() { clearTimeout(this.et); this.et = setTimeout(() => this.embedPending(), 8000); },
+  // 의미 유사도용 벡터가 아직 없는 활동(최대 40개)을 한 번에 서버(Workers AI)에 보내 벡터를 받아 둡니다. 2분에 한 번만.
+  async embedPending() {
+    if (!cfg?.embed || S.offline || !tasteOn() || Date.now() - this.embAt < 120000) return;
+    const m = await this.load(), todo = [...m.values()].filter((r) => !r.vec && !r.nv && r.wt > 0).sort((a, b) => b.ts - a.ts).slice(0, 40);
+    if (!todo.length) return;
+    this.embAt = Date.now();
+    const texts = todo.map((r) => this.text(r)), vs = await embedTexts(texts);
+    if (!vs) return;
+    for (let i = 0; i < todo.length; i++) { if (vs[i]) todo[i].vec = vs[i]; else if (!texts[i]) todo[i].nv = 1; await ADB.put(todo[i]); }
+    this.rev++;
+  },
+};
+// 짧은 글들을 서버에서 벡터로 바꿔 받습니다 (Int8). 실패가 3번 이어지면 30분 쉽니다. 서버에는 아무것도 저장되지 않아요.
+const EMB = { fails: 0, off: 0 };
+async function embedTexts(texts) {
+  if (!cfg?.embed || S.offline || Date.now() < EMB.off || !texts.length) return null;
+  try {
+    const r = await (await api("/api/embed", { method: "POST", body: JSON.stringify({ texts }), headers: { "content-type": "application/json" }, signal: AbortSignal.timeout(8000) })).json();
+    if (r.error || !Array.isArray(r.v)) throw new Error("embed");
+    EMB.fails = 0;
+    return r.v.map((b) => (b ? Int8Array.from(atob(b), (ch) => ch.charCodeAt(0)) : null));
+  } catch (e) {
+    if (e.message !== "auth" && ++EMB.fails >= 3) { EMB.off = Date.now() + 30 * 60000; EMB.fails = 0; }
+    return null;
+  }
+}
+const embText = (it) => [it.title, ...(it.tags || []).slice(0, 8)].filter(Boolean).join(", ").slice(0, 160);
+// 관심사 묶음: 활동 기록 → public/interests.js. 활동이 바뀌지 않았으면 이전 결과를 다시 씁니다.
+const FYI = { sig: "", cl: [] };
+async function buildInterests() {
+  if (!tasteOn()) return [];
+  const m = await ACT.load(), bmc = S.bmIds.size, sig = `${ACT.rev}:${m.size}:${bmc}`;
+  if (FYI.sig === sig) return FYI.cl;
+  const boards = new Map();
+  if (bmc) for (const x of await DB.all()) { const b = bOf(x); if (b.length) boards.set(x.id, b); } // 같은 보드에 담은 이미지는 서로 가까운 것으로 봄
+  const entries = [...m.values()].map((r) => ({ id: r.id, keys: TasteStore.keysOf(r), an: r.an, boards: boards.get(r.id) || [], wt: r.wt, ts: r.ts, vec: r.vec }));
+  FYI.cl = Interests.build(entries); FYI.sig = sig;
+  return FYI.cl;
+}
+
+// 최근 검색 (이 기기에만, 취향 학습이 켜져 있고 비공개 모드가 아닐 때만 기록)
+const Recent = {
+  list() { return LS.get("recent", []).filter((x) => x && x.q); },
+  add(q) { const l = this.list().filter((x) => x.q !== q); l.unshift({ q, ts: Date.now() }); LS.set("recent", l.slice(0, 30)); },
+  remove(q) { LS.set("recent", this.list().filter((x) => x.q !== q)); },
+  clear() { LS.set("recent", []); },
+};
+
 // 보드: 북마크 하나가 여러 보드에 들어갈 수 있습니다 (boards 배열). 예전에 저장한 북마크는 board 한 칸만 있어서 같이 읽어 줍니다.
 const bOf = (x) => (Array.isArray(x.boards) ? x.boards : x.board ? [x.board] : []);
-const boardNames = (all) => [...new Set(all.flatMap(bOf))].sort();
+// 보드 순서: [보드 관리]에서 정한 순서(boardOrder)가 먼저, 나머지는 이름순
+const boardNames = (all) => {
+  const ord = LS.get("boardOrder", []), idx = (n) => { const i = ord.indexOf(n); return i < 0 ? 1e6 : i; };
+  return [...new Set(all.flatMap(bOf))].sort((a, b) => idx(a) - idx(b) || (a > b) - (a < b));
+};
 const inBoard = (x, b) => b === "__all" || (b === "" ? !bOf(x).length : bOf(x).includes(b));
 const boardLabel = (x) => { const b = bOf(x); return b.length ? (b.length === 1 ? "보드: " + b[0] : `보드 ${b.length}개`) : "보드·메모"; };
 // board 를 따로 정하지 않으면(☆ 짧게 누르기) 마지막에 쓴 보드에 담습니다. 그 보드가 아직 있을 때만. board === "" 이면 보드 없이 담습니다.
@@ -220,6 +327,7 @@ class Masonry {
   add(cards) {
     this.all.push(...cards);
     const ok = this.pred ? cards.filter(this.pred) : cards;
+    if (ok.length) this.onAdd?.();
     if (!this.cols.length || this.n !== this.count()) { this.cards.push(...ok); this.build(); return; }
     for (const c of ok) { this.cards.push(c); this.place(c); }
     this.balLater();
@@ -394,7 +502,7 @@ function getModel() {
   if (!modelP) {
     aiState = "loading"; renderStat();
     // 앱 안에 둔 번들(/vendor/nsfw4/)을 먼저 쓰고, 없을 때만 외부(esm.sh)로 대체합니다.
-    modelP = idle(4000).then(() => import("/vendor/nsfw4/nsfw.js").catch(() => import("https://esm.sh/nsfwjs@4"))).then((m) => (m.load || m.default?.load).call(m))
+    modelP = idle(1200).then(() => import("/vendor/nsfw4/nsfw.js").catch(() => import("https://esm.sh/nsfwjs@4"))).then((m) => (m.load || m.default?.load).call(m))
       .then((mod) => { aiState = "ready"; renderStat(); return mod; })
       .catch((e) => { aiState = "failed"; modelP = null; renderStat(); throw e; });
   }
@@ -447,6 +555,8 @@ class Feed {
     // 소스 패널에서 고른 소스만 검색 (메인 피드만 해당). 고른 소스가 꺼져 있으면 전체로 되돌립니다.
     let pickd = this.o.filters && S.only.size ? on.filter((s) => S.only.has(s.id)) : on;
     if (!pickd.length) pickd = on;
+    // 홈 피드의 각 관심사는 호출 한도가 작은 소스(Unsplash)와 전문 소스(미술관·NASA)를 빼고, 빠르고 넉넉한 소스만 씁니다.
+    if (this.o.srcAllow) { const a = pickd.filter((s) => this.o.srcAllow.includes(s.id)); if (a.length) pickd = a; }
     // 색을 골랐을 때는 색을 직접 걸러 주는 소스(Pixabay·Unsplash)만 씁니다. 빠르고 정확하기 때문이에요.
     // (필터 패널에서 "넓게"를 고르면 다른 소스도 쓰되, 이미지를 불러온 뒤 브라우저가 대표 색으로 거릅니다.)
     if (this.o.filters && S.color && !S.colorWide) { const cs = pickd.filter((s) => s.colors); if (cs.length) pickd = cs; }
@@ -459,7 +569,7 @@ class Feed {
     const gen = this.gen;
     // 한글 등은 영어 소스용으로 번역해 둡니다. 서버가 고유명사인지(proper)와 종류(type)도 알려 주면 관련도 판단에 씁니다.
     this.trP = this.sl && this.sl !== "en" && cfg.ai
-      ? api(`/api/tr?q=${enc(q)}&sl=${this.sl}`, { signal: AbortSignal.timeout(7000) }).then((r) => r.json()).then((j) => {
+      ? api(`/api/tr?q=${enc(q)}&sl=${this.sl}${S.priv ? "&nc=1" : ""}`, { signal: AbortSignal.timeout(3000) }).then((r) => r.json()).then((j) => {
         if (gen !== this.gen) return;
         this.qe = j.t || q;
         this.terms = Relevance.makeTerms({ q, qe: this.qe, type: j.type, proper: j.proper });
@@ -650,7 +760,8 @@ const M = new Feed(feedM, {
   onBlocked: () => showMsg("이 주제는 차단된 주제예요. (공포·잔혹 필터는 해제할 수 없어요)"),
   reobserve: () => { sio.unobserve($("#sentinel")); sio.observe($("#sentinel")); },
 });
-bindMore($("#more"), M);
+$("#more .wbtn").onclick = () => M.openWeak();
+$("#more .mbtn").onclick = () => (M.q ? M : FY).more(); // 검색 중이면 검색 결과를, 홈이면 맞춤 피드를 이어 봄
 // 비율을 아직 모르는 이미지는 일단 통과시키고, 불러온 뒤 loadCard 가 다시 판정합니다.
 const predOrient = () => !S.orient ? null : (c) => {
   if (!c._it.w || !c._it.h) return true;
@@ -669,6 +780,7 @@ let kickT;
 feedM.onChange = () => {
   clearTimeout(kickT);
   kickT = setTimeout(() => {
+    if (!M.q) { if (FY.active) fyPump(); return; } // 홈 피드: 이미지가 안 열려 빠진 만큼 다시 채움
     if (!M.hadResults()) return;
     checkEmpty();
     if (!M.ended || M.pend.size) { sio.unobserve($("#sentinel")); sio.observe($("#sentinel")); }
@@ -680,10 +792,13 @@ async function startSearch(q, opts = {}) {
   if (!q || !cfg) return;
   if (S.offline) return toast("오프라인이라 북마크만 볼 수 있어요");
   if (V.stack.length) closeViewer();
+  M.reset(); M.begin(q, opts.sl); fyStop(); // 홈 맞춤 피드는 멈춤 (setView 가 홈 피드를 다시 시작하지 않게 M.q 를 먼저 정함)
   setView("feed");
-  M.reset(); M.begin(q, opts.sl);
+  // 최근 검색·취향: 검색어를 직접 입력하거나 칩으로 고른 경우만 (재검색·"아무거나"는 제외). 이 기기에만 저장돼요.
+  if (!opts.keep && !opts.auto && tasteOn()) { Recent.add(q); Taste.learn(tokens(q).slice(0, 3), 0.8); }
   $("#q").value = q; syncQ(); $("#q").blur(); $("#home").hidden = true; $("#filters").hidden = true; if (!opts.keep) $("#srcPanel").hidden = true;
   feedM.clear(); feedM.pred = feedPred(); markFilters(); $("#msg").hidden = true; $("#msg").textContent = ""; renderChips(); renderStat(); renderMore($("#more"), M); scrollTo(0, 0);
+  skel(true);
   await M.next();
 }
 
@@ -726,7 +841,10 @@ function renderStat() {
 }
 let rerunTimer = null;
 function queueRerun() { clearTimeout(rerunTimer); rerunTimer = setTimeout(() => { if (M.q) startSearch(M.q, { sl: M.sl, keep: true }); }, 450); }
-function showMsg(t) { const m = $("#msg"); m.textContent = t; m.hidden = false; }
+function showMsg(t) { const m = $("#msg"); m.textContent = t; m.hidden = false; skel(false); }
+// 결과를 기다리는 동안 보여 주는 자리 표시(회색 상자). 첫 카드가 올라오거나 메시지가 뜨면, 늦어도 20초 뒤엔 사라집니다.
+function skel(on) { const b = $("#skel"); clearTimeout(skel.t); b.hidden = !on; if (on) skel.t = setTimeout(() => { b.hidden = true; }, 20000); }
+feedM.onAdd = () => skel(false);
 function checkEmpty() {
   if (feedM.cards.length) { if (M.items.length) $("#msg").hidden = true; return; }
   if (M.items.length) { // 결과는 있었지만 화면에 남은 카드가 없음
@@ -739,7 +857,7 @@ function checkEmpty() {
   const allErr = act.length && act.every((s) => M.stat[s.id]?.err);
   if (M.ended || allErr) showMsg(!act.length ? "켜져 있는 검색 소스가 없어요. 설정에서 켜 주세요." : allErr ? "검색 소스에 연결하지 못했어요. 상단의 [소스] 버튼에서 ⚠ 를 눌러 이유를 확인해 보세요." : "결과가 없어요. 다른 말로 검색해 보세요.");
 }
-const sio = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting) && S.view === "feed") M.next(); }, { rootMargin: "1200px 0px" });
+const sio = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting) && S.view === "feed") (M.q ? M.next() : FY.next()); }, { rootMargin: "1200px 0px" });
 sio.observe($("#sentinel"));
 
 // ---------- 홈 / 처음으로 ----------
@@ -750,38 +868,176 @@ async function bmTopTags(n = 8) {
   for (const x of await DB.all()) for (const t of new Set([...(x.tags || []).map((v) => String(v).toLowerCase()), ...tokens(x.title || "")])) cnt.set(t, (cnt.get(t) || 0) + 1);
   return [...cnt.entries()].sort((a, b) => b[1] - a[1]).slice(0, n).map(([t]) => t);
 }
+// 홈 맨 위 한 줄: [아무거나] [내 관심사들(⭐)] [추천 카테고리…]. 카테고리를 누르면 세부 주제로 내려갑니다. 그 아래가 "당신을 위한 피드"예요.
 function renderHome(reshuffle) {
   const box = $("#homeChips"), tok = ++HOME.tok, cat = HOME.cat; box.textContent = ""; box.scrollLeft = 0;
-  // 칩을 두 줄에 나눠 담습니다. 글자 수가 더 적은 줄에 넣어 두 줄의 길이를 비슷하게 맞추고, 옆으로 밀어서 봅니다.
-  const rows = [0, 1].map(() => { const r = document.createElement("div"); r.className = "crow"; box.appendChild(r); return r; }), len = [0, 0];
-  const chip = (label, cls, fn) => { const b = document.createElement("button"); b.textContent = label; if (cls) b.className = cls; b.onclick = fn; const i = len[0] <= len[1] ? 0 : 1; len[i] += label.length + 4; rows[i].appendChild(b); };
-  $("#homeBack").hidden = !cat; $("#homeShuffle").hidden = !!cat;
-  $("#homeTitle").textContent = cat ? `${cat[0]} ${cat[1]}` : "추천 주제";
+  const row = document.createElement("div"); row.className = "crow"; box.appendChild(row);
+  const mk = (label, cls, fn) => { const b = document.createElement("button"); b.type = "button"; b.textContent = label; if (cls) b.className = cls; b.onclick = fn; return b; };
+  const chip = (label, cls, fn) => { row.appendChild(mk(label, cls, fn)); };
+  $("#homeBack").hidden = !cat;
   if (!cat) {
     if (reshuffle || !HOME.picks.length) HOME.picks = shuffle(CATS).slice(0, 10);
+    chip("🎲 아무거나", "rand", () => { const c = pick(CATS); startSearch(pick(c[2]), { auto: true }); });
+    const labels = (FY.ints || []).map((c) => c.label).filter(Boolean).slice(0, 3);
+    labels.forEach((t) => chip(`⭐ ${t}`, "mine", () => startSearch(t)));
     HOME.picks.forEach((c) => chip(`${c[0]} ${c[1]}`, "cat", () => { HOME.cat = c; renderHome(); }));
-    // 비공개 모드가 아닐 때, 북마크·학습한 취향의 태그를 두세 개 섞어 줍니다
-    if (!S.priv) bmTopTags(6).then((tags) => {
+    // 아직 관심사 묶음이 없으면(처음 며칠) 북마크·취향의 자주 나온 단어를 두세 개 섞어 줍니다
+    if (!labels.length && !S.priv) bmTopTags(6).then((tags) => {
       if (tok !== HOME.tok || HOME.cat || S.priv) return;
-      const pool = [...new Set([...(tasteOn() ? Taste.top(8) : []), ...tags])];
-      shuffle(pool).slice(0, tasteOn() ? 3 : 2).forEach((t) => chip(`⭐ ${t}`, "mine", () => startSearch(t)));
+      const pool = [...new Set([...(tasteOn() ? Taste.top(8) : []), ...tags])], at = row.children[1] || null;
+      shuffle(pool).slice(0, tasteOn() ? 3 : 2).forEach((t) => row.insertBefore(mk(`⭐ ${t}`, "mine", () => startSearch(t)), at));
     });
   } else {
-    chip(`‘${cat[1]}’ 전체 보기`, "cat", () => startSearch(cat[1]));
+    chip(`${cat[0]} ‘${cat[1]}’ 전체 보기`, "cat", () => startSearch(cat[1]));
     cat[2].forEach((s) => chip(s, "", () => startSearch(s)));
   }
+  renderRecent(); renderFyHint();
   $("#home").hidden = !!M.q || S.view !== "feed";
 }
-$("#homeShuffle").onclick = () => renderHome(true);
 $("#homeBack").onclick = () => { HOME.cat = null; renderHome(); };
+// 최근 검색 칩: 누르면 다시 검색, ✕ 로 하나씩 지우기, [모두 지우기]
+function renderRecent() {
+  const box = $("#recentRow"); box.textContent = "";
+  const list = !S.priv && tasteOn() && !HOME.cat ? Recent.list().slice(0, 8) : [];
+  box.hidden = !list.length; if (!list.length) return;
+  const lbl = document.createElement("span"); lbl.className = "rlbl"; lbl.textContent = "최근 검색"; box.appendChild(lbl);
+  list.forEach((x) => {
+    const b = document.createElement("button"); b.type = "button"; b.className = "tchip"; b.setAttribute("aria-label", `${x.q} 다시 검색`);
+    const t = document.createElement("span"); t.textContent = x.q; b.appendChild(t); b.onclick = () => startSearch(x.q);
+    const d = document.createElement("i"); d.textContent = "✕"; d.setAttribute("role", "button"); d.setAttribute("aria-label", `${x.q} 기록 지우기`);
+    d.onclick = (e) => { e.stopPropagation(); Recent.remove(x.q); renderRecent(); };
+    b.appendChild(d); box.appendChild(b);
+  });
+  const all = document.createElement("button"); all.type = "button"; all.className = "sm rclr"; all.textContent = "모두 지우기";
+  all.onclick = () => { Recent.clear(); renderRecent(); toast("최근 검색을 모두 지웠어요"); };
+  box.appendChild(all);
+}
+function renderFyHint() {
+  const h = $("#fyHint"), l = (FY.ints || []).map((c) => c.label).filter(Boolean).slice(0, 3);
+  h.textContent = S.priv ? "🕶 비공개 모드라서 맞춤 피드를 쓰지 않고, 기록도 남기지 않아요."
+    : !S.taste ? "설정에서 ‘내 취향 학습’을 켜면 맞춤 피드가 만들어져요."
+    : l.length ? `${l.map((x) => `‘${x}’`).join(" · ")} 취향으로 골랐어요. 일부는 새로운 발견이에요.`
+    : "아직 취향을 배우는 중이에요. 마음에 드는 이미지를 북마크하거나 오래 보면 여기에 맞춰져요.";
+  h.hidden = !FY.active;
+}
+
+// ---------- 당신을 위한 피드 (홈) ----------
+// 앱을 열면 바로 보이는 첫 화면입니다. 핀터레스트(PinnerSage)의 구조를 따라:
+//  1) 활동 기록을 비슷한 것끼리 묶어 관심사를 만들고(interests.js), 중요도에 비례해 최대 3개를 뽑고(가장 최근 활동의 묶음은 반드시 포함),
+//  2) 관심사마다 그 묶음의 검색어로 기존 검색 파이프라인(Feed)을 돌려 이미지를 가져오고,
+//  3) 임베딩이 있으면 묶음 중심과 의미가 가까운 순으로 다듬은 뒤, 관심사들을 돌아가며(비중대로) 섞고, 20~30%는 새로운 주제를 섞어 한쪽으로 쏠리지 않게 합니다.
+// 각 관심사의 Feed 는 화면에 바로 붙지 않고 "대기 상자(Hold)"에 모아 두었다가, 이 코드가 한 줄로 섞어서 feedM(#grid)에 올립니다.
+class Hold { // Feed 가 Masonry 인 줄 알고 쓰는 가짜 칸. 카드가 화면에 올라가기 전까지 여기에 있음
+  constructor() { this.cards = []; this.all = []; }
+  add(cs) { this.cards.push(...cs); this.onAdd?.(cs); }
+  drop(c) { this.cards = this.cards.filter((x) => x !== c); }
+  balLater() {} recheck() {}
+}
+const FY_SRC = ["naver", "kakao", "pixabay", "openverse", "wikimedia"];
+const FY = { gen: 0, active: false, q: "", subs: [], items: [], seen: new Set(), limit: 60, ints: [], at: 0, pumping: false, pt: null,
+  next() { fyPump(); },
+  more() { this.limit = feedM.cards.length + 60; for (const s of this.subs) if (s.feed.exhausted || s.feed.stuck) s.feed.more(); fyPump(); },
+  live(s) { const f = s.feed; return s.hold.cards.length > 0 || f.pend.size > 0 || !(f.ended || f.exhausted); },
+  canMore() { return this.subs.some((s) => this.live(s)); },
+  moreState() { const full = feedM.cards.length >= this.limit; return { more: full && this.canMore(), weakN: 0, note: "" }; },
+};
+const fyReobserve = () => { sio.unobserve($("#sentinel")); sio.observe($("#sentinel")); };
+function fyPumpSoon() { clearTimeout(FY.pt); FY.pt = setTimeout(fyPump, 120); }
+function fySub(kind, q, share, cl) {
+  const hold = new Hold(), sub = { kind, share, cl, hold, cands: cl ? Interests.queries(cl) : [q], ci: 0, ready: false, cw: 0, kick: 0, cvec: cl?.vec || null };
+  hold.onAdd = () => fyHeld(sub);
+  sub.feed = new Feed(hold, {
+    filters: false, taste: !cl, chunk: 24, srcAllow: FY_SRC,
+    open: (f, it) => openViewer(FY.items, FY.items.indexOf(it)),
+    onMore: fyPumpSoon, onProgress: fyPumpSoon, onAfter: () => fyAfter(sub), reobserve: fyReobserve,
+  });
+  return sub;
+}
+function fyBegin(sub) {
+  const q = sub.cands[sub.ci], f = sub.feed; if (!q) return;
+  f.reset(); sub.hold.cards = [];
+  // 이미 저장·반응한 이미지는 맞춤 피드에 다시 나오지 않게 합니다
+  if (sub.cl && ACT.m) for (const r of ACT.m.values()) if (r.key) f.keys.set(r.key, r);
+  f.begin(q); f.next();
+}
+// 후보 검색어로 아무것도 못 찾았으면 다음 후보(더 짧은 말)로 다시 시도
+function fyAfter(sub) {
+  const f = sub.feed;
+  if (f.ended && !f.items.length && !f.pend.size && !sub.hold.cards.length && sub.ci + 1 < sub.cands.length) { sub.ci++; fyBegin(sub); return; }
+  fyPumpSoon();
+}
+// 대기 상자에 새 카드가 들어왔을 때: 임베딩이 있으면 묶음 중심과 의미가 가까운 순으로 다듬고(최대 1.5초 기다림), 아니면 바로 사용 가능
+function fyHeld(sub) {
+  if (!cfg?.embed || !sub.cvec || EMB.off > Date.now()) { sub.ready = true; return fyPumpSoon(); }
+  clearTimeout(sub.rt); sub.rt = setTimeout(() => fyRank(sub), 150);
+  if (!sub.ready && !sub.rtmax) sub.rtmax = setTimeout(() => { sub.ready = true; fyPumpSoon(); }, 1500);
+}
+async function fyRank(sub) {
+  const gen = FY.gen, need = sub.hold.cards.filter((c) => !c._it.vec && !c._it.nv).slice(0, 40);
+  if (need.length) {
+    const vs = await embedTexts(need.map((c) => embText(c._it)));
+    if (gen !== FY.gen) return;
+    need.forEach((c, i) => { if (vs?.[i]) c._it.vec = vs[i]; else c._it.nv = 1; });
+  }
+  const list = sub.hold.cards, n = list.length;
+  const sc = new Map(list.map((c, i) => [c, Interests.blend(i, n, c._it.vec ? Interests.cosine(sub.cvec, c._it.vec) : null) ?? 0.55 * (1 - i / Math.max(1, n)) + 0.45 * 0.4]));
+  list.sort((a, b) => sc.get(b) - sc.get(a));
+  sub.ready = true; fyPumpSoon();
+}
+// 대기 상자들에서 비중(share)대로 돌아가며 한 장씩 꺼내 화면에 올립니다 (부드러운 가중 라운드 로빈). 이미 올라간 카드의 순서는 바뀌지 않아요.
+function fyPump() {
+  if (!FY.active || FY.pumping) return; FY.pumping = true;
+  try {
+    const batch = []; let guard = 0;
+    while (feedM.cards.length + batch.length < FY.limit && guard++ < 600) {
+      const l = FY.subs.filter((s) => s.ready && s.hold.cards.length); if (!l.length) break;
+      let best = null, tot = 0; for (const s of l) { s.cw += s.share; tot += s.share; if (!best || s.cw > best.cw) best = s; }
+      best.cw -= tot;
+      const c = best.hold.cards.shift(), k = c._it.key;
+      if (FY.seen.has(k)) continue;
+      FY.seen.add(k); FY.items.push(c._it); batch.push(c);
+    }
+    if (batch.length) feedM.add(batch);
+    // 대기 상자가 줄어든 관심사는 더 불러옵니다 (너무 자주 요청하지 않게 0.7초에 한 번만)
+    const now = Date.now();
+    for (const s of FY.subs) if (s.hold.cards.length < 10 && now - s.kick > 700 && (s.feed.pend.size || !(s.feed.ended || s.feed.exhausted))) { s.kick = now; s.feed.next(); }
+    if (!M.q && S.view === "feed") renderMore($("#more"), FY);
+    if (!feedM.cards.length && !FY.subs.some((s) => FY.live(s))) { skel(false); showMsg("맞춤 피드를 불러오지 못했어요. 오른쪽 위 새로 고침을 눌러 보세요."); }
+  } finally { FY.pumping = false; }
+}
+function fyStop() {
+  FY.gen++; FY.active = false; FY.q = ""; clearTimeout(FY.pt);
+  FY.subs.forEach((s) => { clearTimeout(s.rt); clearTimeout(s.rtmax); s.feed.reset(); s.hold.cards = []; });
+  FY.subs = [];
+}
+async function fyStart(reshuffle) {
+  fyStop();
+  if (!cfg || S.offline || M.q || S.view !== "feed") return;
+  const gen = FY.gen; // fyStop 이 올린 세대 번호. 이후 다시 시작/중지되면 이 값과 달라져 이 시작은 중단됩니다
+  Object.assign(FY, { active: true, q: "fy", at: Date.now(), limit: 60, items: [], seen: new Set(), ints: [] });
+  feedM.clear(); feedM.pred = null; $("#msg").hidden = true; $("#msg").textContent = ""; skel(true); renderMore($("#more"), FY); renderFyHint();
+  let cl = [];
+  if (tasteOn()) { try { cl = Interests.pick(await buildInterests(), 3); } catch { cl = []; } }
+  if (gen !== FY.gen) return;
+  FY.ints = cl;
+  const subs = cl.map((c) => fySub("int", null, 4, c));
+  // 새로운 주제를 20~30% 섞습니다 (관심사가 적으면 더 많이). 관심사가 하나도 없으면 전부 새로운 주제.
+  const exN = cl.length ? (cl.length >= 2 ? 2 : 1) : 3, exShare = cl.length ? Math.ceil(Math.ceil((0.3 / 0.7) * 4 * cl.length) / exN) : 4;
+  shuffle(CATS).slice(0, exN).forEach((c) => subs.push(fySub("ex", pick(c[2]), exShare, null)));
+  FY.subs = subs;
+  renderHome(); // ⭐ 관심사 칩과 안내 문구 갱신
+  subs.forEach(fyBegin);
+  ACT.embedPending();
+}
+$("#fyRefresh").onclick = () => { if (S.offline || M.q) return; HOME.cat = null; renderHome(true); fyStart(true); scrollTo(0, 0); };
 function goHome() {
   if (S.offline) return;
   if (V.stack.length) closeViewer();
-  M.reset(); feedM.clear(); feedM.pred = null; renderMore($("#more"), M);
+  M.reset(); fyStop(); feedM.clear(); feedM.pred = null; renderMore($("#more"), M);
   S.color = ""; S.orient = ""; S.tone = ""; S.only.clear(); markFilters();
   $("#q").value = ""; syncQ(); $("#q").blur(); $("#msg").hidden = true; $("#msg").textContent = ""; $("#filters").hidden = true; $("#srcPanel").hidden = true;
   HOME.cat = null;
-  setView("feed"); renderChips(); renderStat(); renderHome(true); scrollTo(0, 0);
+  setView("feed"); renderChips(); renderStat(); renderHome(true); scrollTo(0, 0); // setView 가 맞춤 피드를 새로 시작합니다
 }
 $("#homeBtn").onclick = goHome;
 $("#sf").addEventListener("submit", (e) => { e.preventDefault(); startSearch($("#q").value); });
@@ -796,17 +1052,6 @@ function bindClear(input, btn, onClear) {
 }
 const syncQ = bindClear($("#q"), $("#qClear"));
 
-// 둘러보기 버튼 3종
-$("#exRand").onclick = () => { const c = pick(CATS); startSearch(pick(c[2])); };
-$("#exTrend").onclick = () => setView("tr");
-$("#exBm").onclick = async () => {
-  if (S.priv) return;
-  // 한 주제어만 검색하지 않고, 취향·북마크를 종합한 추천 피드(트렌드 탭의 ‘내 취향’)로 갑니다.
-  const has = (tasteOn() && !Taste.isEmpty()) || (await bmTopTags(1)).length;
-  if (!has) toast("북마크·취향 정보가 아직 없어요. 마음에 드는 이미지를 북마크하면 여기서 추천해 드려요", 4200);
-  TR.g = has ? "mine" : "all"; TR.topic = ""; TR.views.delete(trKey()); TR.v = null; setView("tr");
-};
-
 // ---------- 탭/북마크 보기 ----------
 function setView(v) {
   if (v !== "bm" && SEL.on) exitSel();
@@ -817,7 +1062,11 @@ function setView(v) {
   $("#home").hidden = !(v === "feed" && !M.q);
   if (v !== "feed") $("#more").hidden = true;
   if (v !== "bm") recClose();
-  if (v === "feed") { feedM.check(); renderChips(); const m = $("#msg"); m.hidden = !(M.q && !M.items.length && m.textContent); renderMore($("#more"), M); }
+  if (v === "feed") {
+    // 홈(검색 전)이면 맞춤 피드를 보여 줍니다. 아직 시작 전이거나 30분이 지났으면 새로 시작.
+    if (!M.q && cfg && !S.offline && (!FY.active || Date.now() - FY.at > 30 * 60000)) fyStart();
+    feedM.check(); renderChips(); const m = $("#msg"); m.hidden = !(M.q && !M.items.length && m.textContent); renderMore($("#more"), M.q ? M : FY);
+  }
   else if (v === "tr") { $("#msg").hidden = true; renderChips(); trEnter(); scrollTo(0, 0); }
   if (v === "bm") $("#chipsWrap").hidden = true; // 북마크의 보드는 위쪽 묶음 줄에서 고릅니다
 }
@@ -948,7 +1197,67 @@ function renderBoardStrip(all) {
   tile("전체", "__all", all);
   names.forEach((n) => tile(n, n, all.filter((x) => bOf(x).includes(n))));
   const un = all.filter((x) => !bOf(x).length); if (un.length) tile("보드 없음", "", un);
+  const mg = document.createElement("button"); mg.type = "button"; mg.className = "bt mgr"; mg.setAttribute("aria-label", "보드 관리");
+  const th = document.createElement("span"); th.className = "th"; th.innerHTML = '<svg class="i"><use href="#i-sliders"/></svg>';
+  const nm = document.createElement("span"); nm.className = "nm"; nm.textContent = "보드 관리";
+  mg.append(th, nm); mg.onclick = openBoardMgr; box.appendChild(mg);
 }
+
+// ---------- 보드 관리 (17차): 이름 바꾸기 · 순서 옮기기 · 지우기 ----------
+// 보드는 북마크마다 붙은 이름표(boards)입니다. 보드를 지워도 북마크(이미지)는 그대로 남고 이름표만 떼어요.
+const setBoards = (x, arr) => { x.boards = arr; delete x.board; };
+async function bmgRename(oldN, newN) {
+  newN = String(newN || "").trim().slice(0, 30);
+  if (!newN || newN === oldN) return false;
+  for (const x of await DB.all()) if (bOf(x).includes(oldN)) { setBoards(x, [...new Set(bOf(x).map((b) => (b === oldN ? newN : b)))]); await DB.put(x); }
+  const ord = LS.get("boardOrder", []).map((b) => (b === oldN ? newN : b)); LS.set("boardOrder", [...new Set(ord)]);
+  if (S.board === oldN) S.board = newN;
+  if (LS.get("lastBoard", "") === oldN) LS.set("lastBoard", newN);
+  return true;
+}
+async function bmgDelete(n) {
+  for (const x of await DB.all()) if (bOf(x).includes(n)) { setBoards(x, bOf(x).filter((b) => b !== n)); await DB.put(x); }
+  LS.set("boardOrder", LS.get("boardOrder", []).filter((b) => b !== n));
+  if (S.board === n) S.board = "__all";
+  if (LS.get("lastBoard", "") === n) LS.set("lastBoard", "");
+}
+function bmgMove(names, i, d) {
+  const j = i + d; if (j < 0 || j >= names.length) return;
+  const a = names.slice(); [a[i], a[j]] = [a[j], a[i]]; LS.set("boardOrder", a);
+}
+async function renderBmg() {
+  const all = await DB.all(), names = boardNames(all), box = $("#bmgList"); box.textContent = "";
+  if (!names.length) { const p = document.createElement("p"); p.className = "note"; p.textContent = "아직 보드가 없어요."; box.appendChild(p); return; }
+  const refresh = async () => { await renderBmg(); await renderBm(); };
+  names.forEach((n, i) => {
+    const row = document.createElement("div"); row.className = "bmg"; row.dataset.n = n;
+    const nm = document.createElement("span"); nm.className = "nm"; nm.textContent = n;
+    const c = document.createElement("small"); c.textContent = all.filter((x) => bOf(x).includes(n)).length + "장"; nm.appendChild(c);
+    const btn = (cls, label, txt, fn) => { const b = document.createElement("button"); b.type = "button"; b.className = "ico sm " + cls; b.setAttribute("aria-label", label); b.textContent = txt; b.onclick = fn; return b; };
+    const up = btn("up", `${n} 위로`, "↑", () => { bmgMove(names, i, -1); refresh(); }), dn = btn("dn", `${n} 아래로`, "↓", () => { bmgMove(names, i, 1); refresh(); });
+    up.disabled = i === 0; dn.disabled = i === names.length - 1;
+    const ed = btn("ed", `${n} 이름 바꾸기`, "✎", () => {
+      const inp = document.createElement("input"); inp.type = "text"; inp.value = n; inp.maxLength = 30; inp.setAttribute("aria-label", "새 이름");
+      row.textContent = ""; row.appendChild(inp);
+      const ok = btn("ok", "이름 저장", "✓", async () => {
+        const v = inp.value.trim();
+        if (v && v !== n && names.includes(v) && !confirm(`‘${v}’ 보드가 이미 있어요. 두 보드를 하나로 합칠까요?`)) return;
+        if (await bmgRename(n, v)) toast(`‘${n}’ → ‘${v}’`);
+        refresh();
+      });
+      inp.onkeydown = (e) => { if (e.key === "Enter") ok.click(); else if (e.key === "Escape") refresh(); };
+      row.appendChild(ok); inp.focus(); inp.select();
+    });
+    const del = btn("del", `${n} 지우기`, "🗑", () => {
+      if (del.classList.contains("armed")) { clearTimeout(del.t); bmgDelete(n).then(() => { toast(`‘${n}’ 보드를 지웠어요. 이미지는 북마크에 남아 있어요`); refresh(); }); return; }
+      del.classList.add("armed"); del.textContent = "한 번 더"; del.classList.remove("ico"); del.t = setTimeout(() => { del.classList.remove("armed"); del.classList.add("ico"); del.textContent = "🗑"; }, 3000);
+    });
+    row.append(nm, up, dn, ed, del); box.appendChild(row);
+  });
+}
+function openBoardMgr() { renderBmg(); $("#boardMgr").hidden = false; }
+function closeBoardMgr() { $("#boardMgr").hidden = true; }
+$("#bmgClose").onclick = closeBoardMgr;
 $("#tabFeed").onclick = () => setView("feed");
 $("#tabTr").onclick = () => setView("tr");
 $("#tabBm").onclick = showBm;
@@ -1609,6 +1918,7 @@ function bindSheet(overlay, close) {
 }
 bindSheet($("#bmSheet"), closeSheet);
 bindSheet($("#settings"), closeSettings);
+bindSheet($("#boardMgr"), closeBoardMgr);
 async function openBoardSheet(it) { // 한 장: 북마크가 아니면 먼저 (보드 없이) 담고 보드·메모를 고릅니다
   if (!it) return;
   if (S.priv) return toast("비공개 모드에서는 북마크를 쓸 수 없어요");
@@ -1684,7 +1994,7 @@ $("#selDel").onclick = async () => { // 실수 방지: 한 번 누르면 확인 
   if (!SEL.ids.size) return;
   if (!SEL.armT) { setLbl($("#selDel"), "한 번 더"); SEL.armT = setTimeout(disarmDel, 3000); return; }
   const ids = [...SEL.ids]; let n = 0;
-  for (const id of ids) if (await DB.del(id)) { S.bmIds.delete(id); n++; }
+  for (const id of ids) if (await DB.del(id)) { S.bmIds.delete(id); n++; ACT.bump(id, -2); }
   updateCount(); exitSel(); toast(`${n}장을 북마크에서 삭제했어요`); renderBm();
 };
 
@@ -1766,6 +2076,7 @@ function renderSettings() {
   $("#sBlur").checked = S.blur; $("#sMl").checked = S.ml;
   $("#capRow").hidden = !cfg?.caption; $("#sCap").checked = LS.get("cap", true);
   $("#sTaste").checked = S.taste; renderTasteView(); renderAvoidView();
+  ACT.load().then(() => { if (!$("#settings").hidden) renderTasteView(); });
   const box = $("#srcList"); box.textContent = "";
   (cfg?.sources || []).forEach((s) => {
     const l = document.createElement("label"); l.className = "row src";
@@ -1793,7 +2104,10 @@ function renderTasteView() {
   v.tones.forEach((x) => add(KO[x.k] || x.k, "tones", x.k, "t"));
   v.colors.forEach((x) => add(KO_COLOR[x.k] || x.k, "colors", x.k, "t"));
   v.less.slice(0, 4).forEach((x) => add(`덜 · ${x.k}`, "tags", x.k, "less"));
-  const empty = Taste.isEmpty(); box.hidden = !S.taste || empty; $("#tasteNote").hidden = box.hidden; $("#tasteClear").hidden = empty;
+  const empty = Taste.isEmpty(); box.hidden = !S.taste || empty; $("#tasteNote").hidden = box.hidden;
+  const acts = ACT.size(), rec = Recent.list().length;
+  $("#actNote").hidden = !acts && !rec; $("#actNote").textContent = `이 기기에 기억 중: 반응한 이미지 ${acts}장 · 최근 검색 ${rec}개`;
+  $("#tasteClear").hidden = empty && !acts && !rec;
 }
 // 설정의 "추천 안 함": 숨긴 이미지 수와, 비슷한 이미지에 영향을 주는 태그. 태그를 누르면 그 태그만 되돌립니다.
 function renderAvoidView() {
@@ -1810,9 +2124,9 @@ function renderAvoidView() {
 $("#avoidClear").onclick = () => { Avoid.clear(); renderAvoidView(); toast("추천 안 함 목록을 모두 지웠어요. 숨겼던 이미지가 다시 나올 수 있어요", 4500); };
 $("#sTaste").onchange = (e) => {
   S.taste = e.target.checked; LS.set("tasteOn", S.taste); renderTasteView();
-  toast(S.taste ? "이 기기에서만 취향을 기억해요 (다음 검색부터 반영)" : "취향 학습을 껐어요. 저장된 점수는 [취향 지우기]로 지울 수 있어요", 4500);
+  toast(S.taste ? "이 기기에서만 취향·활동을 기억해요 (홈 피드에 곧 반영)" : "취향 학습을 껐어요. 저장된 점수는 [취향 지우기]로 지울 수 있어요", 4500);
 };
-$("#tasteClear").onclick = () => { Taste.clear(); renderTasteView(); toast("취향을 모두 지웠어요"); };
+$("#tasteClear").onclick = async () => { Taste.clear(); Recent.clear(); await ACT.clear(); FYI.sig = ""; renderTasteView(); renderRecent?.(); toast("취향·활동 기록·최근 검색을 모두 지웠어요"); };
 $("#gear").onclick = () => { renderSettings(); $("#settings").hidden = false; };
 $("#closeSet").onclick = closeSettings;
 $("#sBlur").onchange = (e) => {
@@ -1856,7 +2170,7 @@ function applyPriv() {
 }
 $("#privBtn").onclick = () => {
   S.priv = !S.priv; LS.set("priv", S.priv); applyPriv();
-  if (S.view === "feed" && !M.q) renderHome(); if (S.view === "tr") renderTrends();
+  if (S.view === "feed" && !M.q) { renderHome(); fyStart(true); } if (S.view === "tr") renderTrends(); // 비공개 모드를 바꾸면 맞춤 피드도 새로 만듭니다
   toast(S.priv ? "🕶 비공개 모드: 북마크와 취향이 보이지 않고, 학습도 멈췄어요" : "비공개 모드를 껐어요");
 };
 
@@ -1881,7 +2195,9 @@ async function boot() {
   applyPriv(); markFilters();
   if (off) { if (S.priv) setView("feed"); else await showBm(); return; }
   setView("feed"); renderHome(); renderStat();
-  // AI 검사 모델은 접속 직후에 내려받지 않고, 첫 이미지를 검사할 때 준비합니다 (첫 화면이 굳는 문제 완화)
+  // AI 검사 모델: 접속 직후가 아니라 첫 화면이 자리 잡은 뒤(약 3.5초) 브라우저가 한가할 때 미리 준비합니다.
+  // (첫 이미지를 검사할 때 기다리지 않게 하되, 접속 직후 화면이 굳던 문제는 피함. 번들은 앱 안에 있어서 외부 내려받기는 없음)
+  clearTimeout(boot.warm); boot.warm = setTimeout(() => { if (S.ml && S.blur && !S.offline && !modelP) idle(2500).then(() => getModel().catch(() => {})); }, 3500);
 }
 $("#retry").onclick = () => { $("#retry").textContent = "연결 중…"; boot().finally(() => { $("#retry").textContent = "다시 연결"; }); };
 addEventListener("online", () => { if (S.offline) boot(); });
