@@ -393,7 +393,8 @@ let modelP = null, aiState = "idle"; // idle | loading | ready | failed
 function getModel() {
   if (!modelP) {
     aiState = "loading"; renderStat();
-    modelP = idle(4000).then(() => import("https://esm.sh/nsfwjs@4")).then((m) => (m.load || m.default?.load).call(m))
+    // 앱 안에 둔 번들(/vendor/nsfw4/)을 먼저 쓰고, 없을 때만 외부(esm.sh)로 대체합니다.
+    modelP = idle(4000).then(() => import("/vendor/nsfw4/nsfw.js").catch(() => import("https://esm.sh/nsfwjs@4"))).then((m) => (m.load || m.default?.load).call(m))
       .then((mod) => { aiState = "ready"; renderStat(); return mod; })
       .catch((e) => { aiState = "failed"; modelP = null; renderStat(); throw e; });
   }
