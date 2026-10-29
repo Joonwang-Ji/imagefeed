@@ -111,6 +111,9 @@ main{padding:10px max(10px,env(safe-area-inset-right)) calc(var(--tab-h) + 40px 
 #homeChips .crow{display:flex;gap:8px;width:max-content}
 #homeChips button{padding:8px 15px;font-size:14px;border-radius:999px}
 #homeChips button.mine{border-color:var(--acc);color:var(--acc);background:var(--accbg)}
+#homeChips button.hasx{padding-right:8px;display:inline-flex;align-items:center;gap:6px}
+#homeChips button .chx{display:inline-block;font-style:normal;font-size:11px;width:20px;height:20px;line-height:20px;border-radius:50%;text-align:center;background:rgba(127,127,127,.22);color:inherit}
+#homeChips button .chx:hover{background:var(--danger);color:#fff}
 #homeChips button.rand{background:var(--grad);color:#fff;border-color:transparent}
 .recent{display:flex;gap:7px;align-items:center;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch;margin:2px -4px 0;padding:2px 4px 6px}
 .recent::-webkit-scrollbar{display:none}
@@ -245,6 +248,13 @@ body.offline header .hrow.top,body.offline #tabFeed,body.offline #tabTr,body.off
 .vstage.zoomed .vwrap{touch-action:none}
 .vstage.zoomed .nav{display:none}
 #vimg{max-width:100%;max-height:100%;object-fit:contain;transform-origin:50% 50%;will-change:transform;-webkit-user-drag:none;-webkit-touch-callout:none}
+/* 전체화면 보기: 이미지만 화면 가득 보여 줍니다 (핀치·더블탭 확대, 좌우 넘기기는 그대로) */
+.vfsx{display:none}
+#viewer.fs{overflow:hidden}
+#viewer.fs .vtop,#viewer.fs .vinfo,#viewer.fs .vact,#viewer.fs .vsimgo,#viewer.fs #vsimbox,#viewer.fs #vfab{display:none}
+#viewer.fs .vstage{position:fixed;inset:0;width:100%;height:100vh;height:100dvh;z-index:6;background:#000}
+#viewer.fs .vfsx{display:flex;position:fixed;top:max(12px,env(safe-area-inset-top));right:12px;z-index:9;width:44px;height:44px;padding:0;border-radius:50%;align-items:center;justify-content:center;background:rgba(30,33,40,.72);border-color:#555;color:#fff}
+#viewer.fs .zreset{top:auto;right:auto;left:50%;transform:translateX(-50%);bottom:max(18px,env(safe-area-inset-bottom))}
 .zreset{position:absolute;top:8px;right:8px;z-index:3;padding:5px 12px;font-size:13px;background:rgba(0,0,0,.6);border-color:#555;color:#fff}
 #vimg.blur{filter:blur(30px)}
 .nav{position:absolute;top:50%;transform:translateY(-50%);z-index:2;width:40px;height:56px;padding:0;background:rgba(0,0,0,.35);border:none;color:#fff;border-radius:14px;opacity:.7}

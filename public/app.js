@@ -233,11 +233,12 @@ const embText = (it) => [it.title, ...(it.tags || []).slice(0, 8)].filter(Boolea
 const FYI = { sig: "", cl: [] };
 async function buildInterests() {
   if (!tasteOn()) return [];
-  const m = await ACT.load(), bmc = S.bmIds.size, sig = `${ACT.rev}:${m.size}:${bmc}`;
+  const m = await ACT.load(), bmc = S.bmIds.size, sig = `${ACT.rev}:${m.size}:${bmc}:${Taste.muted().join("|")}`;
   if (FYI.sig === sig) return FYI.cl;
   const boards = new Map();
   if (bmc) for (const x of await DB.all()) { const b = bOf(x); if (b.length) boards.set(x.id, b); } // 같은 보드에 담은 이미지는 서로 가까운 것으로 봄
-  const entries = [...m.values()].map((r) => ({ id: r.id, keys: TasteStore.keysOf(r), an: r.an, boards: boards.get(r.id) || [], wt: r.wt, ts: r.ts, vec: r.vec }));
+  // 내가 "이 말은 그만"이라고 뺀 단어(설정의 ✕, 홈 ⭐ 칩의 ✕)가 든 활동은 관심사를 만들 때 쓰지 않습니다
+  const entries = [...m.values()].map((r) => ({ id: r.id, keys: TasteStore.keysOf(r), an: r.an, boards: boards.get(r.id) || [], wt: r.wt, ts: r.ts, vec: r.vec })).filter((e) => !e.keys.some((k) => Taste.isMuted(k)));
   FYI.cl = Interests.build(entries); FYI.sig = sig;
   return FYI.cl;
 }
@@ -865,8 +866,17 @@ sio.observe($("#sentinel"));
 const HOME = { cat: null, picks: [], tok: 0 };
 async function bmTopTags(n = 8) {
   const cnt = new Map();
-  for (const x of await DB.all()) for (const t of new Set([...(x.tags || []).map((v) => String(v).toLowerCase()), ...tokens(x.title || "")])) cnt.set(t, (cnt.get(t) || 0) + 1);
+  for (const x of await DB.all()) for (const t of new Set([...(x.tags || []).map((v) => String(v).toLowerCase()), ...tokens(x.title || "")])) if (!Taste.isMuted(t)) cnt.set(t, (cnt.get(t) || 0) + 1);
   return [...cnt.entries()].sort((a, b) => b[1] - a[1]).slice(0, n).map(([t]) => t);
+}
+// ⭐ 칩의 ✕: 그 말을 "뺀 단어"로 저장합니다. 관심사 칩(chip=null)이면 맞춤 피드도 새로 짜고, 북마크 단어 칩이면 그 칩만 치웁니다.
+// 뺀 단어는 취향 점수·관심사·북마크 단어 칩·트렌드 내 취향 어디서도 다시 쓰지 않고, 설정의 [뺀 단어]에서 되돌릴 수 있어요.
+function dropStar(words, label, chip) {
+  words.forEach((w) => Taste.mute(w)); FYI.sig = "";
+  const undo = () => { words.forEach((w) => Taste.unmute(w)); FYI.sig = ""; renderTasteView(); if (!M.q && S.view === "feed" && !HOME.cat) { chip === null ? fyStart() : renderHome(); } };
+  toast(`‘${label}’은(는) 추천에서 뺐어요`, 6000, { label: "되돌리기", fn: undo });
+  renderTasteView();
+  if (chip) chip.remove(); else if (!M.q && S.view === "feed") fyStart();
 }
 // 홈 맨 위 한 줄: [아무거나] [내 관심사들(⭐)] [추천 카테고리…]. 카테고리를 누르면 세부 주제로 내려갑니다. 그 아래가 "당신을 위한 피드"예요.
 function renderHome(reshuffle) {
@@ -878,14 +888,20 @@ function renderHome(reshuffle) {
   if (!cat) {
     if (reshuffle || !HOME.picks.length) HOME.picks = shuffle(CATS).slice(0, 10);
     chip("🎲 아무거나", "rand", () => { const c = pick(CATS); startSearch(pick(c[2]), { auto: true }); });
-    const labels = (FY.ints || []).map((c) => c.label).filter(Boolean).slice(0, 3);
-    labels.forEach((t) => chip(`⭐ ${t}`, "mine", () => startSearch(t)));
+    const mkStar = (t, onDrop) => {
+      const b = mk(`⭐ ${t}`, "mine", () => startSearch(t)); b.classList.add("hasx");
+      const x = document.createElement("i"); x.textContent = "✕"; x.className = "chx"; x.setAttribute("role", "button"); x.setAttribute("aria-label", `${t} 추천에서 빼기`);
+      x.onclick = (e) => { e.stopPropagation(); onDrop(b); };
+      b.appendChild(x); return b;
+    };
+    const ints = (FY.ints || []).filter((c) => c.label).slice(0, 3), labels = ints.map((c) => c.label);
+    ints.forEach((c) => row.appendChild(mkStar(c.label, () => dropStar((c.terms || []).slice(0, 2), c.label, null))));
     HOME.picks.forEach((c) => chip(`${c[0]} ${c[1]}`, "cat", () => { HOME.cat = c; renderHome(); }));
     // 아직 관심사 묶음이 없으면(처음 며칠) 북마크·취향의 자주 나온 단어를 두세 개 섞어 줍니다
     if (!labels.length && !S.priv) bmTopTags(6).then((tags) => {
       if (tok !== HOME.tok || HOME.cat || S.priv) return;
       const pool = [...new Set([...(tasteOn() ? Taste.top(8) : []), ...tags])], at = row.children[1] || null;
-      shuffle(pool).slice(0, tasteOn() ? 3 : 2).forEach((t) => row.insertBefore(mk(`⭐ ${t}`, "mine", () => startSearch(t)), at));
+      shuffle(pool).slice(0, tasteOn() ? 3 : 2).forEach((t) => row.insertBefore(mkStar(t, (b) => dropStar([t], t, b)), at));
     });
   } else {
     chip(`${cat[0]} ‘${cat[1]}’ 전체 보기`, "cat", () => startSearch(cat[1]));
@@ -1265,7 +1281,7 @@ $("#tabBm").onclick = showBm;
 // ---------- 뷰어: 이미지 아래로 "비슷한 이미지" 피드가 이어집니다 ----------
 // V.stack 의 각 칸(level)이 "지금 보는 이미지 + 그 아래 비슷한 이미지 피드" 한 세트입니다.
 // 비슷한 이미지를 누르면 새 칸이 쌓이고, 뒤로 가기(또는 스와이프 뒤로)로 이전 칸에 돌아갑니다.
-const V = { stack: [], pushed: 0, unwinding: false };
+const V = { stack: [], pushed: 0, unwinding: false, fs: false };
 let vTok = 0, vUrl = null, dwellT = null;
 const lv = () => V.stack[V.stack.length - 1];
 const curItem = () => { const l = lv(); return l ? l.list[l.cur] : null; };
@@ -1319,7 +1335,7 @@ function popLevel() {
 function finishClose() {
   clearTimeout(dwellT); cropClose();
   V.stack.forEach((l) => { l.feed.reset(); clearTimeout(l.rrT); vio.unobserve(l.sent); });
-  V.stack = []; V.pushed = 0; $("#vsimlevels").textContent = ""; zReset();
+  V.stack = []; V.pushed = 0; $("#vsimlevels").textContent = ""; zReset(); fsReset();
   $("#viewer").hidden = true; document.body.classList.remove("lock"); vTok++;
   if (vUrl) { URL.revokeObjectURL(vUrl); vUrl = null; }
   if (S.view === "bm") renderBm();
@@ -1333,6 +1349,7 @@ function closeViewer() {
 addEventListener("popstate", () => {
   if (V.unwinding) { V.unwinding = false; return; }
   if (!V.stack.length) return;
+  if (V.fs) { exitFs(true); return; } // 뒤로 가기(스와이프)는 전체화면부터 닫고, 한 번 더 누르면 평소처럼 동작
   if (V.stack.length > 1) { V.pushed = Math.max(0, V.pushed - 1); popLevel(); }
   else { V.pushed = 0; finishClose(); }
 });
@@ -1656,8 +1673,29 @@ addEventListener("keydown", (e) => {
   if (!$("#bmSheet").hidden) { if (e.key === "Escape") closeSheet(); return; }
   if (!$("#settings").hidden) { if (e.key === "Escape") closeSettings(); return; }
   if ($("#viewer").hidden || e.target.closest?.("input,textarea,select")) return;
-  if (e.key === "Escape") { if (!$("#vcropui").hidden) cropClose(); else closeViewer(); } if (e.key === "ArrowLeft") step(-1); if (e.key === "ArrowRight") step(1);
+  if (e.key === "Escape") { if (V.fs) exitFs(); else if (!$("#vcropui").hidden) cropClose(); else closeViewer(); } if (e.key === "ArrowLeft") step(-1); if (e.key === "ArrowRight") step(1);
 });
+// ----- 전체화면 보기 -----
+// [전체화면]을 누르면 제목·버튼·비슷한 이미지를 모두 숨기고 이미지만 화면 가득 보여 줍니다. 핀치·더블탭 확대와 좌우 넘기기는 그대로 쓸 수 있어요.
+// 닫기: 오른쪽 위 ✕ · Esc · 뒤로 가기(스와이프). 뷰어를 닫으면 전체화면도 함께 풀려요.
+// 컴퓨터·아이패드처럼 브라우저가 전체화면 기능을 지원하면 주소창 등 브라우저 화면까지 숨깁니다. (아이폰 사파리는 지원하지 않아 앱 화면 안에서 가득 채워요.)
+function enterFs() {
+  if (!lv() || V.fs) return;
+  V.fs = true; $("#viewer").classList.add("fs"); zReset(); $("#viewer").scrollTop = 0;
+  history.pushState({ fs: 1 }, ""); V.pushed++;
+  try { const r = document.documentElement.requestFullscreen?.({ navigationUI: "hide" }); r?.catch?.(() => {}); } catch { /* 지원하지 않음 */ }
+}
+function fsReset() { // 기록은 건드리지 않고 화면 상태만 되돌림 (뷰어를 닫을 때)
+  V.fs = false; $("#viewer").classList.remove("fs");
+  if (document.fullscreenElement) { try { document.exitFullscreen?.().catch?.(() => {}); } catch { /* 무시 */ } }
+}
+function exitFs(fromPop) {
+  if (!V.fs) return;
+  fsReset(); zReset(); V.pushed = Math.max(0, V.pushed - 1);
+  if (!fromPop) { V.unwinding = true; history.go(-1); setTimeout(() => { V.unwinding = false; }, 1000); } // 전체화면을 열 때 쌓은 브라우저 기록 한 칸을 되돌림
+}
+$("#vfs").onclick = enterFs; $("#vfsx").onclick = () => exitFs();
+document.addEventListener("fullscreenchange", () => { if (!document.fullscreenElement && V.fs) exitFs(); }); // 브라우저 전체화면을 Esc 등으로 끝냈을 때
 // ----- 이미지 확대·축소: 화면 전체는 확대되지 않고, 뷰어의 이미지에서만 핀치·더블탭·끌기로 확대합니다 -----
 // 확대 전(1배)에는 좌우로 밀어서 이전·다음 이미지, 세로로 밀면 평소처럼 화면 스크롤(비슷한 이미지 보기).
 const stage = $(".vstage"), wrap = $(".vwrap"), vimg = $("#vimg");
@@ -2094,17 +2132,26 @@ function renderSettings() {
 function renderTasteView() {
   const box = $("#tasteView"), v = Taste.view(), KO = window.ColorTools.TONE_KO; box.textContent = "";
   // 칩을 누르면 그 항목만 지워집니다 (kind: tags | tones | colors)
-  const add = (label, kind, k, cls) => {
+  const add = (label, kind, k, cls, mute) => {
     const b = document.createElement("button"); b.type = "button"; b.className = "tchip" + (cls ? " " + cls : ""); b.setAttribute("aria-label", `${label} 지우기`);
     const t = document.createElement("span"); t.textContent = label; const x = document.createElement("i"); x.textContent = "✕"; x.setAttribute("aria-hidden", "true"); b.append(t, x);
-    b.onclick = () => { Taste.forget(kind, k); renderTasteView(); toast(`‘${label}’을(를) 취향에서 지웠어요`); };
+    b.onclick = () => { Taste.forget(kind, k, mute); FYI.sig = ""; renderTasteView(); toast(mute ? `‘${label}’을(를) 취향에서 지우고 추천에서도 뺐어요` : `‘${label}’을(를) 취향에서 지웠어요`); };
     box.appendChild(b);
   };
-  v.tags.slice(0, 10).forEach((x) => add(x.k, "tags", x.k));
+  v.tags.slice(0, 10).forEach((x) => add(x.k, "tags", x.k, "", true));
   v.tones.forEach((x) => add(KO[x.k] || x.k, "tones", x.k, "t"));
   v.colors.forEach((x) => add(KO_COLOR[x.k] || x.k, "colors", x.k, "t"));
-  v.less.slice(0, 4).forEach((x) => add(`덜 · ${x.k}`, "tags", x.k, "less"));
+  v.less.slice(0, 4).forEach((x) => add(`덜 · ${x.k}`, "tags", x.k, "less", false));
   const empty = Taste.isEmpty(); box.hidden = !S.taste || empty; $("#tasteNote").hidden = box.hidden;
+  // 뺀 단어: 누르면 다시 추천에 쓸 수 있게 되돌립니다
+  const mv = $("#muteView"), mw = Taste.muted(); mv.textContent = "";
+  mw.forEach((w) => {
+    const b = document.createElement("button"); b.type = "button"; b.className = "tchip less"; b.setAttribute("aria-label", `${w} 다시 추천에 쓰기`);
+    const t = document.createElement("span"); t.textContent = w; const x = document.createElement("i"); x.textContent = "↺"; x.setAttribute("aria-hidden", "true"); b.append(t, x);
+    b.onclick = () => { Taste.unmute(w); FYI.sig = ""; renderTasteView(); toast(`‘${w}’은(는) 다시 추천에 쓸 수 있어요`); };
+    mv.appendChild(b);
+  });
+  mv.hidden = !mw.length; $("#muteNote").hidden = !mw.length;
   const acts = ACT.size(), rec = Recent.list().length;
   $("#actNote").hidden = !acts && !rec; $("#actNote").textContent = `이 기기에 기억 중: 반응한 이미지 ${acts}장 · 최근 검색 ${rec}개`;
   $("#tasteClear").hidden = empty && !acts && !rec;

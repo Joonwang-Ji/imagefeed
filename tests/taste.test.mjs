@@ -35,7 +35,7 @@ ok(!T.top(10).includes("dog"), "disliked words are not in top");
 const raw = mem.taste;
 ok(raw && !/https?:|query|search|url|history/i.test(raw), "stored data has no urls/queries/history");
 const parsed = JSON.parse(raw);
-ok(parsed.v === 1 && Object.keys(parsed).sort().join() === "colors,tags,tones,v", "stored shape: v/tags/colors/tones only");
+ok(parsed.v === 1 && Object.keys(parsed).sort().join() === "colors,mute,tags,tones,v", "stored shape: v/tags/colors/tones/mute only");
 ok(Object.values(parsed.tags).every((e) => Array.isArray(e) && e.length === 2 && typeof e[0] === "number"), "tag entries are [score, ts]");
 const T2 = create(store, clock);
 ok(T2.affinity(["cat", "kitten", "pet"]) > 0.9, "persisted and reloaded");
@@ -74,6 +74,26 @@ ok(create(store, clock).isEmpty(), "unknown stored format ignored");
   ok(T2.forget("tones", "vivid") === true && T2.forget("colors", "red") === true && T2.view().tones.length === 0 && T2.view().colors.length === 0, "tones and colors can be removed");
   ok(T2.forget("tags", "nope") === false, "unknown item: nothing happens");
   ok(keysOf({ tags: [], title: "블로그 후기 맛집", grp: "hot" }).length === 0, "naver hot-photo titles are not learned");
+}
+
+// ---- 뺀 단어(mute): 지운 단어가 다른 경로로 다시 올라오지 않게 ----
+{
+  const m2 = {}, st2 = { get: (k, d) => (k in m2 ? JSON.parse(m2[k]) : d), set: (k, v) => { m2[k] = JSON.stringify(v); } };
+  const T3 = create(st2, clock);
+  T3.learn(["daum카페", "모임"], 3);
+  ok(T3.top(5).includes("daum카페") && !T3.isMuted("daum카페"), "before: learned word is in top");
+  ok(T3.forget("tags", "daum카페") === true && T3.isMuted("daum카페") && !T3.top(5).includes("daum카페"), "deleting a liked tag also mutes it");
+  T3.learn(["daum카페", "카페"], 3);
+  ok(!T3.top(5).includes("daum카페") && !T3.view().tags.some((x) => x.k === "daum카페") && T3.top(5).includes("카페"), "muted word is not learned again (other words still are)");
+  ok(T3.affinity(["daum카페"]) === 0, "muted word has no influence on ranking");
+  ok(T3.muted().join() === "daum카페" && T3.isMuted("DAUM카페"), "muted list is case-insensitive");
+  T3.clear();
+  ok(T3.isMuted("daum카페") && T3.isEmpty(), "clear wipes scores but keeps muted words");
+  ok(create(st2, clock).isMuted("daum카페"), "muted words survive reload");
+  ok(T3.unmute("daum카페") === true && !T3.isMuted("daum카페") && T3.unmute("daum카페") === false, "unmute restores the word");
+  T3.learn(["gamma2"], -3); ok(T3.forget("tags", "gamma2", false) === true && !T3.isMuted("gamma2"), "removing a 'less' tag does not mute it");
+  ok(T3.mute("신혼여행계획") === true && T3.isMuted("신혼여행계획") && T3.mute("a") === false, "mute() works for bookmark-derived words; too-short words are rejected");
+  ok(JSON.stringify(JSON.parse(m2.taste).mute).indexOf("http") < 0, "muted words are stored as plain words only");
 }
 
 console.log(fail ? `\n${fail} failed` : "\nall passed"); process.exit(fail ? 1 : 0);

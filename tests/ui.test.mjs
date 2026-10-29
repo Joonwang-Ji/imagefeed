@@ -327,7 +327,7 @@ ok(sa.B > sa.A, `taste re-ranks results (rank 2 liked image beats rank 1 neutral
 ok(!$("#privBtn").hidden && $("#privBtn").getAttribute("aria-label") === "비공개 모드" && run("S.priv") === false, "private mode icon exists, off by default");
 $("#privBtn").click(); ok(run("S.priv") === true && w.document.body.classList.contains("priv") && $("#privBtn").getAttribute("aria-pressed") === "true", "private mode on: body.priv + pressed");
 ok(run("tasteOn()") === false, "private mode disables taste");
-const tvBefore = run("JSON.stringify(Taste.view())"); run("learnFrom(__i, 5); learnFrom({ ...__i, tags: ['brandnew1', 'brandnew2'] }, 5)"); ok(run("JSON.stringify(Taste.view())") === tvBefore, "private mode: learning paused");
+const tvBefore = run("JSON.stringify(Object.values(Taste.view()).map((a) => a.map((x) => x.k)))"); run("learnFrom(__i, 5); learnFrom({ ...__i, tags: ['brandnew1', 'brandnew2'] }, 5)"); ok(run("JSON.stringify(Object.values(Taste.view()).map((a) => a.map((x) => x.k)))") === tvBefore, "private mode: learning paused");
 const scoresP = Object.fromEntries(run(`(() => { M.reset(); M.begin("sea"); M.merge([{ src: { id: "pixabay", w: 1 }, items: [{ ...__i, tags: ["plain", "other"], full: "https://x.test/a", title: "A" }, { ...__i, tags: ["cat", "sofa"], full: "https://x.test/b", title: "B" }], base: 0 }]); const r = [...M.pend.values()].map((e) => [e.it.title, e.score]); M.reset(); return r; })()`));
 ok(scoresP.A > scoresP.B, "private mode: no taste re-ranking");
 $("#tabBm").click(); await tick(40); ok(run("S.view") !== "bm", "private mode: bookmarks cannot be opened");
@@ -646,6 +646,70 @@ run("DB._m = []; S.bmIds = new Set(); LS.set('lastBoard', '')");
   $("#closeSet").click();
   // 자리 표시
   run("skel(true)"); ok(!$("#skel").hidden, "skeleton shows while waiting"); run("skel(false)"); ok($("#skel").hidden, "skeleton hides");
+}
+
+// ---- 18차: ⭐ 칩의 ✕ / 뺀 단어 ----
+{
+  run("S.priv = false"); run("S.taste = true"); run("Taste.clear()"); run("Taste.unmute('daum카페'); Taste.unmute('모임'); Taste.unmute('신혼여행계획')");
+  await run("ACT.clear()");
+  // 활동 기록에서 만든 관심사: 설정에서 지워도(점수) 다시 올라오던 경로
+  await run("ACT.note({ id: 'ad1', key: 'k-ad1', title: 'Daum 카페 모임', tags: ['daum카페', '모임'], src: 'pixabay', thumb: 'https://x.test/a.jpg', full: 'https://x.test/a.jpg' }, 3)");
+  await run("ACT.note({ id: 'ad2', key: 'k-ad2', title: 'Daum 카페 모임2', tags: ['daum카페', '모임'], src: 'pixabay', thumb: 'https://x.test/b.jpg', full: 'https://x.test/b.jpg' }, 3)");
+  run("FYI.sig = ''"); let cl = await run("buildInterests()");
+  ok(cl.some((c) => (c.terms || []).includes("daum카페")), "before: activity on 'daum카페' images makes an interest");
+  run("Taste.learn(['daum카페'], 3)"); run("Taste.forget('tags', 'daum카페')"); // 설정의 취향 칩 ✕ 와 같은 동작
+  cl = await run("buildInterests()");
+  ok(!cl.some((c) => (c.terms || []).includes("daum카페") || /daum카페/.test(c.label || "")), "after deleting the taste chip in settings, the interest cluster built from activity is gone too");
+  // 홈 ⭐ 칩에서 바로 빼기
+  run("Taste.unmute('daum카페')"); run("FYI.sig = ''");
+  run("FY.ints = [{ label: 'daum카페 모임', terms: ['daum카페', '모임'] }]"); run("HOME.cat = null"); run("renderHome()");
+  const star = () => $$("#homeChips button.mine");
+  ok(star().length === 1 && star()[0].querySelector(".chx") && /daum카페 모임/.test(star()[0].textContent), "home ⭐ chip has a ✕");
+  star()[0].querySelector(".chx").click(); await tick(60);
+  ok(run("Taste.isMuted('daum카페')") && run("Taste.isMuted('모임')") && /추천에서 뺐어요/.test($("#toast").textContent) && /되돌리기/.test($("#toast").textContent), "✕ on a ⭐ chip mutes its words and offers 되돌리기");
+  $("#gear").click(); await tick(40);
+  ok(!$("#muteView").hidden && $$("#muteView .tchip").some((b) => /daum카페/.test(b.textContent)), "settings lists muted words");
+  $$("#muteView .tchip").find((b) => /daum카페/.test(b.textContent)).click(); await tick(20);
+  ok(!run("Taste.isMuted('daum카페')"), "tapping a muted word in settings brings it back"); $("#closeSet").click();
+  // 북마크 단어에서 나오던 ⭐ 칩(기록 지우기 후에도 남던 것)
+  run("Taste.unmute('모임')"); run("Taste.mute('daum카페')");
+  await run("DB._m = DB._m || []"); // (북마크 저장소는 이 테스트 환경에서 DB.all 을 대신 정의해 둠)
+  const bm = [{ id: 'bm-z1', title: '신혼여행계획 모음', tags: ['신혼여행계획'], src: 'pixabay', ts: Date.now() }, { id: 'bm-z2', title: '신혼여행계획 표', tags: ['신혼여행계획'], src: 'pixabay', ts: Date.now() }];
+  const oldAll = run("DB.all"); run("globalThis.__oldAll = DB.all"); run(`DB.all = async () => ${JSON.stringify(bm)}`);
+  ok((await run("bmTopTags(6)")).includes("신혼여행계획"), "before: bookmark words feed the fallback ⭐ chips");
+  run("Taste.mute('신혼여행계획')");
+  ok(!(await run("bmTopTags(6)")).includes("신혼여행계획"), "muted words no longer come from bookmarks");
+  run("DB.all = globalThis.__oldAll");
+  await run("ACT.clear()"); run("Taste.unmute('daum카페'); Taste.unmute('신혼여행계획')"); run("FYI.sig = ''");
+}
+
+// ---- 18차: 뷰어 전체화면 ----
+{
+  const fsItem = "[{ id: 'f1', key: 'f1', title: 't', thumb: 'https://x.test/f.jpg', full: 'https://x.test/f_full.jpg', src: 'pixabay', tags: [], w: 400, h: 300 }]";
+  const vw = $("#viewer"), isFs = () => vw.classList.contains("fs") && run("V.fs") === true;
+  run(`openViewer(${fsItem}, 0)`); await tick(40);
+  ok(!!$("#vfs") && !$("#vfs").hidden && /전체화면/.test($("#vfs").textContent), "viewer has a 전체화면 button");
+  const n0 = run("V.pushed"); $("#vfs").click(); await tick(20);
+  ok(isFs() && run("V.pushed") === n0 + 1, "전체화면 turns on (viewer.fs) and adds one history step");
+  ok(/#viewer\.fs \.vact[^{]*\{[^}]*display:none/.test(css) || /#viewer\.fs \.vtop,#viewer\.fs \.vinfo,#viewer\.fs \.vact/.test(css), "css: fullscreen hides title bar, buttons and similar-images");
+  ok(/#viewer\.fs \.vstage\{[^}]*position:fixed;inset:0/.test(css) && /#viewer\.fs \.vfsx\{display:flex/.test(css), "css: stage fills the screen and the exit button shows only in fullscreen");
+  $("#vfsx").click(); await tick(20);
+  ok(!isFs() && !vw.hidden && run("V.pushed") === n0, "✕ leaves fullscreen but keeps the viewer open (history step returned)");
+  await tick(80);
+  $("#vfs").click(); await tick(20); w.dispatchEvent(new w.KeyboardEvent("keydown", { key: "Escape", bubbles: true })); await tick(20);
+  ok(!isFs() && !vw.hidden, "Esc leaves fullscreen first, not the viewer");
+  await tick(80);
+  $("#vfs").click(); await tick(20); w.dispatchEvent(new w.PopStateEvent("popstate")); await tick(20);
+  ok(!isFs() && !vw.hidden, "back gesture (popstate) leaves fullscreen first, viewer stays");
+  ok(run("V.pushed") === n0, "history count is balanced after leaving by back gesture");
+  $("#vfs").click(); await tick(20);
+  const zbefore = run("Z.s"); w.dispatchEvent(new w.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true })); await tick(10);
+  ok(isFs() && zbefore === 1, "arrow keys / swipes keep fullscreen on and zoom resets at 1x");
+  $("#vfab").click(); await tick(20); // (전체화면에서는 숨겨져 있지만) 뷰어를 닫으면 전체화면도 함께 풀려야 함
+  run("closeViewer()"); await tick(60);
+  ok(vw.hidden && !vw.classList.contains("fs") && run("V.fs") === false, "closing the viewer also clears fullscreen");
+  run(`openViewer(${fsItem}, 0)`); await tick(30);
+  ok(!vw.classList.contains("fs") && run("V.fs") === false, "next time the viewer opens normally (not in fullscreen)"); run("closeViewer()"); await tick(60);
 }
 
 ok(errors.length === 0, "no script errors" + (errors.length ? ": " + errors.slice(0, 3).join(" ; ") : ""));
