@@ -14,7 +14,9 @@
   const STOP = new Set(["the", "and", "for", "with", "from", "photo", "photos", "image", "images", "picture", "stock", "free", "jpg", "png",
     "이미지", "사진", "무료", "블로그", "네이버", "다음", "티스토리"]);
   const norm = (s) => String(s == null ? "" : s).toLowerCase().normalize("NFC").trim();
-  const okKey = (k) => k.length >= 2 && k.length <= 24 && !STOP.has(k) && !/^\d+$/.test(k) && !/[\s]{2,}/.test(k);
+  // 출처 사이트 이름(daum카페·티스토리 등)은 이미지 내용이 아니라서 취향 단어로 배우지 않습니다 (18차 신고: ⭐ 칩에 'daum카페'가 계속 뜸)
+  const SITE = /^(daum|다음|naver|네이버|tistory|티스토리|kakao|카카오|google|구글|brunch|브런치)(카페|블로그|뉴스|지식in|지식인|포스트|cafe|blog|news|post)?$/;
+  const okKey = (k) => k.length >= 2 && k.length <= 24 && !STOP.has(k) && !SITE.test(k) && !/^\d+$/.test(k) && !/[\s]{2,}/.test(k);
 
   // 이미지 하나에서 취향 단어를 뽑습니다: 태그가 충분하면 태그, 부족하면 제목의 단어(위키 화제 사진은 인물·사건 이름이라 제외)
   function keysOf(it) {

@@ -60,4 +60,11 @@ ok(R.bias("naver", R.makeTerms({ q: "sunset beach" }), false) < 1, "English quer
 const score = (it, src, rank) => R.mul(R.judge(it, T, src).tier) / (60 + rank);
 ok(score({ title: "금강엑슬루타워", tags: [] }, "wikimedia", 15) > score({ title: "", tags: ["river", "geumgang"] }, "pixabay", 0), "a relevant item ranked 16th beats an irrelevant river photo ranked 1st");
 
+
+// ---- 19차: 블로그 소스(kakaoblog) ----
+ok(R.judge({ title: "오늘의 일기", tags: [], desc: "금강엑슬루타워 앞에서 찍은 사진" }, T, "kakaoblog").tier === "strong", "blog snippet (desc) counts toward relevance");
+ok(R.judge({ title: "특가 할인 이벤트", tags: [], desc: "지금 구매하면 무료배송" }, T, "kakaoblog").tier === "weak", "unrelated blog post is weak (not 'trust', so it gets folded away for specific queries)");
+ok(R.bias("kakaoblog", R.makeTerms({ q: "한옥 마당" }), false) === 1 && R.bias("kakaoblog", R.makeTerms({ q: "wooden house" }), false) === 0.5, "blog source: neutral for Korean queries, half weight for English ones");
+ok(R.bias("kakaoblog", R.makeTerms({ q: "wooden house" }), true) === 1, "…but no bias when the user picked sources by hand");
+
 console.log(fail ? `\n${fail} failed` : "\nall passed"); process.exit(fail ? 1 : 0);

@@ -11,7 +11,15 @@ const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 function hashId(s) { let h = 5381; for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36); }
 function keyOf(it) { try { const u = new URL(it.full); return (u.host + u.pathname).toLowerCase(); } catch { return it.full || it.thumb; } }
 const STOP = new Set(["이미지", "사진", "블로그", "네이버", "다음", "티스토리", "photo", "image", "images", "stock", "free", "무료", "the", "and", "for", "with", "from", "jpg", "png"]);
-function tokens(s) { return (String(s).toLowerCase().match(/[\p{L}\p{N}]{2,}/gu) || []).filter((w) => !STOP.has(w) && !/^\d+$/.test(w)); }
+// 출처 사이트 이름(daum카페·티스토리 등)은 이미지 내용이 아니므로 취향·추천 단어에서 뺍니다. (예전에 저장된 제목에 들어 있어도 걸러짐)
+const SITE_RE = /^(daum|다음|naver|네이버|tistory|티스토리|kakao|카카오|google|구글|brunch|브런치)(카페|블로그|뉴스|지식in|지식인|포스트|cafe|blog|news|post)?$/i;
+const isSiteName = (s) => SITE_RE.test(String(s || "").trim());
+function tokens(s) { return (String(s).toLowerCase().match(/[\p{L}\p{N}]{2,}/gu) || []).filter((w) => !STOP.has(w) && !isSiteName(w) && !/^\d+$/.test(w)); }
+// 의미 벡터(임베딩)로 바꿀 글: 이미지 설명 문장(AI)이 있으면 맨 앞에, 그다음 제목·본문 일부·태그. 문장이 있으면 키워드 몇 개보다 훨씬 많은 단서가 됩니다.
+function embTextOf(o) {
+  const rest = [isSiteName(o.title) ? "" : o.title, o.desc, ...(o.tags || []).slice(0, 8)].filter(Boolean).join(", ");
+  return [o.cap, rest].filter(Boolean).join(" | ").slice(0, 320);
+}
 // act: { label, fn } 을 주면 알림 옆에 버튼이 붙습니다 (예: 북마크 직후 [보드 선택])
 function toast(t, ms = 2800, act = null) {
   const el = $("#toast"); el.textContent = t; el.hidden = false; el.classList.toggle("withbtn", !!act);
@@ -159,7 +167,7 @@ const ADB = { // DB(북마크)와 같은 연결을 쓰는 "act" 저장소
   del(id) { return new Promise((res) => { if (!DB.db) return res(false); try { const r = this.st("readwrite").delete(id); r.onsuccess = () => res(true); r.onerror = () => res(false); } catch { res(false); } }); },
   clear() { return new Promise((res) => { if (!DB.db) return res(false); try { const r = this.st("readwrite").clear(); r.onsuccess = () => res(true); r.onerror = () => res(false); } catch { res(false); } }); },
 };
-const ACT_LAMBDA = 0.01, ACT_MAX = 450, ACT_KEEP = 360;
+const ACT_LAMBDA = 0.01, ACT_MAX = 450, ACT_KEEP = 360, DESC_DAY = 15;
 const ACT = {
   m: null, rev: 0, embAt: 0,
   async load() {
@@ -177,7 +185,8 @@ const ACT = {
   rec(it, ts, wt) {
     const a = it.an?.tone ? { tone: it.an.tone, temp: it.an.temp, cols: (it.an.cols || it.cols || []).slice(0, 3) } : null;
     return { id: it.id, key: it.key || keyOf(it), title: String(it.title || "").slice(0, 120), thumb: it.thumb, alt: it.alt || "", full: it.full, page: it.page || "", src: it.src, grp: it.grp || "", w: it.w || 0, h: it.h || 0,
-      tags: (it.tags || []).map((t) => String(t).slice(0, 40)).slice(0, 12), an: a, wt, first: ts, ts };
+      tags: (it.tags || []).map((t) => String(t).slice(0, 40)).slice(0, 12), an: a, wt, first: ts, ts,
+      desc: String(it.desc || "").slice(0, 160), cap: String(it.capText || "").slice(0, 240), cq: String(it.capQ || "").slice(0, 60) };
   },
   async note(it, d) {
     if (!it || !it.id || !d) return;
@@ -187,10 +196,12 @@ const ACT = {
       r.wt = Math.max(-4, Math.min(9, r.wt * Math.exp(-ACT_LAMBDA * Math.max(0, now - r.ts) / 86400000) + d)); r.ts = now;
       if (!r.tags?.length && it.tags?.length) r.tags = it.tags.map((t) => String(t).slice(0, 40)).slice(0, 12);
       if (!r.an && it.an?.tone) r.an = { tone: it.an.tone, temp: it.an.temp, cols: (it.an.cols || []).slice(0, 3) };
+      if (!r.cap && it.capText) { r.cap = String(it.capText).slice(0, 240); r.cq = String(it.capQ || "").slice(0, 60); delete r.vec; delete r.nv; } // 뷰어에서 이미 받은 설명 문장이 있으면 그대로 보관 (의미 벡터는 문장 포함으로 다시 만듦)
+      if (!r.desc && it.desc) r.desc = String(it.desc).slice(0, 160);
       if (r.wt <= 0.05) { m.delete(r.id); await ADB.del(r.id); } else await ADB.put(r);
       this.rev++;
       if (m.size > ACT_MAX) await this.prune();
-      this.embSoon();
+      this.embSoon(); if (d >= 2) this.describeSoon();
     } catch { /* 기록 실패는 조용히 넘어감 */ }
   },
   async bump(id, d) { const m = await this.load(), r = m.get(id); if (r) await this.note(r, d); }, // 이미 기록된 이미지의 점수만 바꿈 (북마크 삭제 등)
@@ -200,8 +211,32 @@ const ACT = {
     for (const { r, e } of arr) { if (drop <= 0 && e >= 0.15) break; this.m.delete(r.id); await ADB.del(r.id); drop--; }
   },
   async clear() { await ADB.clear(); this.m = new Map(); this.rev++; FYI.sig = ""; },
-  text(r) { return [r.title, ...(r.tags || []).slice(0, 8)].filter(Boolean).join(", ").slice(0, 160); },
+  text(r) { return embTextOf(r); },
   embSoon() { clearTimeout(this.et); this.et = setTimeout(() => this.embedPending(), 8000); },
+  // 19차: 북마크·좋아요처럼 강하게 반응한 이미지는 AI가 "문장"으로 설명해 이 기기에 보관합니다. (키워드 한두 개로는 놓치던 분위기·장소·소재를 의미 벡터로 비교하려는 것)
+  // 하루 DESC_DAY 장까지, 한 번에 2장씩 천천히. 앱이 느려지거나 Workers AI 무료 사용량을 한꺼번에 쓰지 않게 하려는 제한입니다.
+  describeSoon() { clearTimeout(this.dt); this.dt = setTimeout(() => this.describePending(), 15000); },
+  async describePending() {
+    if (this.descBusy || !captionAuto() || !tasteOn()) return;
+    const day = new Date().toISOString().slice(0, 10), q = LS.get("capDay", null);
+    let used = q && q.d === day ? q.n : 0; if (used >= DESC_DAY) return;
+    const m = await this.load(), todo = [...m.values()].filter((r) => !r.cap && !r.nc && r.wt >= 2 && r.thumb).sort((a, b) => (b.wt - a.wt) || (b.ts - a.ts)).slice(0, Math.min(2, DESC_DAY - used));
+    if (!todo.length) return;
+    this.descBusy = true;
+    let more = false;
+    try {
+      for (const r of todo) {
+        const res = await captionOfItem(r);
+        if (res.why === "off" || res.why === "auth") break;
+        if (res.why === "blocked") { r.nc = 1; await ADB.put(r); continue; }
+        if (res.text) { r.cap = res.text; r.cq = res.q || ""; delete r.vec; delete r.nv; used++; await ADB.put(r); more = true; }
+        else { r.ncf = (r.ncf || 0) + 1; if (r.ncf >= 2) r.nc = 1; await ADB.put(r); }
+      }
+    } finally {
+      this.descBusy = false; LS.set("capDay", { d: day, n: used });
+      if (more) { this.rev++; this.embSoon(); this.describeSoon(); } // 설명이 생기면 의미 벡터를 다시 만들고, 남은 것도 이어서
+    }
+  },
   // 의미 유사도용 벡터가 아직 없는 활동(최대 40개)을 한 번에 서버(Workers AI)에 보내 벡터를 받아 둡니다. 2분에 한 번만.
   async embedPending() {
     if (!cfg?.embed || S.offline || !tasteOn() || Date.now() - this.embAt < 120000) return;
@@ -228,7 +263,7 @@ async function embedTexts(texts) {
     return null;
   }
 }
-const embText = (it) => [it.title, ...(it.tags || []).slice(0, 8)].filter(Boolean).join(", ").slice(0, 160);
+const embText = embTextOf;
 // 관심사 묶음: 활동 기록 → public/interests.js. 활동이 바뀌지 않았으면 이전 결과를 다시 씁니다.
 const FYI = { sig: "", cl: [] };
 async function buildInterests() {
@@ -238,7 +273,7 @@ async function buildInterests() {
   const boards = new Map();
   if (bmc) for (const x of await DB.all()) { const b = bOf(x); if (b.length) boards.set(x.id, b); } // 같은 보드에 담은 이미지는 서로 가까운 것으로 봄
   // 내가 "이 말은 그만"이라고 뺀 단어(설정의 ✕, 홈 ⭐ 칩의 ✕)가 든 활동은 관심사를 만들 때 쓰지 않습니다
-  const entries = [...m.values()].map((r) => ({ id: r.id, keys: TasteStore.keysOf(r), an: r.an, boards: boards.get(r.id) || [], wt: r.wt, ts: r.ts, vec: r.vec })).filter((e) => !e.keys.some((k) => Taste.isMuted(k)));
+  const entries = [...m.values()].map((r) => ({ id: r.id, keys: TasteStore.keysOf(r), cq: r.cq || "", an: r.an, boards: boards.get(r.id) || [], wt: r.wt, ts: r.ts, vec: r.vec })).filter((e) => !e.keys.some((k) => Taste.isMuted(k)));
   FYI.cl = Interests.build(entries); FYI.sig = sig;
   return FYI.cl;
 }
@@ -1043,7 +1078,7 @@ async function fyStart(reshuffle) {
   FY.subs = subs;
   renderHome(); // ⭐ 관심사 칩과 안내 문구 갱신
   subs.forEach(fyBegin);
-  ACT.embedPending();
+  ACT.embedPending(); ACT.describeSoon();
 }
 $("#fyRefresh").onclick = () => { if (S.offline || M.q) return; HOME.cat = null; renderHome(true); fyStart(true); scrollTo(0, 0); };
 function goHome() {
@@ -1365,7 +1400,7 @@ function showItem(keepSim) {
   img.classList.toggle("blur", hide); $("#vveil").hidden = !hide;
   $("#vsafe").hidden = !(it.adult && (S.blur || it.avoidBlur)); // 블러가 걸린 이미지에서만 "블러 해제" 버튼
   $("#vhide").hidden = !!it.fromBm; // 북마크는 내가 직접 담은 것이라 "추천 안 함" 대상이 아님
-  $("#vtitle").textContent = it.title || srcName(it.src);
+  $("#vtitle").textContent = it.title || it.site || srcName(it.src);
   $("#vsrc").textContent = srcName(it.src) + (it.w ? ` · ${it.w}×${it.h}` : "");
   refreshStars(); setLbl($("#vboard"), boardLabel(it));
   $("#vnote").textContent = it.note || ""; $("#vnote").hidden = !it.note;
@@ -1386,7 +1421,7 @@ function showItem(keepSim) {
 let simT = null;
 function simSchedule(level) {
   clearTimeout(simT); clearTimeout(level.rrT);
-  level.feed.reset(); level.m.clear(); level.msg.hidden = true; renderMore(level.more, level.feed); level.simQ = ""; level.sig = null; level.cw = ""; level.rrDone = 0; level.toneOnly = false; level.m.pred = null; level.crop = false; level.fixed = false; level.cap = ""; level.capWords = []; level.cwOn = null; updateSimHead();
+  level.feed.reset(); level.m.clear(); level.msg.hidden = true; renderMore(level.more, level.feed); level.simQ = ""; level.sig = null; level.cw = ""; level.rrDone = 0; level.toneOnly = false; level.m.pred = null; level.crop = false; level.fixed = false; level.cap = ""; level.capWords = []; level.cwOn = null; level.capText = ""; level.semText = ""; level.srcVec = null; level.semDone = 0; clearTimeout(level.semT); updateSimHead();
   if (S.offline) return;
   const it = level.list[level.cur];
   simT = setTimeout(() => { if (V.stack.includes(level) && level.list[level.cur] === it) simBegin(level, it); }, 400);
@@ -1401,9 +1436,10 @@ async function simBegin(level, it, force) {
   const strong = (it.tags || []).length >= 3;
   if (!it.adult && (force ? captionOn() : captionAuto() && !strong)) {
     level.msg.textContent = "AI가 이미지를 보는 중…"; level.msg.hidden = false;
-    cap = (await captionOfItem(it)).q;
+    const r = await captionOfItem(it); cap = r.q;
     if (!same()) return;
     level.msg.hidden = true;
+    if (r.text) { level.capText = r.text; it.capText = r.text; it.capQ = r.q; } // 설명 문장은 의미 비교(아래)와 취향 기록에 씁니다
   }
   level.cap = cap; level.capWords = capWordsOf(cap); level.cwOn = null; level.cw = window.ColorTools.topColor(level.sig);
   simStart(level, 0);
@@ -1440,14 +1476,51 @@ function simRerank(level) {
   const cards = level.m.cards, n = cards.length;
   if (cards.filter((c) => c._it.sh).length < 6) return;
   const CT = window.ColorTools;
-  const sc = new Map(cards.map((c, i) => { const s = CT.similarity(level.sig, c._it.sh); return [c, 0.5 * (1 - i / n) + 0.5 * (s == null ? 0.3 : s)]; }));
+  // 순서 50% + 색 유사도 50%. 의미 벡터(아래 simSemantic)가 이미 있으면 순서 40% + 의미 35% + 색 25%
+  const sc = new Map(cards.map((c, i) => {
+    const s = CT.similarity(level.sig, c._it.sh), sem = semScore(level, c._it);
+    return [c, sem == null ? 0.5 * (1 - i / n) + 0.5 * (s == null ? 0.3 : s) : 0.4 * (1 - i / n) + 0.35 * sem + 0.25 * (s == null ? 0.3 : s)];
+  }));
   level.m.reorder((a, b) => sc.get(b) - sc.get(a));
   level.rrDone = (level.rrDone || 0) + 1;
+}
+// ----- 의미(문장) 기준 재정렬 (19차) -----
+// 지금 보는 이미지(AI 설명 문장·제목·태그)와 불러온 비슷한 이미지(제목·본문 일부·태그)를 의미 벡터로 바꿔 코사인 유사도를 구합니다.
+// 단어가 달라도 뜻이 가까우면 위로 오고, 단어만 우연히 같은 엉뚱한 이미지는 아래로 내려갑니다. 임베딩을 못 쓰면 아무것도 하지 않아요.
+const semScore = (level, it) => (level.srcVec && it.vec ? (() => { const c = Interests.cosine(level.srcVec, it.vec); return c == null ? null : clamp((c - 0.3) / 0.4, 0, 1); })() : null);
+function simSemSoon(level) {
+  if (!cfg?.embed || (level.semDone || 0) >= 2 || level.semBusy) return;
+  clearTimeout(level.semT); level.semT = setTimeout(() => simSemantic(level), 700);
+}
+async function simSemantic(level) {
+  const it = level.list[level.cur], same = () => V.stack.includes(level) && level.list[level.cur] === it && level.feed.q === level.simQ;
+  if (!cfg?.embed || S.offline || EMB.off > Date.now() || !it || !same() || (level.semDone || 0) >= 2 || level.semBusy) return;
+  const cards = level.m.cards.slice(0, 40); if (cards.length < 8) return;
+  const base = level.semText || embTextOf(level.crop ? { cap: level.capText } : { cap: level.capText || it.capText, title: it.title, desc: it.desc, tags: it.tags });
+  if (!base) return;
+  level.semBusy = true;
+  try {
+    const need = cards.filter((c) => !c._it.vec && !c._it.nv);
+    const vs = await embedTexts([base, ...need.map((c) => embTextOf(c._it))]);
+    if (!vs || !same()) return;
+    if (!vs[0]) return;
+    level.srcVec = vs[0];
+    need.forEach((c, i) => { if (vs[i + 1]) c._it.vec = vs[i + 1]; else c._it.nv = 1; });
+    level.semDone = (level.semDone || 0) + 1;
+    if ($("#viewer").scrollTop > $("#vsimbox").offsetTop + 60) return; // 이미 아래로 내려가서 보는 중이면 순서를 바꾸지 않음
+    const all = level.m.cards, n = all.length, CT = window.ColorTools, haveColor = !!level.sig && all.filter((c) => c._it.sh).length >= 6;
+    const sc = new Map(all.map((c, i) => {
+      const sem = semScore(level, c._it), col = haveColor ? CT.similarity(level.sig, c._it.sh) : null, pos = 1 - i / n;
+      if (sem == null) return [c, pos * 0.8 + 0.2 * 0.4]; // 벡터가 없는 카드는 중간 점수
+      return [c, haveColor ? 0.4 * pos + 0.35 * sem + 0.25 * (col == null ? 0.3 : col) : 0.5 * pos + 0.5 * sem];
+    }));
+    level.m.reorder((a, b) => sc.get(b) - sc.get(a));
+  } finally { level.semBusy = false; }
 }
 function simStart(level, ci) {
   const it = level.list[level.cur]; if (!it) return;
   if (ci === 0 && !level.fixed) level.cands = simCandidates(it, level.cap, level.cw, level.crop);
-  const q = level.cands[ci]; level.ci = ci;
+  const q = level.cands[ci]; level.ci = ci; level.semDone = 0; clearTimeout(level.semT);
   level.m.clear(); level.msg.hidden = true;
   const f = level.feed; f.reset();
   level.simQ = q || ""; updateSimHead();
@@ -1457,7 +1530,7 @@ function simStart(level, ci) {
 }
 function simAfter(level) {
   const f = level.feed;
-  if (f.items.length) { level.msg.hidden = true; return; }
+  if (f.items.length) { level.msg.hidden = true; simSemSoon(level); return; }
   if (!f.ended) return;
   const act = f.sources(), allErr = act.length && act.every((s) => f.stat[s.id]?.err);
   if (!allErr && level.ci + 1 < level.cands.length) return simStart(level, level.ci + 1);
@@ -1495,6 +1568,7 @@ function simRetry(level, q) {
   if (!q || !V.stack.includes(level)) return;
   clearTimeout(simT); clearTimeout(level.rrT);
   level.fixed = true; level.cands = [q]; level.rrDone = 0; level.toneOnly = false; level.m.pred = null; level.msg.hidden = true;
+  level.semText = q; level.srcVec = null; // 내가 고른 단어가 곧 찾는 뜻이므로 의미 비교의 기준도 이 단어들로
   simStart(level, 0);
 }
 $("#vcwForm").addEventListener("submit", (e) => {
@@ -1613,6 +1687,7 @@ async function cropGo() {
     if (!V.stack.includes(l) || curItem() !== it) return;
     clearTimeout(simT); clearTimeout(l.rrT); l.feed.reset(); l.m.clear(); l.m.pred = null; l.toneOnly = false; l.crop = true;
     l.cap = cap.q; l.capWords = capWordsOf(cap.q); l.cwOn = null; l.fixed = false; l.sig = inf?.sh || null; l.cw = window.ColorTools.topColor(l.sig); l.rrDone = 0;
+    l.capText = cap.text || ""; l.semText = cap.text || cap.q; l.srcVec = null; l.semDone = 0;
     simStart(l, 0);
     $("#viewer").scrollTo({ top: $("#vsimbox").offsetTop - 56, behavior: "smooth" });
   } catch (e) { if (e.message !== "auth") toast("부분 검색에 실패했어요. 잠시 뒤 다시 시도해 주세요."); }
@@ -2080,7 +2155,7 @@ function shrink(blob, max = 384) {
     im.src = u;
   });
 }
-// 반환: { q } 단어들, 또는 { q:"", why } (why: off | blocked | fail)
+// 반환: { q, text } 단어들과 설명 문장(영어), 또는 { q:"", why } (why: off | blocked | fail)
 async function captionOfBlob(blob) {
   if (capOff || !cfg?.caption) return { q: "", why: "off" };
   try {
@@ -2088,7 +2163,7 @@ async function captionOfBlob(blob) {
     const r = await (await api("/api/caption", { method: "POST", body: small, headers: { "content-type": "image/jpeg" }, signal: AbortSignal.timeout(20000) })).json();
     if (r.error === "unavailable") { capOff = true; return { q: "", why: "off" }; }
     if (r.blocked) return { q: "", why: "blocked" };
-    if (r.q) { capFails = 0; return { q: r.q }; }
+    if (r.q) { capFails = 0; return { q: r.q, text: String(r.text || "").slice(0, 240) }; }
     if (++capFails >= 3) capPause = Date.now() + 10 * 60000;
     return { q: "", why: "fail" };
   } catch (e) {

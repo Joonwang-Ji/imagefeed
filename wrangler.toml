@@ -26,3 +26,4 @@ enabled = false
 #
 # [triggers]
 # crons = ["0 21 * * *"]
+# 19차: 카카오 블로그 검색 소스는 KAKAO_KEY 가 있으면 자동으로 켜집니다. 끄려면 변수 BLOG=off.

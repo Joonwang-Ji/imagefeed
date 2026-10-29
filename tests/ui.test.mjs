@@ -650,29 +650,29 @@ run("DB._m = []; S.bmIds = new Set(); LS.set('lastBoard', '')");
 
 // ---- 18차: ⭐ 칩의 ✕ / 뺀 단어 ----
 {
-  run("S.priv = false"); run("S.taste = true"); run("Taste.clear()"); run("Taste.unmute('daum카페'); Taste.unmute('모임'); Taste.unmute('신혼여행계획')");
+  run("S.priv = false"); run("S.taste = true"); run("Taste.clear()"); run("Taste.unmute('cafe벚꽃'); Taste.unmute('모임'); Taste.unmute('신혼여행계획')");
   await run("ACT.clear()");
   // 활동 기록에서 만든 관심사: 설정에서 지워도(점수) 다시 올라오던 경로
-  await run("ACT.note({ id: 'ad1', key: 'k-ad1', title: 'Daum 카페 모임', tags: ['daum카페', '모임'], src: 'pixabay', thumb: 'https://x.test/a.jpg', full: 'https://x.test/a.jpg' }, 3)");
-  await run("ACT.note({ id: 'ad2', key: 'k-ad2', title: 'Daum 카페 모임2', tags: ['daum카페', '모임'], src: 'pixabay', thumb: 'https://x.test/b.jpg', full: 'https://x.test/b.jpg' }, 3)");
+  await run("ACT.note({ id: 'ad1', key: 'k-ad1', title: 'Cafe 벚꽃 모임', tags: ['cafe벚꽃', '모임'], src: 'pixabay', thumb: 'https://x.test/a.jpg', full: 'https://x.test/a.jpg' }, 3)");
+  await run("ACT.note({ id: 'ad2', key: 'k-ad2', title: 'Cafe 벚꽃 모임2', tags: ['cafe벚꽃', '모임'], src: 'pixabay', thumb: 'https://x.test/b.jpg', full: 'https://x.test/b.jpg' }, 3)");
   run("FYI.sig = ''"); let cl = await run("buildInterests()");
-  ok(cl.some((c) => (c.terms || []).includes("daum카페")), "before: activity on 'daum카페' images makes an interest");
-  run("Taste.learn(['daum카페'], 3)"); run("Taste.forget('tags', 'daum카페')"); // 설정의 취향 칩 ✕ 와 같은 동작
+  ok(cl.some((c) => (c.terms || []).includes("cafe벚꽃")), "before: activity on 'cafe벚꽃' images makes an interest");
+  run("Taste.learn(['cafe벚꽃'], 3)"); run("Taste.forget('tags', 'cafe벚꽃')"); // 설정의 취향 칩 ✕ 와 같은 동작
   cl = await run("buildInterests()");
-  ok(!cl.some((c) => (c.terms || []).includes("daum카페") || /daum카페/.test(c.label || "")), "after deleting the taste chip in settings, the interest cluster built from activity is gone too");
+  ok(!cl.some((c) => (c.terms || []).includes("cafe벚꽃") || /cafe벚꽃/.test(c.label || "")), "after deleting the taste chip in settings, the interest cluster built from activity is gone too");
   // 홈 ⭐ 칩에서 바로 빼기
-  run("Taste.unmute('daum카페')"); run("FYI.sig = ''");
-  run("FY.ints = [{ label: 'daum카페 모임', terms: ['daum카페', '모임'] }]"); run("HOME.cat = null"); run("renderHome()");
+  run("Taste.unmute('cafe벚꽃')"); run("FYI.sig = ''");
+  run("FY.ints = [{ label: 'cafe벚꽃 모임', terms: ['cafe벚꽃', '모임'] }]"); run("HOME.cat = null"); run("renderHome()");
   const star = () => $$("#homeChips button.mine");
-  ok(star().length === 1 && star()[0].querySelector(".chx") && /daum카페 모임/.test(star()[0].textContent), "home ⭐ chip has a ✕");
+  ok(star().length === 1 && star()[0].querySelector(".chx") && /cafe벚꽃 모임/.test(star()[0].textContent), "home ⭐ chip has a ✕");
   star()[0].querySelector(".chx").click(); await tick(60);
-  ok(run("Taste.isMuted('daum카페')") && run("Taste.isMuted('모임')") && /추천에서 뺐어요/.test($("#toast").textContent) && /되돌리기/.test($("#toast").textContent), "✕ on a ⭐ chip mutes its words and offers 되돌리기");
+  ok(run("Taste.isMuted('cafe벚꽃')") && run("Taste.isMuted('모임')") && /추천에서 뺐어요/.test($("#toast").textContent) && /되돌리기/.test($("#toast").textContent), "✕ on a ⭐ chip mutes its words and offers 되돌리기");
   $("#gear").click(); await tick(40);
-  ok(!$("#muteView").hidden && $$("#muteView .tchip").some((b) => /daum카페/.test(b.textContent)), "settings lists muted words");
-  $$("#muteView .tchip").find((b) => /daum카페/.test(b.textContent)).click(); await tick(20);
-  ok(!run("Taste.isMuted('daum카페')"), "tapping a muted word in settings brings it back"); $("#closeSet").click();
+  ok(!$("#muteView").hidden && $$("#muteView .tchip").some((b) => /cafe벚꽃/.test(b.textContent)), "settings lists muted words");
+  $$("#muteView .tchip").find((b) => /cafe벚꽃/.test(b.textContent)).click(); await tick(20);
+  ok(!run("Taste.isMuted('cafe벚꽃')"), "tapping a muted word in settings brings it back"); $("#closeSet").click();
   // 북마크 단어에서 나오던 ⭐ 칩(기록 지우기 후에도 남던 것)
-  run("Taste.unmute('모임')"); run("Taste.mute('daum카페')");
+  run("Taste.unmute('모임')"); run("Taste.mute('cafe벚꽃')");
   await run("DB._m = DB._m || []"); // (북마크 저장소는 이 테스트 환경에서 DB.all 을 대신 정의해 둠)
   const bm = [{ id: 'bm-z1', title: '신혼여행계획 모음', tags: ['신혼여행계획'], src: 'pixabay', ts: Date.now() }, { id: 'bm-z2', title: '신혼여행계획 표', tags: ['신혼여행계획'], src: 'pixabay', ts: Date.now() }];
   const oldAll = run("DB.all"); run("globalThis.__oldAll = DB.all"); run(`DB.all = async () => ${JSON.stringify(bm)}`);
@@ -680,7 +680,7 @@ run("DB._m = []; S.bmIds = new Set(); LS.set('lastBoard', '')");
   run("Taste.mute('신혼여행계획')");
   ok(!(await run("bmTopTags(6)")).includes("신혼여행계획"), "muted words no longer come from bookmarks");
   run("DB.all = globalThis.__oldAll");
-  await run("ACT.clear()"); run("Taste.unmute('daum카페'); Taste.unmute('신혼여행계획')"); run("FYI.sig = ''");
+  await run("ACT.clear()"); run("Taste.unmute('cafe벚꽃'); Taste.unmute('신혼여행계획')"); run("FYI.sig = ''");
 }
 
 // ---- 18차: 뷰어 전체화면 ----
@@ -710,6 +710,89 @@ run("DB._m = []; S.bmIds = new Set(); LS.set('lastBoard', '')");
   ok(vw.hidden && !vw.classList.contains("fs") && run("V.fs") === false, "closing the viewer also clears fullscreen");
   run(`openViewer(${fsItem}, 0)`); await tick(30);
   ok(!vw.classList.contains("fs") && run("V.fs") === false, "next time the viewer opens normally (not in fullscreen)"); run("closeViewer()"); await tick(60);
+}
+
+// ---- 19차: 출처 이름 제외 · 설명 문장 저장 · 의미 벡터 재정렬 ----
+{
+  const baseFetch = w.fetch, capCalls = [], embCalls = []; let capMode = "ok", capN = 0;
+  const vecOf = (t) => { const v = new Array(64).fill(0); for (const x of String(t).toLowerCase().match(/[a-z가-힣]+/g) || []) { let h = 7; for (const ch of x) h = (h * 131 + ch.charCodeAt(0)) % 64; v[h] += 1; } const n = Math.hypot(...v) || 1; return Buffer.from(Int8Array.from(v.map((x) => Math.round((x / n) * 127)))).toString("base64"); };
+  w.fetch = async (url, opt = {}) => {
+    const u = String(url), res = (o) => ({ ok: true, status: 200, json: async () => o });
+    if (u.startsWith("/api/caption")) { capCalls.push(u); capN++; return res(capMode === "blocked" ? { q: "", blocked: true } : { q: "white ceramic vase", text: "A white ceramic vase with dried flowers on a windowsill, soft morning light." }); }
+    if (u.startsWith("/api/embed")) { const texts = JSON.parse(opt.body).texts; embCalls.push(texts); return res({ d: 64, v: texts.map((t) => (t ? vecOf(t) : null)) }); }
+    return baseFetch(url, opt);
+  };
+  run("cfg.caption = true; cfg.embed = true; capOff = false; capFails = 0; capPause = 0; S.taste = true; S.priv = false; S.offline = false; EMB.off = 0; EMB.fails = 0");
+  run("Taste.clear()"); await run("ACT.clear()"); run('LS.set("capDay", null)');
+  const today = new Date().toISOString().slice(0, 10);
+  const note = (id, d, extra = "") => run(`ACT.note({ id: '${id}', key: 'k-${id}', title: '', tags: [], src: 'naver', thumb: 'https://x.test/${id}.jpg', full: 'https://x.test/${id}.jpg'${extra} }, ${d})`);
+
+  // 출처 이름은 취향 단어가 아님
+  ok(JSON.stringify(run('tokens("daum카페 티스토리 네이버블로그 한옥 처마")')) === JSON.stringify(["한옥", "처마"]), "tokens(): site names (daum카페, 티스토리, 네이버블로그) are dropped");
+  ok(run('embTextOf({ title: "daum카페", tags: ["한옥"], cap: "A hanok courtyard." })') === "A hanok courtyard. | 한옥", "embTextOf(): description sentence first, site-name title dropped");
+  ok(run('embTextOf({ title: "한옥 마당", desc: "기와 지붕", tags: ["hanok"] })') === "한옥 마당, 기와 지붕, hanok", "embTextOf(): title, snippet and tags when there is no sentence");
+  ok(run('TasteStore.keysOf({ tags: [], title: "daum카페 한옥마을" })').join() === "한옥마을", "taste keys never include a site name");
+
+  // 설명 문장 저장: 강한 신호(점수 2 이상)만, 하루 한도, 비공개·꺼짐이면 안 함
+  await note("w1", 3); await note("w2", 1);
+  await run("ACT.describePending()");
+  ok(capCalls.length === 1, "only the strong activity (bookmark) is described, a single view is not: " + capCalls.length);
+  const r1 = run("({ cap: ACT.m.get('w1').cap, cq: ACT.m.get('w1').cq, vec: !!ACT.m.get('w1').vec, w2: !!ACT.m.get('w2').cap })");
+  ok(/^A white ceramic vase/.test(r1.cap) && r1.cq === "white ceramic vase" && !r1.w2, "sentence and its keywords are kept on the activity record");
+  ok(run("LS.get('capDay', null)").n === 1 && run("LS.get('capDay', null)").d === today, "daily counter written");
+  run("ACT.embAt = 0"); await run("ACT.embedPending()");
+  ok(embCalls.length >= 1 && embCalls[embCalls.length - 1].some((t) => /^A white ceramic vase/.test(t)), "the embedding text starts with the description sentence");
+  ok(run("!!ACT.m.get('w1').vec"), "…and the vector is stored for clustering");
+
+  // 설명이 나중에 생기면 이전 벡터는 버리고 다시 만듦
+  await note("w3", 3); run("ACT.m.get('w3').vec = new Int8Array(64)"); run("delete ACT.m.get('w3').nv");
+  await run("ACT.describePending()");
+  ok(run("!!ACT.m.get('w3').cap && !ACT.m.get('w3').vec"), "a new description clears the old vector so it is re-embedded with the sentence");
+
+  // 하루 한도
+  run(`LS.set("capDay", { d: "${today}", n: 15 })`); await note("w4", 3); const c0 = capCalls.length;
+  await run("ACT.describePending()"); ok(capCalls.length === c0, "daily limit (15) stops further descriptions");
+  run('LS.set("capDay", null)');
+  // 비공개 모드·학습 꺼짐
+  run("S.priv = true"); await run("ACT.describePending()"); ok(capCalls.length === c0, "private mode: no descriptions");
+  run("S.priv = false; S.taste = false"); await run("ACT.describePending()"); ok(capCalls.length === c0, "taste learning off: no descriptions"); run("S.taste = true");
+  run("cfg.caption = false"); await run("ACT.describePending()"); ok(capCalls.length === c0, "AI description off: no calls"); run("cfg.caption = true");
+  // 막힌 설명(공포·잔혹 등)은 다시 시도하지 않음
+  capMode = "blocked"; await run("ACT.describePending()"); const c1 = capCalls.length;
+  ok(run("!!ACT.m.get('w4').nc") && !run("ACT.m.get('w4').cap"), "a blocked description marks the item so it is never retried");
+  await run("ACT.describePending()"); ok(capCalls.length === c1, "…no second call for it"); capMode = "ok";
+  // 뷰어에서 이미 받은 설명은 그대로 보관(추가 호출 없음)
+  await note("w5", 3, ", capText: 'A red bicycle leaning on a brick wall.', capQ: 'red bicycle brick wall'"); const c2 = capCalls.length;
+  ok(run("ACT.m.get('w5').cap") === "A red bicycle leaning on a brick wall." && run("ACT.m.get('w5').cq") === "red bicycle brick wall", "a sentence already fetched in the viewer is stored with the activity");
+  await run("ACT.describePending()"); ok(!capCalls.slice(c2).some((u) => /w5/.test(u)), "…and not fetched again");
+
+  // 관심사 검색어: 태그·제목이 빈약하면 설명 단어가 먼저
+  const cl = run("(async () => { await ACT.load(); FYI.sig = ''; return (await buildInterests()).map((c) => ({ terms: c.terms, q: Interests.queries(c) })); })()");
+  const cls = await cl;
+  ok(cls.length >= 1 && cls.some((c) => c.q[0] === "white ceramic vase" || c.q[0] === "red bicycle brick"), "interest search words come from the description when tags/titles are empty: " + JSON.stringify(cls.map((c) => c.q)));
+
+  // 뷰어 제목: 제목이 없으면 블로그 이름
+  run(`openViewer([{ id: 'b1', key: 'b1', title: '', site: '진실의 블로그', thumb: 'https://x.test/b1.jpg', full: 'https://x.test/b1.jpg', src: 'kakaoblog', tags: [], w: 400, h: 300 }], 0)`); await tick(20);
+  ok($("#vtitle").textContent === "진실의 블로그", "viewer title falls back to the blog name for blog posts");
+  run("clearTimeout(simT)"); run("closeViewer()"); await tick(40);
+
+  // 비슷한 이미지: 의미(문장) 기준 재정렬
+  run(`openViewer([{ id: 'v1', key: 'v1', title: 'white ceramic vase', capText: '', tags: [], thumb: 'https://x.test/v1.jpg', full: 'https://x.test/v1.jpg', src: 'pixabay', w: 400, h: 300 }], 0)`); await tick(20);
+  run("clearTimeout(simT)");
+  run(`(() => { const l = lv(); l.m.clear(); l.semDone = 0; l.srcVec = null; l.sig = null; l.capText = 'white ceramic vase flowers'; l.feed.q = l.simQ = 'vase';
+    const titles = ['river rocks nature trail','mountain forest hiking path','sunset beach waves surf','desert dunes camel travel','city skyline night traffic','white ceramic vase dried flowers','ceramic vase windowsill morning light','dried flowers vase table','soft morning light windowsill flowers','minimal white vase interior'];
+    l.m.add(titles.map((t, i) => makeCard({ id: 's' + i, key: 's' + i, title: t, tags: [], thumb: 'https://x.test/s' + i, full: 'https://x.test/s' + i, src: 'pixabay' }, () => {}))); })()`);
+  const e0 = embCalls.length; await run("simSemantic(lv())");
+  const ord = run("lv().m.cards.map((c) => c._it.title)");
+  ok(embCalls.length === e0 + 1 && /^white ceramic vase flowers \| white ceramic vase/.test(embCalls[e0][0]) && embCalls[e0].length === 11, "one embedding call: the image's description sentence (+title) and the 10 candidates");
+  const rel = /vase|flowers|ceramic/, meanPos = (arr) => { const ix = arr.map((t, i) => (rel.test(t) ? i : -1)).filter((i) => i >= 0); return ix.reduce((a, b) => a + b, 0) / ix.length; };
+  const before = ['river rocks nature trail','mountain forest hiking path','sunset beach waves surf','desert dunes camel travel','city skyline night traffic','white ceramic vase dried flowers','ceramic vase windowsill morning light','dried flowers vase table','soft morning light windowsill flowers','minimal white vase interior'];
+  ok(ord[0] === "white ceramic vase dried flowers" && meanPos(ord) < meanPos(before) - 1.5, `best semantic match goes first and related images move up (avg position ${meanPos(before).toFixed(1)} → ${meanPos(ord).toFixed(1)}): ` + ord.slice(0, 5).join(" | "));
+  ok(run("lv().semDone") === 1, "counted once");
+  run("lv().semDone = 2"); const e1 = embCalls.length; await run("simSemantic(lv())"); ok(embCalls.length === e1, "no more than two semantic reorders per search");
+  run("cfg.embed = false; lv().semDone = 0"); await run("simSemantic(lv())"); ok(embCalls.length === e1, "embedding unavailable: nothing happens (order stays)"); run("cfg.embed = true");
+  run("closeViewer()"); await tick(40);
+  w.fetch = baseFetch;
 }
 
 ok(errors.length === 0, "no script errors" + (errors.length ? ": " + errors.slice(0, 3).join(" ; ") : ""));

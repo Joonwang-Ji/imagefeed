@@ -305,7 +305,7 @@ ok(CATS.every((c) => c[2].length >= 5), "each category has >= 5 sub topics");
   seen.length = 0; await post({ texts: Array.from({ length: 90 }, (_, i) => "t" + i) }, { ...env, AI: AIe });
   ok(seen[0].input.text.length === 60, "at most 60 texts per call");
   seen.length = 0; await post({ texts: ["x".repeat(500)] }, { ...env, AI: AIe });
-  ok(seen[0].input.text[0].length === 160, "each text is cut to 160 characters");
+  ok(seen[0].input.text[0].length === 320, "each text is cut to 320 characters (room for an AI description sentence)");
   seen.length = 0; await post({ texts: ["a"] }, { ...env, AI: AIe, EMBED_MODEL: "@cf/custom/model" });
   ok(seen[0].model === "@cf/custom/model", "EMBED_MODEL overrides the model");
   r2 = await post({ texts: ["a"] }, { ...env, AI: AIe, EMBED: "off" }); j3 = await r2.json(); ok(j3.error === "unavailable", "EMBED=off disables it");
@@ -316,7 +316,7 @@ ok(CATS.every((c) => c[2].length >= 5), "each category has >= 5 sub topics");
   ok(j3.error === "unavailable" && j3.detail === "shape", "wrong number of vectors is rejected: " + JSON.stringify(j3));
   r2 = await post({ texts: ["a"] }, { ...env, AI: { run: async () => { throw new Error("model gone"); } } }); j3 = await r2.json();
   ok(j3.error === "unavailable" && /model gone/.test(j3.detail), "model failure is reported without a crash");
-  const big = await worker.fetch(new Request("https://x.test/api/embed", { method: "POST", headers: { "x-pass": "pw", "content-length": "30000" }, body: "{}" }), { ...env, AI: AIe }); ok(big.status === 413, "body over 24KB → 413");
+  const big = await worker.fetch(new Request("https://x.test/api/embed", { method: "POST", headers: { "x-pass": "pw", "content-length": "100000" }, body: "{}" }), { ...env, AI: AIe }); ok(big.status === 413, "body over 96KB → 413");
   const cj = await (await worker.fetch(req("/api/config"), { ...env, AI: AIe })).json(); ok(cj.embed === true, "config says embeddings are available");
   const cj2 = await (await worker.fetch(req("/api/config"), { ...env, AI: AIe, EMBED: "off" })).json(); ok(cj2.embed === false, "config says off when EMBED=off");
 }

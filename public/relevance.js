@@ -70,7 +70,8 @@
 
   // 이미지 하나의 관련도와 등급. 소스가 제목·태그를 주지 않으면 unknown(판단 불가, 감점 없음)
   function judge(it, T, srcId) {
-    const hay = norm(`${NO_TEXT.has(srcId) ? "" : it.title || ""} ${(it.tags || []).join(" ")}`);
+    // 제목·태그에 더해, 블로그 검색이 주는 본문 일부(desc)도 판단 재료로 씁니다.
+    const hay = norm(`${NO_TEXT.has(srcId) ? "" : it.title || ""} ${(it.tags || []).join(" ")} ${it.desc || ""}`);
     if (!T || !T.groups.length || hay.replace(/[^\p{L}]/gu, "").length < 2) return { known: false, rel: 0.5, tier: "unknown" };
     const hw = new Set(hay.split(" ")), hc = hay.replace(/ /g, "");
     // 글자 종류가 다르면 비교할 수 없습니다. (한글 검색어만 있는데 영어 태그뿐인 이미지 → 판단 불가. 번역이 없을 때 영어 이미지를 통째로 접지 않기 위함)
@@ -99,6 +100,7 @@
     const han = HAN.test(T.q), t = T.text;
     switch (id) {
       case "naver": case "kakao": return han ? 1.25 : 0.85;
+      case "kakaoblog": return han ? 1.0 : 0.5; // 블로그는 한글 검색에만 잘 맞고, 광고성 글이 섞여 이미지 검색보다는 낮게
       case "artic": case "cleveland": case "vam": return ART_EN.test(t) || ART_KO.test(t) ? 1.4 : 0.35;
       case "nasa": return SPACE_EN.test(t) || SPACE_KO.test(t) ? 1.4 : 0.2;
       case "wikimedia": return T.proper ? 1.3 : 1;

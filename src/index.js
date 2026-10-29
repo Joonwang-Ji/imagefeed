@@ -10,6 +10,11 @@ const clean = (s = "") =>
   String(s).replace(/<[^>]+>/g, "").replace(/&quot;/g, '"').replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&#0?39;/g, "'").trim();
 const num = (v) => Number(v) || 0;
+// 카카오 검색 결과의 썸네일 주소(예: https://search1.kakaocdn.net/argon/130x130_85_c/XXXX)에서 크기 부분만 큰 값으로 바꿉니다.
+// 형식이 다르면 그대로 돌려줍니다. (실제 서버에서 큰 크기가 열리는지는 배포 후 확인 필요. 안 열리면 화면이 alt 로 대신함)
+const blogThumb = (u = "") => String(u).replace(/(\/argon\/)\d+x\d+(?:_[^/]*)?(\/)/, "$1600x0_65_wg$2");
+// 검사용 글: 제목·태그·본문 일부·출처 이름
+const textOf = (it) => `${it.title || ""} ${(it.tags || []).join(" ")} ${it.desc || ""}`;
 // 색상/방향 쿼리 조각 만들기 (소스가 지원하는 값만)
 function extra(id, colorKey, orientKey, o) {
   let r = "";
@@ -116,9 +121,31 @@ const SOURCES = [
       // 안 열리면 화면이 작은 썸네일(alt)로 한 번 더 시도합니다.
       return (d.documents || []).map((it) => {
         const w = num(it.width), h = num(it.height), small = !w || !h || w * h <= 6e6;
+        // display_sitename("daum카페" 같은 출처 이름)은 이미지 설명이 아니므로 title 이 아니라 site 로 따로 둡니다.
+        // (title 에 넣으면 취향·관심사·추천 칩이 "daum카페" 같은 출처 이름을 배우던 문제, 18차 신고 1번)
         return {
-          title: clean(it.display_sitename || ""), thumb: small && it.image_url ? it.image_url : it.thumbnail_url, alt: it.thumbnail_url, full: it.image_url,
+          title: "", site: clean(it.display_sitename || ""), thumb: small && it.image_url ? it.image_url : it.thumbnail_url, alt: it.thumbnail_url, full: it.image_url,
           page: it.doc_url || it.image_url, w, h, tags: [],
+        };
+      });
+    },
+  },
+  {
+    // 카카오(다음) 블로그 검색: 티스토리·다음 블로그 글의 대표 사진. 이미 등록한 KAKAO_KEY 를 그대로 씁니다.
+    // 응답에는 글 제목(title)·본문 일부(contents)·블로그 이름(blogname)·대표 사진 주소(thumbnail)가 있고, 사진이 없는 글은 건너뜁니다.
+    id: "kakaoblog", name: "블로그(다음·티스토리)", w: 0.9, en: false, desc: "블로그 사진 (티스토리·다음 블로그, 한글 검색에 강함)", need: ["KAKAO_KEY"],
+    ok: (e) => e.KAKAO_KEY && e.BLOG !== "off",
+    async run(q, page, safe, e, o = {}) {
+      if (page > 50) return [];
+      const d = await getJson(
+        `https://dapi.kakao.com/v2/search/blog?query=${enc(q)}&sort=accuracy&page=${page}&size=${Math.min(50, o.n || 30)}`,
+        { Authorization: `KakaoAK ${e.KAKAO_KEY}` });
+      return (d.documents || []).filter((it) => it.thumbnail && it.url).map((it) => {
+        const th = blogThumb(it.thumbnail);
+        // 대표 사진은 아주 작게(130px 안팎) 오는 경우가 많아서 큰 크기 주소를 먼저 시도하고, 안 열리면 받은 원래 주소(alt)로 대신합니다.
+        return {
+          title: clean(it.title || ""), desc: clean(it.contents || "").slice(0, 160), site: clean(it.blogname || ""),
+          thumb: th, alt: it.thumbnail, full: th, page: it.url, w: 0, h: 0, tags: [],
         };
       });
     },
@@ -333,7 +360,8 @@ async function translateFull(q, env, sl = "", nc = false) {
 // 화면이 작게 줄인 JPEG 를 보내면 Workers AI 가 한 줄 설명을 만들고, 그중 핵심 영어 단어만 돌려줍니다.
 // 모델 이름은 환경 변수 CAPTION_MODEL 로 바꿀 수 있고, 끄려면 AI_CAPTION=off 로 설정합니다.
 // 같은 이미지는 7일 동안 캐시되어 무료 한도를 아낍니다.
-const CAP_PROMPT = "Describe this image in one short sentence. Mention the main subject, setting, style and colors.";
+// 19차: 키워드 검색어만이 아니라 "문장" 설명(피사체·장소·분위기·스타일·색)을 함께 돌려줍니다. 화면이 이 문장을 취향 판별(의미 벡터)에 씁니다.
+const CAP_PROMPT = "Describe this image in one or two short sentences. Mention the main subject, the setting, the mood or style, and the main colors.";
 const CAP_STOP = new Set(["the", "and", "with", "from", "this", "that", "image", "picture", "photo", "photograph", "shows", "showing", "depicts",
   "depicting", "features", "featuring", "there", "its", "for", "his", "her", "their", "being", "some", "appears", "seems", "very", "view",
   "scene", "close", "closeup", "front", "side", "into", "has", "have", "while", "which", "who", "than", "then", "also", "one", "two", "three", "are", "was"]);
@@ -349,15 +377,15 @@ async function caption(req, env) {
   const jpeg = buf[0] === 0xff && buf[1] === 0xd8, png = buf[0] === 0x89 && buf[1] === 0x50;
   if (!jpeg && !png) return json({ error: "type" }, 415);
   const hash = [...new Uint8Array(await crypto.subtle.digest("SHA-256", buf))].slice(0, 12).map((b) => b.toString(16).padStart(2, "0")).join("");
-  const key = new Request(`https://cache.local/cap?h=${hash}`);
+  const key = new Request(`https://cache.local/cap2?h=${hash}`); // cap2: 프롬프트가 바뀐 19차 이후의 결과(문장 포함)
   try { const hit = await caches.default.match(key); if (hit) return json(await hit.json()); } catch { /* 캐시가 없으면 새로 만듭니다 */ }
   let last = "";
   for (const model of [env.CAPTION_MODEL, "@cf/unum/uform-gen2-qwen-500m", "@cf/llava-hf/llava-1.5-7b-hf"].filter(Boolean)) {
     try {
-      const out = await env.AI.run(model, { image: Array.from(buf), prompt: CAP_PROMPT, max_tokens: 48 });
-      const text = String(out?.description ?? out?.response ?? out?.text ?? "").trim();
+      const out = await env.AI.run(model, { image: Array.from(buf), prompt: CAP_PROMPT, max_tokens: 80 });
+      const text = String(out?.description ?? out?.response ?? out?.text ?? "").replace(/\s+/g, " ").trim();
       if (!text) continue;
-      const body = hardBlocked(text) ? { q: "", blocked: true } : { q: capKeywords(text), text: text.slice(0, 160) };
+      const body = hardBlocked(text) ? { q: "", blocked: true } : { q: capKeywords(text), text: text.slice(0, 240) };
       try { await caches.default.put(key, new Response(JSON.stringify(body), { headers: { "cache-control": "max-age=604800" } })); } catch { /* 캐시 실패는 무시 */ }
       return json(body);
     } catch (e) { last = String(e?.message || e).slice(0, 100); }
@@ -367,7 +395,7 @@ async function caption(req, env) {
 
 // ---------- 임베딩 (의미 유사도, 선택 기능) ----------
 // 이미지의 제목·태그 같은 짧은 글을 Workers AI 다국어 임베딩(bge-m3)으로 벡터로 바꿔 돌려줍니다. 화면이 관심사를 묶고 추천 순서를 다듬는 데 씁니다.
-// 한 번에 최대 60개, 한 개는 160자까지. 결과는 길이를 줄이려고 크기 1로 맞춘 뒤 Int8 로 바꿔 base64 로 보냅니다(벡터 하나 약 1.4KB).
+// 한 번에 최대 60개, 한 개는 320자까지(19차: 설명 문장 포함). 결과는 길이를 줄이려고 크기 1로 맞춘 뒤 Int8 로 바꿔 base64 로 보냅니다(벡터 하나 약 1.4KB).
 // 서버에는 아무것도 저장하지 않습니다. 모델은 EMBED_MODEL 로 바꿀 수 있고, 끄려면 EMBED=off.
 const EMBED_MODELS = ["@cf/baai/bge-m3"];
 function packVec(v) {
@@ -378,9 +406,10 @@ function packVec(v) {
 }
 async function embed(req, env) {
   if (!env.AI || env.EMBED === "off") return json({ error: "unavailable" });
-  if (num(req.headers.get("content-length")) > 24 * 1024) return json({ error: "size" }, 413);
+  if (num(req.headers.get("content-length")) > 96 * 1024) return json({ error: "size" }, 413);
   let body; try { body = await req.json(); } catch { return json({ error: "bad json" }, 400); }
-  const texts = (Array.isArray(body?.texts) ? body.texts : []).slice(0, 60).map((t) => String(t == null ? "" : t).replace(/\s+/g, " ").trim().slice(0, 160));
+  // 19차: 이미지 설명 문장까지 담을 수 있게 한 개당 320자로 늘림 (한글은 글자당 3바이트라 요청 크기 한도도 함께 늘림)
+  const texts = (Array.isArray(body?.texts) ? body.texts : []).slice(0, 60).map((t) => String(t == null ? "" : t).replace(/\s+/g, " ").trim().slice(0, 320));
   if (!texts.length || texts.every((t) => !t)) return json({ error: "empty" }, 400);
   let last = "";
   for (const model of [env.EMBED_MODEL, ...EMBED_MODELS].filter(Boolean)) {
@@ -809,8 +838,8 @@ export default {
         return json({ items: [], err: reasonOf(e), detail: String(e.message || e).slice(0, 120) });
       }
       items = items
-        .filter((it) => it.thumb && it.full && !hardBlocked(`${it.title} ${it.tags.join(" ")}`))
-        .map((it) => ({ ...it, thumb: https(it.thumb), full: https(it.full), alt: it.alt ? https(it.alt) : "", page: https(it.page || it.full), src: src.id, sc, adult: isAdult(`${it.title} ${it.tags.join(" ")}`) }));
+        .filter((it) => it.thumb && it.full && !hardBlocked(textOf(it)))
+        .map((it) => ({ ...it, thumb: https(it.thumb), full: https(it.full), alt: it.alt ? https(it.alt) : "", page: https(it.page || it.full), src: src.id, sc, adult: isAdult(textOf(it)) }));
       return json({ items });
     }
 

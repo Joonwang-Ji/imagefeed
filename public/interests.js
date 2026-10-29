@@ -130,6 +130,9 @@
     if (t.length >= 3) out.push([t[0], t[2]].join(" "));
     if (t[0]) out.push(t[0]);
     if (mk[0]) out.push(mk[0]);
+    // AI 설명 문장에서 뽑은 핵심 단어(cq): 태그·제목이 빈약한 이미지(네이버·카카오 등)는 이것을 먼저, 아니면 마지막 예비 검색어로 씁니다.
+    const cq = String(med?.cq || "").split(/\s+/).filter(Boolean), capq = cq.length >= 2 ? cq.slice(0, 3).join(" ") : "";
+    if (capq) { if ((med?.keys || []).length < 2 && t.length < 2) out.unshift(capq); else out.push(capq); }
     return [...new Set(out.filter((q) => q && q.length > 1))];
   }
 
