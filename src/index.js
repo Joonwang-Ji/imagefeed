@@ -217,7 +217,8 @@ const SOURCES = [
         const blocks = [...(p.content || []), ...(p.trail || []).flatMap((t) => t.content || [])];
         return blocks.filter((b) => b?.type === "image" && b.media?.length).map((b) => { const m = b.media.slice().sort((x, y) => num(y.width) - num(x.width)); return { orig: m[0], alts: m.slice(1) }; });
       };
-      return (Array.isArray(d.response) ? d.response : []).map((p) => {
+      const raw = Array.isArray(d.response) ? d.response : [];
+      const out = raw.map((p) => {
         const ph = p && imgs(p)[0]; if (!ph?.orig?.url) return null;
         const orig = ph.orig, alts = ph.alts.slice().sort((a, b) => num(a.width) - num(b.width));
         const mid = alts.find((s) => num(s.width) >= 500) || alts[alts.length - 1] || orig;
@@ -227,6 +228,12 @@ const SOURCES = [
           page: p.post_url || orig.url, w: num(orig.width), h: num(orig.height), tags: (p.tags || []).map(String).filter(Boolean).slice(0, 12),
         };
       }).filter(Boolean);
+      // 사진을 하나도 못 읽었으면 이유를 ⚠ 에 보여 줍니다 (응답 개수와 글 유형)
+      if (page === 1 && !out.length) {
+        const ty = {}; raw.forEach((p) => { const k = String(p?.type || "?"); ty[k] = (ty[k] || 0) + 1; });
+        throw new Error(`응답 ${raw.length}개, 사진 0 (유형 ${Object.entries(ty).map(([k, v]) => k + ":" + v).join(",") || "없음"}; 상태 ${d.meta?.status ?? "?"} ${d.meta?.msg || ""})`.slice(0, 120));
+      }
+      return out;
     },
   },
   {
@@ -278,15 +285,17 @@ const SOURCES = [
     id: "wpcom", name: "워드프레스", w: 0.6, en: true, desc: "블로그 사진 (WordPress.com 태그, 영어에 강함, 키 없이)",
     ok: (e) => e.BLOG !== "off",
     async run(q, page) {
-      if (page > 20) return [];
+      if (page > 5) return [];
       const words = String(q).toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, " ").trim().split(/\s+/).filter(Boolean);
       if (!words.length) return [];
-      const before = new Date(Math.floor((Date.now() - (page - 1) * 36 * 3600000) / 3600000) * 3600000).toISOString(); // 시 단위로 맞춰 캐시가 잘 맞게 함
-      const get = async (tag) => (await getJson(`https://public-api.wordpress.com/rest/v1.1/read/tags/${enc(tag)}/posts?number=20&before=${enc(before)}&order=DESC`, {}, 900)).posts || [];
+      const get = async (tag) => (await getJson(`https://public-api.wordpress.com/rest/v1.1/read/tags/${enc(tag)}/posts?number=100`, {}, 900)).posts || [];
       let posts = await get(words.slice(0, 2).join("-"));
       if (!posts.length && words.length > 1) posts = await get(words[0]);
       const sized = (u, w) => { try { const x = new URL(u); if (/(^|\.)(wordpress\.com|wp\.com)$/i.test(x.hostname)) { x.searchParams.set("w", String(w)); return x.href; } } catch { /* 그대로 씀 */ } return u; };
-      return posts.map((p) => {
+      // 사진 없는 글이 많아서(20개 중 10개 안팎) 한 번에 100개를 받아 사진 있는 글만 추려 20개씩 쪽으로 나눕니다. (쪽 번호 없이도 같은 결과가 안정적으로 나뉘고, 같은 주소라 캐시도 잘 맞음)
+      const withImg = posts.filter((p) => p.URL && /^https?:\/\//i.test(p.featured_media?.uri || p.post_thumbnail?.URL || p.featured_image || ""));
+      if (page === 1 && posts.length && !withImg.length) throw new Error(`응답 ${posts.length}개 중 대표 사진이 있는 글 0개`);
+      return withImg.slice((page - 1) * 20, page * 20).map((p) => {
         const img = p.featured_media?.uri || p.post_thumbnail?.URL || p.featured_image || "";
         if (!/^https?:\/\//i.test(img) || !p.URL) return null;
         const tw = num(p.featured_media?.width || p.post_thumbnail?.width), th = num(p.featured_media?.height || p.post_thumbnail?.height);

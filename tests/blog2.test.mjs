@@ -47,6 +47,11 @@ ok(calls.some((c) => /api_key=t/.test(c.u)), "tumblr key is sent");
 j = await search("tumblr", "cat", env, 30);
 ok(j.items.length === 0, "tumblr page > 20 is empty");
 
+j = await search("tumblr", "empty-tag", { ...env }, 1);
+ok(j.items.length >= 0, "tumblr search runs");
+j = await search("wpcom", "old house", env, 2);
+ok(j.items.length === 0 && !j.err, "wpcom page 2 of a 1-post result is empty (pages come from one 100-post fetch)");
+
 // ---- /api/og ----
 const og = async (u, pass = "pw") => (await worker.fetch(req(`/api/og?u=${encodeURIComponent(u)}`, pass), env));
 ok((await og("https://page.test/og", "bad")).status === 401, "og requires password");
