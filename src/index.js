@@ -152,30 +152,6 @@ const SOURCES = [
     },
   },
   {
-    // 네이버 블로그 검색 (20차): 이미 등록한 NAVER_ID/NAVER_SECRET 을 그대로 씁니다. 응답에는 사진이 없어서(제목·링크·요약·블로거 이름·날짜뿐)
-    // 카드가 화면에 나올 때 글 페이지의 대표 사진(og:image)을 /api/og 로 찾아 채웁니다. (og:"card") 사진을 못 찾은 글은 목록에서 빠집니다.
-    // 실제 응답과 네이버가 글 페이지를 열어 주는지는 배포 후 확인 필요. 소스 이름 옆 ⚠ 에 이유가 표시됩니다.
-    id: "naverblog", name: "네이버 블로그", w: 0.9, en: false, desc: "블로그 글 대표 사진 (네이버 블로그, 한글 검색에 강함·사진은 글에서 가져와 조금 느려요)", need: ["NAVER_ID", "NAVER_SECRET"],
-    ok: (e) => e.NAVER_ID && e.NAVER_SECRET && e.BLOG !== "off" && e.NAVERBLOG === "on", // 21차: 기본은 꺼 둠(네이버 이미지 검색이 블로그 사진을 이미 포함). 쓰려면 변수 NAVERBLOG=on
-    async run(q, page, safe, e, o = {}) {
-      const b0 = e.NAVER_BASE || "https://naverapihub.apigw.ntruss.com/search/v1/image";
-      const legacy = b0.includes("openapi.naver.com");
-      const base = /\/image(\.json)?$/.test(b0) ? b0.replace(/\/image(\.json)?$/, "/blog$1") : legacy ? "https://openapi.naver.com/v1/search/blog.json" : "https://naverapihub.apigw.ntruss.com/search/v1/blog";
-      const headers = legacy
-        ? { "X-Naver-Client-Id": e.NAVER_ID, "X-Naver-Client-Secret": e.NAVER_SECRET }
-        : { "X-NCP-APIGW-API-KEY-ID": e.NAVER_ID, "X-NCP-APIGW-API-KEY": e.NAVER_SECRET };
-      const n = Math.min(30, o.n || 20), start = (page - 1) * n + 1;
-      if (start > 1000) return [];
-      let d;
-      try { d = await getJson(`${base}?query=${enc(q)}&display=${n}&start=${start}&sort=sim`, headers); }
-      catch (err) { if (/40[13]/.test(String(err.message))) throw new Error("블로그 검색 이용 신청이 안 된 키일 수 있어요 (NAVER API HUB 앱에 ‘검색-블로그’ 추가 필요) " + err.message); throw err; }
-      return (d.items || []).filter((it) => /^https?:\/\//i.test(it.link || "")).map((it) => ({
-        title: clean(it.title || ""), desc: clean(it.description || "").slice(0, 160), site: clean(it.bloggername || ""),
-        thumb: it.link, full: it.link, page: it.link, w: 0, h: 0, tags: [], og: "card", // 사진은 아직 없음: 주소를 자리표시로 두고 화면이 대표 사진으로 바꿈
-      }));
-    },
-  },
-  {
     id: "pixabay", name: "Pixabay", w: 1.1, en: false, colors: true, desc: "일반 사진·일러스트 (색상 필터)", need: ["PIXABAY_KEY"],
     ok: (e) => e.PIXABAY_KEY,
     async run(q, page, safe, e, o = {}) {
@@ -236,7 +212,7 @@ const SOURCES = [
         const text = (p.content || []).find((b) => b?.type === "text")?.text;
         return {
           title: clean(p.summary || text || "").slice(0, 100), site: clean(p.blog_name || ""), thumb: mid?.url || orig.url, alt: alts[alts.length - 1]?.url || "", full: orig.url,
-          page: p.post_url || orig.url, w: num(orig.width), h: num(orig.height), tags: (p.tags || []).map(String).filter(Boolean).slice(0, 12),
+          page: p.post_url || orig.url, w: num(orig.width), h: num(orig.height), tags: (p.tags || []).map(String).filter(Boolean).slice(0, 12), notes: num(p.note_count),
         };
       }).filter(Boolean);
       // 사진을 하나도 못 읽었으면 이유를 ⚠ 에 보여 줍니다 (응답 개수와 글 유형)
@@ -287,43 +263,6 @@ const SOURCES = [
       const good = rs.filter((r) => r.status === "fulfilled").map((r) => r.value);
       if (!good.length) throw rs[0].reason;
       return rr(...good);
-    },
-  },
-  {
-    // 워드프레스닷컴 (20차): 키 없이 읽을 수 있는 공개 API 의 "태그별 글" 목록입니다. 글의 대표 사진(featured image)을 씁니다.
-    // 검색어를 태그 형태(소문자·띄어쓰기는 -)로 바꿔 찾고, 두 단어 이상에서 결과가 없으면 첫 단어만으로 한 번 더 찾습니다.
-    // 쪽 번호가 없어서 쪽마다 하루 반(36시간)씩 거슬러 올라가며 받습니다 (before). 응답 필드 이름은 공식 문서 기준이며 실제 호출은 배포 후 확인 필요.
-    id: "wpcom", name: "워드프레스", w: 0.6, en: true, desc: "블로그 사진 (WordPress.com 태그, 영어에 강함, 키 없이)",
-    ok: (e) => e.BLOG !== "off" && e.WPCOM === "on", // 21차: 기본은 꺼 둠(결과가 30개 안팎). 쓰려면 변수 WPCOM=on
-    async run(q, page) {
-      if (page > 5) return [];
-      const words = String(q).toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, " ").trim().split(/\s+/).filter(Boolean);
-      if (!words.length) return [];
-      const get = async (tag) => (await getJson(`https://public-api.wordpress.com/rest/v1.1/read/tags/${enc(tag)}/posts?number=100`, {}, 900)).posts || [];
-      let posts = await get(words.slice(0, 2).join("-"));
-      if (!posts.length && words.length > 1) posts = await get(words[0]);
-      const sized = (u, w) => { try { const x = new URL(u); if (/(^|\.)(wordpress\.com|wp\.com)$/i.test(x.hostname)) { x.searchParams.set("w", String(w)); return x.href; } } catch { /* 그대로 씀 */ } return u; };
-      // 사진 없는 글이 많아서(20개 중 10개 안팎) 한 번에 100개를 받아 사진 있는 글만 추려 20개씩 쪽으로 나눕니다. (쪽 번호 없이도 같은 결과가 안정적으로 나뉘고, 같은 주소라 캐시도 잘 맞음)
-      // 대표 사진이 지정되지 않은 글도 많아서, 첨부 파일이나 본문 안의 첫 사진도 찾아 씁니다. (추적용 픽셀·이모티콘·프로필 사진은 제외)
-      const BADIMG = /gravatar\.com|s\.w\.org|pixel\.wp\.com|stats\.wp\.com|\/emoji\/|\.svg(\?|$)|\/avatar/i;
-      const imgOf = (p) => {
-        const c = [p.featured_media?.uri, p.post_thumbnail?.URL, p.featured_image,
-          ...Object.values(p.attachments || {}).filter((a) => /^image\//.test(a?.mime_type || "")).map((a) => a.URL),
-          ...[...String(p.content || "").matchAll(/<img\b[^>]*?\bsrc=["']([^"']+)["']/gi)].map((m) => m[1])];
-        return c.find((u) => typeof u === "string" && /^https?:\/\//i.test(u) && !BADIMG.test(u)) || "";
-      };
-      const withImg = posts.filter((p) => p.URL && imgOf(p));
-      if (page === 1 && posts.length && !withImg.length) throw new Error(`응답 ${posts.length}개 중 대표 사진이 있는 글 0개`);
-      return withImg.slice((page - 1) * 20, page * 20).map((p) => {
-        const img = imgOf(p);
-        if (!img || !p.URL) return null;
-        const tw = num(p.featured_media?.width || p.post_thumbnail?.width), th = num(p.featured_media?.height || p.post_thumbnail?.height);
-        return {
-          title: clean(p.title || ""), desc: clean(p.excerpt || "").slice(0, 160), site: clean(p.site_name || ""),
-          thumb: sized(img, 640), alt: img, full: sized(img, 1600), page: p.URL, w: tw, h: th,
-          tags: Object.keys(p.tags || {}).filter((t) => t && !/^uncategorized$/i.test(t)).slice(0, 12),
-        };
-      }).filter(Boolean);
     },
   },
 
@@ -546,6 +485,7 @@ const pixabayHit = (it) => ({
   title: "", thumb: it.webformatURL, full: it.largeImageURL || it.webformatURL, page: it.pageURL, w: num(it.imageWidth), h: num(it.imageHeight),
   tags: String(it.tags || "").split(",").map((t) => t.trim()).filter(Boolean), src: "pixabay", grp: "best",
 });
+const BEST_TUMBLR_TAGS = ["photography", "landscape", "architecture", "street photography", "film photography", "travel photography"];
 async function popularPhotos(env, page, n) {
   const out = [];
   if (env.PIXABAY_KEY) {
@@ -564,6 +504,15 @@ async function popularPhotos(env, page, n) {
         title: clean(it.alt_description || it.description || ""), thumb: it.urls?.small, full: it.urls?.regular, page: it.links?.html,
         w: num(it.width), h: num(it.height), tags: (it.tags || []).map((t) => t.title).filter(Boolean), src: "unsplash", grp: "best",
       })));
+    } catch { /* 이 소스는 건너뜀 */ }
+  }
+  // 텀블러: 공개 API 에 "인기순"이 없어서, 사진 태그를 날짜·쪽마다 돌려 가며 받은 글 중 반응(notes)이 많은 순으로 고릅니다.
+  const tum = SOURCES.find((s) => s.id === "tumblr");
+  if (tum?.ok(env)) {
+    try {
+      const tag = BEST_TUMBLR_TAGS[(Math.floor(Date.now() / 86400000) + page) % BEST_TUMBLR_TAGS.length];
+      const l = await tum.run(tag, page, 1, env, {});
+      out.push(l.slice().sort((a, b) => (b.notes || 0) - (a.notes || 0)).slice(0, Math.max(3, Math.ceil(n / 2))).map(({ notes, ...it }) => ({ ...it, src: "tumblr", grp: "best" })));
     } catch { /* 이 소스는 건너뜀 */ }
   }
   return rr(...out);
@@ -771,17 +720,24 @@ async function realTrends(env, now) {
 // ---- 지금 인기: 데이터랩이 가려낸 주제(‘뜨는’ 것 우선) 몇 개로 네이버 이미지를 쪽 단위로 찾아 grp "hot" 으로 돌려줍니다 ----
 // 네이버 이미지 검색은 이미 등록한 키를 그대로 쓰고, 주제는 앞의 4개만 씁니다. 주제마다 n 장씩, 쪽 번호만큼 뒤로 이어서 받습니다. (결과는 Cloudflare 가 캐시)
 async function hotPhotos(env, topics, page, n) {
-  const naver = SOURCES.find((s) => s.id === "naver");
-  if (!naver?.ok(env) || !topics.length) return [];
-  const picked = topics.slice(0, 4);
-  const rs = await Promise.allSettled(picked.map((t) => naver.run(t.q, page, 1, env, { n })));
-  return rr(...rs.map((r, i) => (r.status === "fulfilled" ? r.value.map((it) => ({ ...it, src: "naver", grp: "hot", topic: picked[i].label })) : [])));
+  const naver = SOURCES.find((s) => s.id === "naver"), tum = SOURCES.find((s) => s.id === "tumblr");
+  const useN = !!naver?.ok(env), useT = !!tum?.ok(env);
+  if ((!useN && !useT) || !topics.length) return [];
+  const picked = topics.slice(0, 4), jobs = [];
+  if (useN) picked.forEach((t) => jobs.push(naver.run(t.q, page, 1, env, { n }).then((l) => l.map((it) => ({ ...it, src: "naver", grp: "hot", topic: t.label })))));
+  // 텀블러는 영어 태그에 강해서 주제어를 영어로 바꿔 찾습니다. 무료 Workers 의 요청 수 한도(50회)를 아끼려고 위쪽 주제 2개만 씁니다.
+  if (useT) picked.slice(0, 2).forEach((t) => jobs.push(
+    (HANGUL.test(t.q) ? translate(t.q, env) : Promise.resolve(t.q)).then((en) => tum.run(en || t.q, page, 1, env, { n }))
+      .then((l) => l.slice(0, Math.max(4, Math.ceil(n / 2))).map(({ notes, ...it }) => ({ ...it, src: "tumblr", grp: "hot", topic: t.label })))));
+  const rs = await Promise.allSettled(jobs);
+  return rr(...rs.map((r) => (r.status === "fulfilled" ? r.value : [])));
 }
 // ---- 주제 칩을 눌렀을 때: 그 주제의 이미지를 한국·해외 소스에서 함께 가져옵니다 (grp "hot", 주제 이름표는 화면이 가림) ----
-async function topicPhotos(env, q, page, n) {
-  const ids = ["naver", "kakao", "pixabay", "unsplash"], need = Math.max(4, Math.ceil(n / 3));
-  const en = SOURCES.some((s) => s.id === "unsplash" && s.ok(env)) && HANGUL.test(q) ? await translate(q, env) : q; // 영어 검색이 나은 소스(Unsplash)에는 번역한 말을 씁니다
-  const rs = await Promise.allSettled(SOURCES.filter((s) => ids.includes(s.id) && s.ok(env)).map((s) => s.run(s.en ? en : q, page, 1, env, { n: need }).then((l) => l.map((it) => ({ ...it, src: s.id, grp: "hot", topic: q })))));
+async function topicPhotos(env, q, page, n, o = {}) {
+  const ids = ["naver", "kakao", "pixabay", "unsplash", ...(o.noTumblr ? [] : ["tumblr"])], need = Math.max(4, Math.ceil(n / 3));
+  const srcs = SOURCES.filter((s) => ids.includes(s.id) && s.ok(env));
+  const en = srcs.some((s) => s.en) && HANGUL.test(q) ? await translate(q, env) : q; // 영어 검색이 나은 소스(Unsplash·텀블러)에는 번역한 말을 씁니다
+  const rs = await Promise.allSettled(srcs.map((s) => s.run(s.en ? en : q, page, 1, env, { n: need }).then((l) => l.map(({ notes, ...it }) => ({ ...it, src: s.id, grp: "hot", topic: q })))));
   return rr(...rs.map((r) => (r.status === "fulfilled" ? r.value : [])));
 }
 
@@ -789,7 +745,7 @@ async function topicPhotos(env, q, page, n) {
 // 주제어는 요청 주소로만 오고 서버에 저장하지 않습니다.
 async function minePhotos(env, topics, page, n) {
   const per = Math.max(3, Math.ceil(n / Math.max(1, topics.length)));
-  const rs = await Promise.allSettled(topics.map((t) => topicPhotos(env, t, page, per * 3).then((l) => l.slice(0, per + 2).map((it) => ({ ...it, topic: t })))));
+  const rs = await Promise.allSettled(topics.map((t, i) => topicPhotos(env, t, page, per * 3, { noTumblr: i >= 3 }).then((l) => l.slice(0, per + 2).map((it) => ({ ...it, topic: t })))));
   return rr(...rs.map((r) => (r.status === "fulfilled" ? r.value : [])));
 }
 const cleanTopics = (v) => [...new Set(String(v || "").split(",").map((x) => x.trim().slice(0, 40)).filter(Boolean))]
@@ -889,15 +845,9 @@ async function proxyImage(u) {
 }
 
 // ---------- 글 페이지의 대표 사진 (og:image) ----------
-// 블로그 글은 검색 응답의 사진이 아주 작거나(카카오 130px) 아예 없어서(네이버), 글 페이지의 <meta property="og:image"> 를 찾아 씁니다.
+// 블로그 글은 검색 응답의 사진이 아주 작아서(카카오 130px), 글 페이지의 <meta property="og:image"> 를 찾아 씁니다.
 // 서버가 남의 페이지를 열어 보는 기능이라 주소를 엄격히 검사합니다: https 만, 내부 주소(localhost·IP 등) 거부, 리다이렉트는 직접 따라가며 매번 다시 검사, 앞부분 160KB 까지만 읽음.
 const OG_MAX = 160 * 1024;
-const MOBILE_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
-// 네이버 블로그 PC 주소(blog.naver.com/아이디/글번호)는 틀(frame) 페이지라 대표 사진 정보가 있는 모바일 주소로 바꿔 요청합니다.
-function ogTarget(t) {
-  if (/^blog\.naver\.com$/i.test(t.hostname)) { const x = new URL(t.href); x.hostname = "m.blog.naver.com"; return x; }
-  return t;
-}
 function findOg(html, base) {
   const metas = String(html).match(/<meta\b[^>]*>/gi) || [];
   for (const want of ["og:image:secure_url", "og:image", "twitter:image", "twitter:image:src"]) {
@@ -916,12 +866,12 @@ async function ogImage(u) {
   try { t = new URL(u.searchParams.get("u") || ""); } catch { return json({ error: "bad url" }, 400); }
   if (!/^https?:$/.test(t.protocol)) return json({ error: "blocked" }, 400);
   t.protocol = "https:";
-  let cur = ogTarget(t), r;
+  let cur = t, r;
   try {
     for (let i = 0; i < 4; i++) {
       if (blockedHost(cur.hostname)) return json({ error: "blocked" }, 400);
       r = await fetch(cur.href, {
-        headers: { "user-agent": /naver\.com$/i.test(cur.hostname) ? MOBILE_UA : UA, accept: "text/html,application/xhtml+xml" },
+        headers: { "user-agent": UA, accept: "text/html,application/xhtml+xml" },
         redirect: "manual", signal: AbortSignal.timeout(6000),
         cf: { cacheEverything: true, cacheTtlByStatus: { "200-299": 86400, "300-599": 0 } },
       });

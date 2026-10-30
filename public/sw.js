@@ -1,5 +1,5 @@
 // 화면 파일만 캐시합니다. /api/ (검색·이미지)는 절대 캐시하지 않습니다.
-const NAME = "imagefeed-shell-v19";
+const NAME = "imagefeed-shell-v20";
 const VENDOR = "imagefeed-vendor-nsfw4"; // 브라우저 AI 검사 번들(약 4.6MB). 내용이 바뀌지 않는 파일이라 한 번 받으면 계속 씁니다.
 const SHELL = ["/", "/style.css", "/app.js", "/color.js", "/relevance.js", "/safety.js", "/taste.js", "/interests.js", "/avoid.js", "/manifest.webmanifest", "/icon-192.png"];
 self.addEventListener("install", (e) => { e.waitUntil(caches.open(NAME).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting())); });

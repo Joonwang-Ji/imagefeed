@@ -511,4 +511,70 @@ ok(CATS.every((c) => c[2].length >= 5), "each category has >= 5 sub topics");
   globalThis.fetch = base;
 }
 
+// ---- 21차: 텀블러를 트렌드(지금 인기·베스트·주제 칩·내 취향)와 홈 피드에도 씁니다 ----
+{
+  const keep = globalThis.fetch, tag = [], tumbs = [];
+  const dlBody = (groups, grow) => ({ results: groups.map((g) => ({ title: g, keywords: [g], data: Array.from({ length: 27 }, (_, i) => ({ period: "d" + i, ratio: g === "사진" ? 50 : i >= 20 ? (grow[g] ?? 5) : 5 })) })) });
+  globalThis.fetch = async (url, opt = {}) => {
+    const u = String(url);
+    if (u.startsWith("https://api.tumblr.com/v2/tagged")) {
+      const t = decodeURIComponent(u.match(/tag=([^&]+)/)[1]); tag.push(t); tumbs.push(u);
+      return jres({ response: Array.from({ length: 12 }, (_, i) => ({ type: "photo", summary: `${t} post ${i + 1}`, blog_name: "b" + i, post_url: `https://b${i}.tumblr.com/${i}`, tags: [t], note_count: (i + 1) * 10,
+        photos: [{ original_size: { url: `https://64.media.tumblr.com/${encodeURIComponent(t)}${i}.jpg`, width: 1000, height: 800 }, alt_sizes: [{ url: `https://64.media.tumblr.com/${encodeURIComponent(t)}${i}_500.jpg`, width: 500, height: 400 }] }] })) });
+    }
+    if (u.startsWith("https://pixabay.com/api/")) return jres({ hits: [1, 2, 3].map((i) => ({ webformatURL: `https://pixabay.com/q${i}.jpg`, largeImageURL: `https://pixabay.com/q${i}L.jpg`, pageURL: `https://pixabay.com/q${i}`, imageWidth: 800, imageHeight: 600, tags: "sea, sky" })) });
+    if (u.startsWith("https://naverapihub.apigw.ntruss.com/search-trend/v1/search")) { const b = JSON.parse(opt.body); return jres(dlBody(b.keywordGroups.map((g) => g.groupName), { 벚꽃: 40, 한옥: 20, 캠핑: 2 })); }
+    if (u.startsWith("https://naverapihub.apigw.ntruss.com/search/v1/image")) {
+      const q = decodeURIComponent(u.match(/query=([^&]+)/)[1]), n = +u.match(/display=(\d+)/)[1], st = +u.match(/start=(\d+)/)[1];
+      return jres({ items: Array.from({ length: n }, (_, i) => ({ title: `${q} 사진 ${st + i}`, link: `https://blog.test/${encodeURIComponent(q)}${st + i}.jpg`, thumbnail: `https://search.pstatic.net/common/?src=${q}${st + i}`, sizewidth: "800", sizeheight: "600" })) });
+    }
+    return keep(url, opt);
+  };
+  const reset = () => { caches.default.store.clear(); tag.length = 0; tumbs.length = 0; };
+  const T = { ...env, TUMBLR_KEY: "tk", PIXABAY_KEY: "pk", NAVER_ID: "id", NAVER_SECRET: "sec" };
+
+  // 베스트: 태그 하나로 받아 반응(note_count)이 많은 순으로 절반(10장)
+  reset();
+  let jb = await (await worker.fetch(req("/api/trends?g=best&page=1"), T)).json();
+  const tb = jb.items.filter((i) => i.src === "tumblr");
+  ok(tag.length === 1 && ["photography", "landscape", "architecture", "street photography", "film photography", "travel photography"].includes(tag[0]), "best: one tumblr call with a photo tag: " + tag);
+  ok(tb.length === 10 && tb.every((i) => i.grp === "best") && tb[0].title.endsWith("post 12") && tb[9].title.endsWith("post 3"), "best: top 10 tumblr posts by note_count, grp best: " + tb.map((i) => i.title.slice(-7)));
+  ok(tb.every((i) => !("notes" in i)), "the internal notes field is not sent to the screen");
+  ok(jb.items.some((i) => i.src === "pixabay") && tb.length < jb.items.length, "pixabay results are still there, mixed with tumblr: " + [...new Set(jb.items.map((i) => i.src))] + " / " + jb.items.length);
+  reset(); await worker.fetch(req("/api/trends?g=best&page=2"), T);
+  ok(tag.length === 1 && /before=\d+/.test(tumbs[0]), "best page 2 asks tumblr again (a different time window)");
+
+  // 주제 칩
+  reset();
+  let jt2 = await (await worker.fetch(req("/api/trends?topic=" + encodeURIComponent("벚꽃") + "&page=1"), T)).json();
+  const tt = jt2.items.filter((i) => i.src === "tumblr");
+  ok(tag.length === 1 && tt.length > 0 && tt.every((i) => i.grp === "hot" && i.topic === "벚꽃" && !("notes" in i)), "topic chip: tumblr joins naver/kakao/pixabay/unsplash: " + tt.length);
+
+  // 내 취향: 위쪽 3개 주제만 텀블러 (무료 Workers 의 요청 수 한도 보호)
+  reset();
+  let jm = await (await worker.fetch(req("/api/trends?g=mine&mine=" + encodeURIComponent("노을,고양이,카페 인테리어,한옥,벚꽃")), T)).json();
+  ok(tag.length === 3, "mine: tumblr is asked for the first 3 topics only: " + tag.length);
+  ok(jm.items.some((i) => i.src === "tumblr"), "mine: tumblr photos appear");
+
+  // 지금 인기: 위쪽 2개 주제만
+  reset();
+  let jh = await (await worker.fetch(req("/api/trends?g=hot&page=1"), T)).json();
+  const th = jh.items.filter((i) => i.src === "tumblr"), lead = jh.topics.filter((x) => x.kind === "rising").slice(0, 2).map((x) => x.label);
+  ok(tag.length === 2 && th.length > 0 && th.every((i) => i.grp === "hot" && lead.includes(i.topic)), "hot: tumblr for the top 2 topics only: " + tag + " / " + [...new Set(th.map((i) => i.topic))]);
+  ok(jh.items.filter((i) => i.src === "naver").length > th.length, "hot: naver is still the main source");
+
+  // 키가 없으면 텀블러는 어디에도 안 나옴
+  reset();
+  const NT = { ...T }; delete NT.TUMBLR_KEY;
+  const jn = [await (await worker.fetch(req("/api/trends?g=best"), NT)).json(), await (await worker.fetch(req("/api/trends?g=hot"), NT)).json(), await (await worker.fetch(req("/api/trends?topic=" + encodeURIComponent("벚꽃")), NT)).json()];
+  ok(tag.length === 0 && jn.every((x) => x.items.every((i) => i.src !== "tumblr")), "without TUMBLR_KEY tumblr is never called");
+
+  // 홈 맞춤 피드의 소스 목록
+  const fs = await import("node:fs");
+  const app = fs.readFileSync(ROOT + "public/app.js", "utf8");
+  ok(/const FY_SRC = \[[^\]]*"tumblr"[^\]]*\]/.test(app), "home feed source list includes tumblr");
+  ok(!/naverblog|wpcom/.test(app + fs.readFileSync(ROOT + "src/index.js", "utf8") + fs.readFileSync(ROOT + "public/relevance.js", "utf8")), "naver blog / wordpress sources are gone from the code");
+  globalThis.fetch = keep;
+}
+
 console.log(fail ? `\n${fail} failed` : "\nall passed"); process.exit(fail ? 1 : 0);

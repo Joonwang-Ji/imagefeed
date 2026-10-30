@@ -101,8 +101,7 @@
     switch (id) {
       case "naver": case "kakao": return han ? 1.25 : 0.85;
       case "kakaoblog": return han ? 1.0 : 0.5; // 블로그는 한글 검색에만 잘 맞고, 광고성 글이 섞여 이미지 검색보다는 낮게
-      case "naverblog": return han ? 0.95 : 0.4; // 한글 검색에만 잘 맞음
-      case "wpcom": case "tumblr": return han ? 0.4 : (T.proper ? 0.7 : 0.9); // 영어권 블로그: 한글 검색에는 낮게
+      case "tumblr": return han ? 0.4 : (T.proper ? 0.7 : 0.9); // 영어권 소스: 한글 검색에는 낮게
       case "artic": case "cleveland": case "vam": return ART_EN.test(t) || ART_KO.test(t) ? 1.4 : 0.35;
       case "nasa": return SPACE_EN.test(t) || SPACE_KO.test(t) ? 1.4 : 0.2;
       case "wikimedia": return T.proper ? 1.3 : 1;

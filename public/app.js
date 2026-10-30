@@ -118,7 +118,7 @@ function learnFrom(it, w) {
 let cfg = null;
 const srcName = (id) => cfg?.sources.find((s) => s.id === id)?.name || id;
 // 카드 위에 겹쳐 뜨는 출처 이름은 이미지를 덜 가리도록 짧게 줄여 씁니다. (소스 목록·뷰어에는 원래 이름)
-const SHORT = { naver: "네이버", kakao: "카카오", kakaoblog: "블로그", naverblog: "N블로그", cleveland: "클리블랜드", artic: "시카고", wpcom: "워드프레스", tumblr: "텀블러" };
+const SHORT = { naver: "네이버", kakao: "카카오", kakaoblog: "블로그", cleveland: "클리블랜드", artic: "시카고", tumblr: "텀블러" };
 const clip = (s, n) => { s = String(s || ""); return s.length > n ? s.slice(0, n - 1) + "…" : s; };
 const shortName = (id) => SHORT[id] || clip(srcName(id), 8);
 document.body.classList.toggle("noblur", !S.blur);
@@ -522,12 +522,6 @@ async function loadCard(el) {
   };
   img.onerror = () => { if (it.alt && img.dataset.alt !== "1") { img.dataset.alt = "1"; img.referrerPolicy = "no-referrer"; img.src = it.alt; } else failCard(el); };
   try {
-    // 이미지 주소를 주지 않는 소스(네이버 블로그): 카드가 화면에 가까워졌을 때 글의 대표 이미지를 찾아 씁니다. 못 찾으면 그 글은 뺍니다.
-    if (it.og === "card" && !it._ogDone) {
-      const r = await ogResolve(it.page || it.thumb);
-      if (!r.img) { it._why = "대표 이미지 없음" + (r.err ? " (" + r.err + ")" : ""); return failCard(el); }
-      it._ogDone = true; it.thumb = r.img; it.full = r.img; it.alt = "";
-    }
     let altInfo = null;
     if (colorFromAlt) { try { altInfo = await blobInfo(await fetchBlob(`/api/img?u=${enc(it.alt)}`, false, it.src)); } catch (e) { if (e.message === "auth") throw e; } }
     if (it.blob) img.src = URL.createObjectURL(it.blob);
@@ -1012,7 +1006,7 @@ class Hold { // Feed 가 Masonry 인 줄 알고 쓰는 가짜 칸. 카드가 화
   drop(c) { this.cards = this.cards.filter((x) => x !== c); }
   balLater() {} recheck() {}
 }
-const FY_SRC = ["naver", "kakao", "pixabay", "openverse", "wikimedia"];
+const FY_SRC = ["naver", "kakao", "pixabay", "openverse", "wikimedia", "tumblr"];
 const FY = { gen: 0, active: false, q: "", subs: [], items: [], seen: new Set(), limit: 60, ints: [], at: 0, pumping: false, pt: null,
   next() { fyPump(); },
   more() { this.limit = feedM.cards.length + 60; for (const s of this.subs) if (s.feed.exhausted || s.feed.stuck) s.feed.more(); fyPump(); },
