@@ -185,10 +185,18 @@ const SOURCES = [
     // 태그 검색은 쪽 번호가 없고 시각(before)으로만 이어 받아서, 쪽마다 6시간씩 거슬러 올라가며 받습니다. 인기 태그에는 충분하고 드문 태그는 금방 끝납니다.
     id: "tumblr", name: "텀블러", w: 0.7, en: true, desc: "감성 사진 (Tumblr 태그, 영어에 강함)", need: ["TUMBLR_KEY"],
     ok: (e) => e.TUMBLR_KEY,
-    async run(q, page, safe, e) {
+    async run(q, page, safe, e, o = {}) {
       if (page > 20) return [];
       const before = Math.floor(Date.now() / 1000) - (page - 1) * 6 * 3600;
-      const d = await getJson(`https://api.tumblr.com/v2/tagged?tag=${enc(q.slice(0, 60))}&api_key=${enc(e.TUMBLR_KEY)}&limit=20&before=${before}`, {}, 600);
+      // tagged 는 태그가 정확히 같은 글만 돌려줍니다. "foggy mountain" 같은 구절은 그 태그가 붙은 글이 드물어서 결과가 거의 없고, "moon" 같은 한 단어만 잘 나옵니다.
+      // 그래서 여러 단어면 구절 전체와 핵심 단어(마지막 단어: 보통 중심이 되는 명사) 두 가지를 동시에 받아 섞습니다. (한 번에 최대 2번 호출)
+      const one = (tag) => getJson(`https://api.tumblr.com/v2/tagged?tag=${enc(tag)}&api_key=${enc(e.TUMBLR_KEY)}&limit=20&before=${before}`, {}, 600);
+      const tags = o.exact ? [String(q).trim().slice(0, 60)] : tumblrTags(q); // exact: 이미 실제 태그인 말(베스트의 인기 태그)은 한 번만
+      const got = await Promise.allSettled(tags.map(one));
+      if (got.every((g) => g.status === "rejected")) throw got[0].reason;
+      const ds = got.filter((g) => g.status === "fulfilled").map((g) => g.value), d = ds[0] || {};
+      const seenPost = new Set();
+      d.response = rr(...ds.map((x) => (Array.isArray(x.response) ? x.response : []))).filter((p) => { const k = String(p?.post_url || p?.id || Math.random()); return seenPost.has(k) ? false : seenPost.add(k); });
       // 예전 형식은 photos, 요즘 글(NPF)은 type "blocks" 에 content/trail 안의 image 블록으로 사진이 옵니다. 둘 다 읽습니다.
       // 사진이 오는 모양이 여러 가지입니다: photos(예전 사진 글), content 의 image 블록(요즘 글), 그리고 글 본문 HTML 안의 <img>(type "text" 로 오는 글).
       const htmlImgs = (h) => [...String(h || "").matchAll(/<img\b[^>]*>/gi)].map((m) => {
@@ -485,6 +493,14 @@ const pixabayHit = (it) => ({
   title: "", thumb: it.webformatURL, full: it.largeImageURL || it.webformatURL, page: it.pageURL, w: num(it.imageWidth), h: num(it.imageHeight),
   tags: String(it.tags || "").split(",").map((t) => t.trim()).filter(Boolean), src: "pixabay", grp: "best",
 });
+// 텀블러 태그 후보: 한 단어면 그대로, 여러 단어면 [구절 전체, 핵심 단어]. (짧은 말·관사·전치사는 핵심 단어에서 제외)
+const TUMBLR_STOP = new Set(["the", "and", "with", "for", "from", "into", "over", "under", "near", "that", "this", "are", "was"]);
+function tumblrTags(q) {
+  const phrase = String(q || "").trim().replace(/\s+/g, " ").slice(0, 60);
+  const words = phrase.toLowerCase().split(" ").filter((w) => w.length >= 3 && !TUMBLR_STOP.has(w));
+  const key = words[words.length - 1];
+  return phrase.includes(" ") && key && key !== phrase.toLowerCase() ? [phrase, key] : [phrase];
+}
 const BEST_TUMBLR_TAGS = ["photography", "landscape", "architecture", "street photography", "film photography", "travel photography"];
 async function popularPhotos(env, page, n) {
   const out = [];
@@ -511,8 +527,8 @@ async function popularPhotos(env, page, n) {
   if (tum?.ok(env)) {
     try {
       const tag = BEST_TUMBLR_TAGS[(Math.floor(Date.now() / 86400000) + page) % BEST_TUMBLR_TAGS.length];
-      const l = await tum.run(tag, page, 1, env, {});
-      out.push(l.slice().sort((a, b) => (b.notes || 0) - (a.notes || 0)).slice(0, Math.max(3, Math.ceil(n / 2))).map(({ notes, ...it }) => ({ ...it, src: "tumblr", grp: "best" })));
+      const l = await tum.run(tag, page, 1, env, { exact: true });
+      out.push(l.filter((it) => trendVerdict(it) !== "drop").sort((a, b) => (b.notes || 0) - (a.notes || 0)).slice(0, Math.max(3, Math.ceil(n / 2))).map(({ notes, ...it }) => ({ ...it, src: "tumblr", grp: "best" })));
     } catch { /* 이 소스는 건너뜀 */ }
   }
   return rr(...out);
@@ -728,7 +744,7 @@ async function hotPhotos(env, topics, page, n) {
   // 텀블러는 영어 태그에 강해서 주제어를 영어로 바꿔 찾습니다. 무료 Workers 의 요청 수 한도(50회)를 아끼려고 위쪽 주제 2개만 씁니다.
   if (useT) picked.slice(0, 2).forEach((t) => jobs.push(
     (HANGUL.test(t.q) ? translate(t.q, env) : Promise.resolve(t.q)).then((en) => tum.run(en || t.q, page, 1, env, { n }))
-      .then((l) => l.slice(0, Math.max(4, Math.ceil(n / 2))).map(({ notes, ...it }) => ({ ...it, src: "tumblr", grp: "hot", topic: t.label })))));
+      .then((l) => l.filter((it) => trendVerdict(it) !== "drop").slice(0, Math.max(4, Math.ceil(n / 2))).map(({ notes, ...it }) => ({ ...it, src: "tumblr", grp: "hot", topic: t.label })))));
   const rs = await Promise.allSettled(jobs);
   return rr(...rs.map((r) => (r.status === "fulfilled" ? r.value : [])));
 }
@@ -751,6 +767,13 @@ async function minePhotos(env, topics, page, n) {
 const cleanTopics = (v) => [...new Set(String(v || "").split(",").map((x) => x.trim().slice(0, 40)).filter(Boolean))]
   .filter((t) => !(hardBlocked(t) || isAdult(t) || isExplicit(t) || offTopic(t))).slice(0, 6);
 
+// 트렌드에 올려도 되는지: "drop"(제외) / "blur"(블러로 남김) / "ok". 소스에서 몇 장만 고르기 전에도 같은 기준으로 먼저 거릅니다.
+function trendVerdict(it) {
+  const t = `${it.title} ${(it.tags || []).join(" ")} ${it.ctx || ""}`;
+  if (hardBlocked(t) || isExplicit(t) || offTopic(it.title, (it.tags || []).join(" "))) return "drop";
+  if (isNude(t)) return hasArtContext(t) ? "blur" : "drop";
+  return isAdult(t) ? "blur" : "ok";
+}
 // 한 쪽에 몇 장씩 받을지: all 은 세 갈래를 번갈아 섞어 약 40장, 한 갈래만 보면 그 갈래를 넉넉히
 const TR_N = { all: { hot: 4, best: 7, pick: 12, mine: 10 }, mine: { mine: 30 }, hot: { hot: 12, best: 0, pick: 0 }, best: { hot: 0, best: 20, pick: 0 }, pick: { hot: 0, best: 0, pick: 40 } };
 
@@ -781,12 +804,7 @@ async function trends(env, u) {
   //  - 성행위·성기 표현이 제목·태그·짧은 설명·파일 이름에 있으면 미술·역사 자료라도 뺍니다.
   //  - 나체 표현은 미술·역사 맥락(조각·그림·유물 등)이 있으면 남기되 블러, 맥락이 없으면 뺍니다.
   //  - 할로윈·다른 종교의 행사·상징 같은 기독교 세계관에 맞지 않는 주제는 뺍니다. (topics.js 의 OFF_TOPIC)
-  const verdict = (it) => {
-    const t = `${it.title} ${it.tags.join(" ")} ${it.ctx || ""}`;
-    if (hardBlocked(t) || isExplicit(t) || offTopic(it.title, it.tags.join(" "))) return "drop";
-    if (isNude(t)) return hasArtContext(t) ? "blur" : "drop";
-    return isAdult(t) ? "blur" : "ok";
-  };
+  const verdict = trendVerdict;
   const raw = rr(hot, best, pick, mine);
   const items = raw
     .filter((it) => it.thumb && it.full)

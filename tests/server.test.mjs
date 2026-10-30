@@ -513,13 +513,13 @@ ok(CATS.every((c) => c[2].length >= 5), "each category has >= 5 sub topics");
 
 // ---- 21차: 텀블러를 트렌드(지금 인기·베스트·주제 칩·내 취향)와 홈 피드에도 씁니다 ----
 {
-  const keep = globalThis.fetch, tag = [], tumbs = [];
+  const keep = globalThis.fetch, tag = [], tumbs = []; let tumbBad = false;
   const dlBody = (groups, grow) => ({ results: groups.map((g) => ({ title: g, keywords: [g], data: Array.from({ length: 27 }, (_, i) => ({ period: "d" + i, ratio: g === "사진" ? 50 : i >= 20 ? (grow[g] ?? 5) : 5 })) })) });
   globalThis.fetch = async (url, opt = {}) => {
     const u = String(url);
     if (u.startsWith("https://api.tumblr.com/v2/tagged")) {
       const t = decodeURIComponent(u.match(/tag=([^&]+)/)[1]); tag.push(t); tumbs.push(u);
-      return jres({ response: Array.from({ length: 12 }, (_, i) => ({ type: "photo", summary: `${t} post ${i + 1}`, blog_name: "b" + i, post_url: `https://b${i}.tumblr.com/${i}`, tags: [t], note_count: (i + 1) * 10,
+      return jres({ response: Array.from({ length: t === "foggy mountain" ? 1 : 12 }, (_, i) => ({ type: "photo", summary: `${t} post ${i + 1}`, blog_name: "b" + i, post_url: `https://b${i}.tumblr.com/${i}`, tags: tumbBad && i >= 10 ? [t, "gore"] : [t], note_count: (i + 1) * 10,
         photos: [{ original_size: { url: `https://64.media.tumblr.com/${encodeURIComponent(t)}${i}.jpg`, width: 1000, height: 800 }, alt_sizes: [{ url: `https://64.media.tumblr.com/${encodeURIComponent(t)}${i}_500.jpg`, width: 500, height: 400 }] }] })) });
     }
     if (u.startsWith("https://pixabay.com/api/")) return jres({ hits: [1, 2, 3].map((i) => ({ webformatURL: `https://pixabay.com/q${i}.jpg`, largeImageURL: `https://pixabay.com/q${i}L.jpg`, pageURL: `https://pixabay.com/q${i}`, imageWidth: 800, imageHeight: 600, tags: "sea, sky" })) });
@@ -553,7 +553,7 @@ ok(CATS.every((c) => c[2].length >= 5), "each category has >= 5 sub topics");
   // 내 취향: 위쪽 3개 주제만 텀블러 (무료 Workers 의 요청 수 한도 보호)
   reset();
   let jm = await (await worker.fetch(req("/api/trends?g=mine&mine=" + encodeURIComponent("노을,고양이,카페 인테리어,한옥,벚꽃")), T)).json();
-  ok(tag.length === 3, "mine: tumblr is asked for the first 3 topics only: " + tag.length);
+  ok(new Set(jm.items.filter((i) => i.src === "tumblr").map((i) => i.topic)).size <= 3 && tag.length === 4 && tag.includes("노을") && !tag.includes("한옥") && !tag.includes("벚꽃"), "mine: tumblr only for the first 3 topics (the two-word one also asks its key word): " + tag);
   ok(jm.items.some((i) => i.src === "tumblr"), "mine: tumblr photos appear");
 
   // 지금 인기: 위쪽 2개 주제만
@@ -562,6 +562,24 @@ ok(CATS.every((c) => c[2].length >= 5), "each category has >= 5 sub topics");
   const th = jh.items.filter((i) => i.src === "tumblr"), lead = jh.topics.filter((x) => x.kind === "rising").slice(0, 2).map((x) => x.label);
   ok(tag.length === 2 && th.length > 0 && th.every((i) => i.grp === "hot" && lead.includes(i.topic)), "hot: tumblr for the top 2 topics only: " + tag + " / " + [...new Set(th.map((i) => i.topic))]);
   ok(jh.items.filter((i) => i.src === "naver").length > th.length, "hot: naver is still the main source");
+
+  // 여러 단어 검색어: 구절 태그는 글이 드물어서(모의: 1개) 핵심 단어(마지막 단어)도 함께 받아 합칩니다
+  reset();
+  let jf = await (await worker.fetch(req("/api/trends?topic=" + encodeURIComponent("foggy mountain") + "&page=1"), T)).json();
+  const tf = jf.items.filter((i) => i.src === "tumblr");
+  ok(tag.length === 2 && tag.includes("foggy mountain") && tag.includes("mountain"), "multi-word topic: tumblr is asked for the phrase and its key word: " + tag);
+  ok(tf.length >= 10, "multi-word topic: the key word fills in what the sparse phrase tag lacks: " + tf.length);
+  reset(); await worker.fetch(req("/api/search?src=tumblr&q=moon&page=1&safe=1"), T);
+  ok(tag.length === 1 && tag[0] === "moon", "one-word search still makes a single call: " + tag);
+  reset(); await worker.fetch(req("/api/search?src=tumblr&q=" + encodeURIComponent("light in the fog") + "&page=1&safe=1"), T);
+  ok(tag.length === 2 && tag[0] === "light in the fog" && tag[1] === "fog", "search: three-word phrase asks phrase + last key word: " + tag);
+
+  // 베스트: 반응이 가장 많은 글이 걸러지는 글이어도, 거른 뒤에 고르므로 10장이 채워짐 (자른 뒤에 거르면 8장으로 줄어듦)
+  reset(); tumbBad = true;
+  jb = await (await worker.fetch(req("/api/trends?g=best&page=1"), T)).json();
+  const tb2 = jb.items.filter((i) => i.src === "tumblr");
+  ok(tb2.length === 10 && tb2.every((i) => !i.tags.includes("gore")) && tb2[0].title.endsWith("post 10"), "best: unwanted top posts are dropped before choosing, still 10 left: " + tb2.length + " " + (tb2[0] && tb2[0].title));
+  tumbBad = false;
 
   // 키가 없으면 텀블러는 어디에도 안 나옴
   reset();
