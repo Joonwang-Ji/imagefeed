@@ -1,7 +1,14 @@
-# 이미지피드 — 22차 작업 결과와 23차 인계 (2026-10-30)
+# 이미지피드 — 22차 작업 결과와 23차 인계 (2026-10-30, 최종: Bluesky·Wallhaven 2개)
 
 저장소: https://github.com/Joonwang-Ji/imagefeed (main). 변경 파일을 ZIP(imagefeed-round22.zip)으로 전달 → GitHub 웹에서 같은 경로로 덮어쓰기 업로드(자동 배포). 새 파일: `tests/sources22.test.mjs`, `docs/handoff-round22.md`.
 키: Pixabay, Unsplash, 카카오, 네이버, (텀블러). 원칙(바꾸지 말 것): 검색·조회 기록 서버 저장 금지(기기 안 활동 기록만), 공포·잔혹 해제 불가, 선정성 기본 블러, 사용자는 본인과 소수 지인(성인), 기독교 세계관.
+
+## 최종 정리 (같은 날 후속)
+- **Flickr 제거**: 무료 계정은 API 키를 받을 수 없음(Flickr 도움말: 키 신청은 Pro 구독자 전용). 관련 코드(소스·트렌드 베스트·주제 칩·가중치·홈 피드)를 모두 뺌.
+- **Are.na 제거**: 토큰을 넣고 시험한 결과 ⚠ 에 HTTP 403(사용자 확인). v3 검색은 프리미엄 전용이고 v2 도 무료 계정에는 닫힌 것으로 판단. 관련 코드 모두 제거.
+- 남은 새 소스: **Bluesky**(`BSKY_ID`+`BSKY_PASSWORD`), **Wallhaven**(키 없음). 아래 본문의 Flickr·Are.na 항목(변경·키 발급·확인 목록)은 이 결정으로 무효.
+- 서비스워커 v23, 테스트 17개 파일 통과(`tests/sources22.test.mjs` 는 Bluesky·Wallhaven·제거 확인만).
+- 일반 사진 보강용 대체 소스는 아직 없음(후보: Openverse OAuth 로 한도 올리기 — Openverse 는 Flickr CC 사진도 포함).
 
 ## 요청과 결정
 - 소스 추가 재개. 목적: 일반 사진 품질 + 감성·트렌디 이미지. 비용: 무료 키 또는 키 없는 소스 위주(네이버·텀블러만큼 무료 크레딧이 넉넉하면 카드 등록도 가능).

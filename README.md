@@ -171,4 +171,4 @@ node tests/safety.test.mjs      # 선정성 판정·트렌드 노골적 이미�
 - 보드 관리: 북마크 탭의 ‘보드 관리’에서 이름 변경(같은 이름이면 합치기)·순서·지우기(북마크는 남음).
 - **20차 블로그 소스 확장 → 정리**: Tumblr(`tumblr`, 비밀 변수 `TUMBLR_KEY`)만 남기고 네이버 블로그·WordPress.com 소스는 제거했습니다. `/api/og`(글 페이지의 대표 이미지 찾기)는 카카오 블로그 뷰어용으로 유지: https 만, 내부 주소·리다이렉트 차단, 글 머리말 160KB 만 읽습니다. 끄려면 `BLOG=off`.
 - **20차 성능·화면**: 카드 위 출처 이름 축약(`SHORT`), `backdrop-filter` 제거, 스크롤 중에는 AI 검사·칸 높이 맞춤을 미룸. 맞춤 피드: 관심사 4개, 작은 관심사도 더 자주 선택(가중치 지수 0.6), 같은 관심사도 앞쪽 검색어 3개 중 무작위 시작.
-- **22차 소스 4개 추가**: Flickr(`flickr`, `FLICKR_KEY`), Are.na(`arena`, `ARENA_TOKEN`), Bluesky(`bluesky`, `BSKY_ID`+`BSKY_PASSWORD`=앱 비밀번호), Wallhaven(`wallhaven`, 키 없음, 일반 SFW만). 모두 영어 검색어(번역본)를 씁니다. Flickr 는 트렌드 ‘베스트’(최근 30일 흥미도순)·주제 칩에도 들어가고, Flickr·Are.na 는 홈 맞춤 피드에도 씁니다. Bluesky 는 성인·잔혹 라벨이 붙은 글·계정을 제외합니다. 자세한 내용은 `docs/handoff-round22.md`.
+- **22차 소스 2개 추가**: Bluesky(`bluesky`, `BSKY_ID`+`BSKY_PASSWORD`=앱 비밀번호), Wallhaven(`wallhaven`, 키 없음, 일반 SFW만). 영어 검색어(번역본)를 씁니다. Bluesky 는 성인·잔혹 라벨이 붙은 글·계정을 제외합니다. Flickr(API 키가 Pro 구독자 전용)와 Are.na(무료 계정은 검색 403)는 시험 후 제외했습니다. 자세한 내용은 `docs/handoff-round22.md`.
