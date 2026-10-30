@@ -156,7 +156,7 @@ const SOURCES = [
     // 카드가 화면에 나올 때 글 페이지의 대표 사진(og:image)을 /api/og 로 찾아 채웁니다. (og:"card") 사진을 못 찾은 글은 목록에서 빠집니다.
     // 실제 응답과 네이버가 글 페이지를 열어 주는지는 배포 후 확인 필요. 소스 이름 옆 ⚠ 에 이유가 표시됩니다.
     id: "naverblog", name: "네이버 블로그", w: 0.9, en: false, desc: "블로그 글 대표 사진 (네이버 블로그, 한글 검색에 강함·사진은 글에서 가져와 조금 느려요)", need: ["NAVER_ID", "NAVER_SECRET"],
-    ok: (e) => e.NAVER_ID && e.NAVER_SECRET && e.BLOG !== "off",
+    ok: (e) => e.NAVER_ID && e.NAVER_SECRET && e.BLOG !== "off" && e.NAVERBLOG === "on", // 21차: 기본은 꺼 둠(네이버 이미지 검색이 블로그 사진을 이미 포함). 쓰려면 변수 NAVERBLOG=on
     async run(q, page, safe, e, o = {}) {
       const b0 = e.NAVER_BASE || "https://naverapihub.apigw.ntruss.com/search/v1/image";
       const legacy = b0.includes("openapi.naver.com");
@@ -294,7 +294,7 @@ const SOURCES = [
     // 검색어를 태그 형태(소문자·띄어쓰기는 -)로 바꿔 찾고, 두 단어 이상에서 결과가 없으면 첫 단어만으로 한 번 더 찾습니다.
     // 쪽 번호가 없어서 쪽마다 하루 반(36시간)씩 거슬러 올라가며 받습니다 (before). 응답 필드 이름은 공식 문서 기준이며 실제 호출은 배포 후 확인 필요.
     id: "wpcom", name: "워드프레스", w: 0.6, en: true, desc: "블로그 사진 (WordPress.com 태그, 영어에 강함, 키 없이)",
-    ok: (e) => e.BLOG !== "off",
+    ok: (e) => e.BLOG !== "off" && e.WPCOM === "on", // 21차: 기본은 꺼 둠(결과가 30개 안팎). 쓰려면 변수 WPCOM=on
     async run(q, page) {
       if (page > 5) return [];
       const words = String(q).toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, " ").trim().split(/\s+/).filter(Boolean);

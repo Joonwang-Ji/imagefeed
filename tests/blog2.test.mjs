@@ -25,11 +25,13 @@ globalThis.fetch = async (url, init = {}) => {
   return new Response("nf", { status: 404 });
 };
 const req = (path, pass = "pw") => new Request("https://x.test" + path, { headers: { "x-pass": pass } });
-const env = { PASS: "pw", NAVER_ID: "i", NAVER_SECRET: "s", NAVER_BASE: "https://openapi.naver.com/v1/search/image.json", TUMBLR_KEY: "t", ASSETS: { fetch: () => new Response("a") } };
+const env = { PASS: "pw", NAVER_ID: "i", NAVER_SECRET: "s", NAVERBLOG: "on", WPCOM: "on", NAVER_BASE: "https://openapi.naver.com/v1/search/image.json", TUMBLR_KEY: "t", ASSETS: { fetch: () => new Response("a") } };
 const search = async (src, q = "한옥 마당", e = env, page = 1) => (await worker.fetch(req(`/api/search?src=${src}&q=${encodeURIComponent(q)}&page=${page}&safe=1`), e)).json();
 
 let cfg = await (await worker.fetch(req("/api/config"), env)).json();
 ok(["naverblog", "wpcom", "tumblr"].every((id) => cfg.sources.some((s) => s.id === id)), "config lists the three new sources");
+cfg = await (await worker.fetch(req("/api/config"), { ...env, NAVERBLOG: "", WPCOM: "" })).json();
+ok(!cfg.sources.some((s) => ["naverblog", "wpcom"].includes(s.id)) && cfg.sources.some((s) => s.id === "tumblr"), "naverblog and wpcom are off unless NAVERBLOG=on / WPCOM=on");
 cfg = await (await worker.fetch(req("/api/config"), { ...env, TUMBLR_KEY: "", NAVER_ID: "", BLOG: "off" })).json();
 ok(!cfg.sources.some((s) => ["naverblog", "wpcom", "tumblr"].includes(s.id)), "no keys / BLOG=off hide them");
 
