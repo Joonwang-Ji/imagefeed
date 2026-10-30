@@ -118,7 +118,7 @@ function learnFrom(it, w) {
 let cfg = null;
 const srcName = (id) => cfg?.sources.find((s) => s.id === id)?.name || id;
 // 카드 위에 겹쳐 뜨는 출처 이름은 이미지를 덜 가리도록 짧게 줄여 씁니다. (소스 목록·뷰어에는 원래 이름)
-const SHORT = { naver: "네이버", kakao: "카카오", kakaoblog: "블로그", cleveland: "클리블랜드", artic: "시카고", tumblr: "텀블러" };
+const SHORT = { naver: "네이버", kakao: "카카오", kakaoblog: "블로그", cleveland: "클리블랜드", artic: "시카고", tumblr: "텀블러", flickr: "Flickr", arena: "Are.na", bluesky: "Bluesky", wallhaven: "Wallhaven" };
 const clip = (s, n) => { s = String(s || ""); return s.length > n ? s.slice(0, n - 1) + "…" : s; };
 const shortName = (id) => SHORT[id] || clip(srcName(id), 8);
 document.body.classList.toggle("noblur", !S.blur);
@@ -1022,7 +1022,7 @@ class Hold { // Feed 가 Masonry 인 줄 알고 쓰는 가짜 칸. 카드가 화
   balLater() {} recheck() {}
 }
 const FLOOR_BIAS = 0.4; // 이 값 이상이면 이 검색어에 맞는 소스로 보고 첫 화면에 최소 몇 장을 보장 (Feed.pick)
-const FY_SRC = ["naver", "kakao", "pixabay", "openverse", "wikimedia", "tumblr"];
+const FY_SRC = ["naver", "kakao", "pixabay", "openverse", "wikimedia", "tumblr", "flickr", "arena"];
 const FY = { gen: 0, active: false, q: "", subs: [], items: [], seen: new Set(), limit: 60, ints: [], at: 0, pumping: false, pt: null,
   next() { fyPump(); },
   more() { this.limit = feedM.cards.length + 60; for (const s of this.subs) if (s.feed.exhausted || s.feed.stuck) s.feed.more(); fyPump(); },

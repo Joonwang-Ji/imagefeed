@@ -72,6 +72,26 @@ function reasonOfStatus(s) {
 const reasonOf = (e) => e?.code || "error";
 const https = (u = "") => String(u).replace(/^http:\/\//i, "https://");
 
+// Bluesky: 2026년부터 로그아웃 상태의 글 검색이 꺼져서, 앱 비밀번호(무료)로 로그인한 토큰으로 검색합니다. (BSKY_ID, BSKY_PASSWORD)
+// 로그인 토큰은 이 서버 인스턴스가 켜져 있는 동안 1시간 재사용합니다. 검색어·결과는 저장하지 않습니다.
+let BSKY = { jwt: "", exp: 0 };
+async function bskyToken(e, force = false) {
+  if (!force && BSKY.jwt && Date.now() < BSKY.exp) return BSKY.jwt;
+  let r;
+  try {
+    r = await fetch("https://bsky.social/xrpc/com.atproto.server.createSession", {
+      method: "POST", headers: { "content-type": "application/json", "user-agent": UA },
+      body: JSON.stringify({ identifier: e.BSKY_ID, password: e.BSKY_PASSWORD }), signal: AbortSignal.timeout(6500),
+    });
+  } catch (err) { throw fail(err?.name === "TimeoutError" || err?.name === "AbortError" ? "timeout" : "network", String(err?.message || err)); }
+  if (!r.ok) throw fail(r.status === 400 || r.status === 401 ? "denied" : reasonOfStatus(r.status), `Bluesky 로그인 HTTP ${r.status} (아이디·앱 비밀번호 확인)`, r.status);
+  let d; try { d = await r.json(); } catch { throw fail("badjson", "Bluesky 로그인 응답이 JSON이 아님"); }
+  if (!d.accessJwt) throw fail("badjson", "Bluesky 로그인 토큰 없음");
+  BSKY = { jwt: d.accessJwt, exp: Date.now() + 60 * 60 * 1000 };
+  return BSKY.jwt;
+}
+const BSKY_BAD = /^(porn|sexual|nudity|graphic-media|gore|self-harm|!hide|!warn)$/i; // 이 라벨이 붙은 글·계정은 제외
+
 // 화면의 색상/방향 값을 소스별 값으로 바꿉니다. 지원 안 하는 값이면 null.
 const COLOR = {
   pixabay: { red: "red", orange: "orange", yellow: "yellow", green: "green", teal: "turquoise", blue: "blue", purple: "lilac", pink: "pink", brown: "brown", black: "black", white: "white", gray: "gray" },
@@ -80,6 +100,7 @@ const COLOR = {
 const ORIENT = {
   pixabay: { v: "vertical", h: "horizontal" },
   unsplash: { v: "portrait", h: "landscape", s: "squarish" },
+  wallhaven: { v: "portrait", h: "landscape" },
 };
 
 // ---------- 소스 정의 ----------
@@ -229,6 +250,95 @@ const SOURCES = [
         throw new Error(`응답 ${raw.length}개, 사진 0 (유형 ${Object.entries(ty).map(([k, v]) => k + ":" + v).join(",") || "없음"}; 상태 ${d.meta?.status ?? "?"} ${d.meta?.msg || ""})`.slice(0, 120));
       }
       return out;
+    },
+  },
+  {
+    // Flickr (22차): 일반 사진 품질 보강. 무료 비영리 키(FLICKR_KEY)를 바로 발급받을 수 있고, 검색 결과는 최대 4,000장까지입니다.
+    // 오류는 HTTP 200 에 {stat:"fail", code} 로 옵니다. o.sort / o.minUp 은 트렌드 ‘베스트’(최근 한 달 인기)에서 씁니다.
+    id: "flickr", name: "Flickr", w: 0.9, en: true, desc: "일반 사진 (Flickr, 무료 키)", need: ["FLICKR_KEY"],
+    ok: (e) => e.FLICKR_KEY,
+    async run(q, page, safe, e, o = {}) {
+      const per = Math.min(60, o.n || 40);
+      if (page * per > 4000) return [];
+      const extras = "url_m,url_c,url_l,tags,owner_name";
+      const d = await getJson(
+        `https://api.flickr.com/services/rest/?method=flickr.photos.search&api_key=${enc(e.FLICKR_KEY)}&text=${enc(q)}&sort=${o.sort || "relevance"}` +
+        `&media=photos&content_types=0&safe_search=${safe ? 1 : 2}&per_page=${per}&page=${page}&extras=${extras}&format=json&nojsoncallback=1` +
+        (o.minUp ? `&min_upload_date=${o.minUp}` : ""), {}, 900);
+      if (d.stat === "fail") throw fail(num(d.code) === 100 || num(d.code) === 99 ? "denied" : "error", `Flickr ${d.code}: ${d.message || ""}`.slice(0, 100));
+      return (d.photos?.photo || []).map((p) => {
+        // url_c(800px) 가 가장 알맞고, 없으면 url_m(500px)·url_l(1024px). 큰 크기가 없는 사진은 있는 것 중 가장 큰 것을 씁니다.
+        const th = p.url_c || p.url_m || p.url_l, fu = p.url_l || p.url_c || p.url_m;
+        if (!th || !fu) return null;
+        const sfx = p.url_c ? "c" : p.url_m ? "m" : "l";
+        const tags = String(p.tags || "").split(/\s+/).filter((t) => t && t.length <= 30 && !/[:=]/.test(t)).slice(0, 12);
+        return {
+          title: clean(p.title || ""), site: clean(p.ownername || ""), thumb: th, alt: p.url_m && p.url_m !== th ? p.url_m : "", full: fu,
+          page: `https://www.flickr.com/photos/${p.owner}/${p.id}`, w: num(p["width_" + sfx]), h: num(p["height_" + sfx]), tags,
+        };
+      }).filter(Boolean);
+    },
+  },
+  {
+    // Are.na (22차): 디자이너·에디터가 모아 둔 감성 이미지 모음. v2 검색은 무료지만 토큰이 없으면 방화벽에 막혀서 무료 개인 토큰(ARENA_TOKEN)을 씁니다.
+    // 이미지 블록(class "Image")만 쓰고, 링크 블록의 화면 캡처는 제외합니다.
+    id: "arena", name: "Are.na", w: 0.7, en: true, desc: "디자인·감성 모음 (Are.na, 무료 토큰)", need: ["ARENA_TOKEN"],
+    ok: (e) => e.ARENA_TOKEN,
+    async run(q, page, safe, e, o = {}) {
+      if (page > 30) return [];
+      const d = await getJson(`https://api.are.na/v2/search/blocks?q=${enc(q)}&per=${Math.min(50, o.n || 40)}&page=${page}`,
+        { Authorization: `Bearer ${e.ARENA_TOKEN}` }, 900);
+      return (d.blocks || []).filter((b) => b?.class === "Image" && (b.image?.display?.url || b.image?.large?.url || b.image?.original?.url)).map((b) => {
+        const im = b.image, th = im.display?.url || im.large?.url || im.original.url;
+        return {
+          title: clean(b.title || ""), desc: clean(b.description || b.content || "").slice(0, 160), site: clean(b.user?.username || ""),
+          thumb: th, alt: im.thumb?.url || "", full: im.large?.url || im.original?.url || th, page: `https://www.are.na/block/${b.id}`, w: 0, h: 0, tags: [],
+        };
+      });
+    },
+  },
+  {
+    // Bluesky (22차): 사진·그림을 올리는 사용자가 많은 SNS. 글 검색에 로그인이 필요해서 앱 비밀번호를 씁니다. (BSKY_ID, BSKY_PASSWORD)
+    // 검색 결과 중 사진이 붙은 글만 쓰고, 성인·잔혹 라벨이 붙은 글·계정은 제외합니다. 글의 첫 사진 한 장만 씁니다.
+    // 이어 받기(cursor)는 글 개수 기준 숫자(offset)로 보내는데, 이 방식이 실제로 맞는지는 배포 후 확인이 필요합니다.
+    id: "bluesky", name: "Bluesky", w: 0.6, en: true, desc: "SNS 사진·그림 (Bluesky, 앱 비밀번호)", need: ["BSKY_ID", "BSKY_PASSWORD"],
+    ok: (e) => e.BSKY_ID && e.BSKY_PASSWORD,
+    async run(q, page, safe, e) {
+      if (page > 20) return [];
+      const per = 100, url = `https://bsky.social/xrpc/app.bsky.feed.searchPosts?q=${enc(q)}&limit=${per}&sort=top` + (page > 1 ? `&cursor=${(page - 1) * per}` : "");
+      let d;
+      try { d = await getJson(url, { Authorization: `Bearer ${await bskyToken(e)}` }, 600, 9000); }
+      catch (err) {
+        if (err.status !== 401 && err.status !== 400) throw err; // 토큰 만료 등은 한 번만 다시 로그인해서 재시도
+        d = await getJson(url, { Authorization: `Bearer ${await bskyToken(e, true)}` }, 0, 9000);
+      }
+      const out = [];
+      for (const p of d.posts || []) {
+        const emb = p.embed || {}, imgs = emb.images || emb.media?.images || [];
+        const im = imgs[0]; if (!im?.fullsize || !im?.thumb) continue;
+        if ((p.labels || []).concat(p.author?.labels || []).some((l) => BSKY_BAD.test(l?.val || ""))) continue;
+        const text = clean(p.record?.text || ""), ar = im.aspectRatio || {};
+        const rk = String(p.uri || "").split("/").pop();
+        const tags = [...new Set([...(p.record?.tags || []), ...[...text.matchAll(/#([\p{L}\p{N}_]{2,30})/gu)].map((m) => m[1])].map(String))].slice(0, 12);
+        out.push({
+          title: clean(im.alt || text).slice(0, 100), desc: text.slice(0, 160), site: clean(p.author?.displayName || p.author?.handle || ""),
+          thumb: im.thumb, full: im.fullsize, page: `https://bsky.app/profile/${p.author?.handle}/post/${rk}`, w: num(ar.width), h: num(ar.height), tags,
+        });
+      }
+      return out;
+    },
+  },
+  {
+    // Wallhaven (22차): 고화질 풍경·배경·일러스트 위주(일상 사진은 약함). 키 없이 일반(SFW)만 쓰고, 분당 45회 제한이 있어서 결과는 15분 캐시합니다.
+    id: "wallhaven", name: "Wallhaven", w: 0.6, en: true, desc: "고화질 풍경·배경 (키 없이, 분당 45회)",
+    ok: () => true,
+    async run(q, page, safe, e, o = {}) {
+      if (page > 30) return [];
+      const d = await getJson(`https://wallhaven.cc/api/v1/search?q=${enc(q)}&categories=111&purity=100&sorting=relevance&page=${page}` + extra("wallhaven", "", "ratios", o), {}, 900);
+      return (d.data || []).map((it) => {
+        const th = it.thumbs?.original || it.thumbs?.large; if (!th || !it.path) return null;
+        return { title: "", thumb: th, alt: it.thumbs?.large || "", full: it.path, page: it.url || it.path, w: num(it.dimension_x), h: num(it.dimension_y), tags: [it.category].filter(Boolean) };
+      }).filter(Boolean);
     },
   },
   {
@@ -501,6 +611,7 @@ function tumblrTags(q) {
   const key = words[words.length - 1];
   return phrase.includes(" ") && key && key !== phrase.toLowerCase() ? [phrase, key] : [phrase];
 }
+const BEST_FLICKR_TAGS = ["landscape", "architecture", "street", "travel", "interior", "nature"];
 const BEST_TUMBLR_TAGS = ["photography", "landscape", "architecture", "street photography", "film photography", "travel photography"];
 async function popularPhotos(env, page, n) {
   const out = [];
@@ -529,6 +640,15 @@ async function popularPhotos(env, page, n) {
       const tag = BEST_TUMBLR_TAGS[(Math.floor(Date.now() / 86400000) + page) % BEST_TUMBLR_TAGS.length];
       const l = await tum.run(tag, page, 1, env, { exact: true });
       out.push(l.filter((it) => trendVerdict(it) !== "drop").sort((a, b) => (b.notes || 0) - (a.notes || 0)).slice(0, Math.max(3, Math.ceil(n / 2))).map(({ notes, ...it }) => ({ ...it, src: "tumblr", grp: "best" })));
+    } catch { /* 이 소스는 건너뜀 */ }
+  }
+  // Flickr (22차): 최근 30일 안에 올라온 사진 중 "흥미도(interestingness)" 순. 기간을 직접 지정할 수 있는 소스라 베스트를 ‘요즘 인기’에 가깝게 해 줍니다.
+  const fl = SOURCES.find((s) => s.id === "flickr");
+  if (fl?.ok(env)) {
+    try {
+      const tag = BEST_FLICKR_TAGS[(Math.floor(Date.now() / 86400000) + page) % BEST_FLICKR_TAGS.length];
+      const l = await fl.run(tag, page, 1, env, { sort: "interestingness-desc", minUp: Math.floor(Date.now() / 1000) - 30 * 86400, n: Math.max(8, n) });
+      out.push(l.filter((it) => trendVerdict(it) !== "drop").slice(0, Math.max(3, Math.ceil(n / 2))).map((it) => ({ ...it, src: "flickr", grp: "best" })));
     } catch { /* 이 소스는 건너뜀 */ }
   }
   return rr(...out);
@@ -750,7 +870,7 @@ async function hotPhotos(env, topics, page, n) {
 }
 // ---- 주제 칩을 눌렀을 때: 그 주제의 이미지를 한국·해외 소스에서 함께 가져옵니다 (grp "hot", 주제 이름표는 화면이 가림) ----
 async function topicPhotos(env, q, page, n, o = {}) {
-  const ids = ["naver", "kakao", "pixabay", "unsplash", ...(o.noTumblr ? [] : ["tumblr"])], need = Math.max(4, Math.ceil(n / 3));
+  const ids = ["naver", "kakao", "pixabay", "unsplash", "flickr", ...(o.noTumblr ? [] : ["tumblr"])], need = Math.max(4, Math.ceil(n / 3));
   const srcs = SOURCES.filter((s) => ids.includes(s.id) && s.ok(env));
   const en = srcs.some((s) => s.en) && HANGUL.test(q) ? await translate(q, env) : q; // 영어 검색이 나은 소스(Unsplash·텀블러)에는 번역한 말을 씁니다
   const rs = await Promise.allSettled(srcs.map((s) => s.run(s.en ? en : q, page, 1, env, { n: need }).then((l) => l.map(({ notes, ...it }) => ({ ...it, src: s.id, grp: "hot", topic: q })))));

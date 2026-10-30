@@ -102,6 +102,10 @@
       case "naver": case "kakao": return han ? 1.25 : 0.85;
       case "kakaoblog": return han ? 1.0 : 0.5; // 블로그는 한글 검색에만 잘 맞고, 광고성 글이 섞여 이미지 검색보다는 낮게
       case "tumblr": return han ? 0.5 : (T.proper ? 0.7 : 0.9); // 영어권 소스: 한글 검색에는 조금 낮게 (최소 노출 기준 0.4 는 넘김)
+      case "flickr": return han ? 0.55 : (T.proper ? 0.8 : 1); // 영어권 소스(태그가 많은 일반 사진): 한글 검색에는 조금 낮게
+      case "arena": return han ? 0.45 : 0.7;
+      case "bluesky": return han ? 0.45 : 0.6; // SNS 글이라 사진이 검색어와 안 맞는 경우가 많아 낮게
+      case "wallhaven": return han ? 0.4 : 0.7; // 배경·풍경 위주
       case "artic": case "cleveland": case "vam": return ART_EN.test(t) || ART_KO.test(t) ? 1.4 : 0.35;
       case "nasa": return SPACE_EN.test(t) || SPACE_KO.test(t) ? 1.4 : 0.2;
       case "wikimedia": return T.proper ? 1.3 : 1;
