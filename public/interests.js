@@ -145,7 +145,7 @@
     const fresh = left.filter((c) => now - c.latest < 36 * 3600000 && c.weight >= 1).sort((a, b) => b.latest - a.latest)[0];
     if (fresh) { out.push(fresh); left.splice(left.indexOf(fresh), 1); }
     while (out.length < n && left.length) {
-      const ws = left.map((c) => Math.pow(c.weight, 0.9)), tot = ws.reduce((a, b) => a + b, 0);
+      const ws = left.map((c) => Math.pow(c.weight, opts.flat ?? 0.6) /* 값이 작을수록 작은 관심사도 자주 뽑힘 */), tot = ws.reduce((a, b) => a + b, 0);
       let r = rand() * tot, i = 0;
       for (; i < left.length - 1; i++) { r -= ws[i]; if (r <= 0) break; }
       out.push(left.splice(i, 1)[0]);

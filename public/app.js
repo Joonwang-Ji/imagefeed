@@ -117,6 +117,10 @@ function learnFrom(it, w) {
 }
 let cfg = null;
 const srcName = (id) => cfg?.sources.find((s) => s.id === id)?.name || id;
+// 카드 위에 겹쳐 뜨는 출처 이름은 이미지를 덜 가리도록 짧게 줄여 씁니다. (소스 목록·뷰어에는 원래 이름)
+const SHORT = { naver: "네이버", kakao: "카카오", kakaoblog: "블로그", naverblog: "N블로그", cleveland: "클리블랜드", artic: "시카고", wpcom: "워드프레스", tumblr: "텀블러" };
+const clip = (s, n) => { s = String(s || ""); return s.length > n ? s.slice(0, n - 1) + "…" : s; };
+const shortName = (id) => SHORT[id] || clip(srcName(id), 8);
 document.body.classList.toggle("noblur", !S.blur);
 
 // ---------- 서버 호출 ----------
@@ -140,6 +144,17 @@ const fetchBlob = (path, hi, src) => hi
   : (SLOW_LIM[src] || limit)(async () => (await api(path, { signal: AbortSignal.timeout(20000) })).blob());
 // 실패 이유를 사람이 읽을 말로 (⚠ 를 눌렀을 때 보여 줌)
 const whyOf = (e) => "중계 " + (e?.detail || (e?.name === "TimeoutError" || e?.name === "AbortError" ? "시간 초과" : e?.message || "실패"));
+
+// 블로그 글 주소 → 대표 이미지(og:image) 주소. 서버(/api/og)가 글 머리말만 읽어서 찾아 줍니다. 결과는 이 화면에서 다시 쓰고, 동시에 4개까지만 요청합니다.
+const OGC = new Map(), ogLim = limiter(4);
+function ogResolve(page) {
+  if (!page) return Promise.resolve({ img: "", err: "no page" });
+  if (!OGC.has(page)) OGC.set(page, ogLim(async () => {
+    try { return await (await api(`/api/og?u=${enc(page)}`, { signal: AbortSignal.timeout(9000) })).json(); }
+    catch (e) { if (e.message === "auth") throw e; return { img: "", err: whyOf(e) }; }
+  }));
+  return OGC.get(page);
+}
 
 // ---------- 로그인 ----------
 function showLogin(msg) { $("#login").hidden = false; $("#lmsg").textContent = msg || ""; $("#lpass").focus(); }
@@ -322,6 +337,10 @@ function refreshStars() {
   const it = curItem(); if (it) { const on = S.bmIds.has(it.id); setLbl($("#vstar"), on ? "북마크됨" : "북마크"); $("#vstar").classList.toggle("on", on); }
 }
 
+// 스크롤 중인지 (마지막 스크롤 후 0.2초). 스크롤하는 동안에는 AI 검사·칸 높이 맞춤 같은 무거운 일을 미룹니다.
+const SCROLL = { on: false, t: 0 };
+addEventListener("scroll", () => { SCROLL.on = true; clearTimeout(SCROLL.t); SCROLL.t = setTimeout(() => { SCROLL.on = false; }, 200); }, { passive: true, capture: true });
+
 // ---------- 메이슨리 ----------
 class Masonry {
   constructor(el) { this.el = el; this.all = []; this.cards = []; this.cols = []; this.hs = []; this.n = 0; this.pred = null; this.onChange = null; }
@@ -348,6 +367,7 @@ class Masonry {
   // (카드가 빠지거나 이미지 비율이 달라져 한쪽만 길어진 채 [더 보기]가 나오는 것을 막음. 맨 아래 몇 장의 순서만 바뀔 수 있어요.)
   balance() {
     if (this.n < 2 || !this.cols.length || !this.el.offsetParent) return;
+    if (SCROLL.on) { clearTimeout(this._bt3); this._bt3 = setTimeout(() => this.balance(), 300); return; } // 스크롤 중에는 칸 높이를 재지 않음 (끊김 방지)
     const H = (c) => { const l = c.lastElementChild; return l ? l.getBoundingClientRect().bottom - c.getBoundingClientRect().top : 0; };
     for (let g = 0; g < 40; g++) {
       const hs = this.cols.map(H); let hi = 0, lo = 0;
@@ -390,7 +410,7 @@ function makeCard(it, open) {
   const img = document.createElement("img"); img.alt = it.title || ""; img.decoding = "async"; el.appendChild(img);
   const star = document.createElement("button"); star.className = "star"; star.setAttribute("aria-label", "북마크"); star.textContent = S.bmIds.has(it.id) ? "★" : "☆"; el.appendChild(star);
   const veil = document.createElement("div"); veil.className = "veil"; veil.innerHTML = "민감할 수 있는 이미지<br><small>탭하면 보기</small>"; el.appendChild(veil);
-  const tag = document.createElement("span"); tag.className = "tag"; tag.textContent = it.grp === "hot" && it.topic ? it.topic : srcName(it.src); el.appendChild(tag);
+  const tag = document.createElement("span"); tag.className = "tag"; tag.textContent = it.grp === "hot" && it.topic ? clip(it.topic, 8) : shortName(it.src); el.appendChild(tag);
   if (it.avoidBlur) el.classList.add("avoid");
   if (it.fromBm) { // 북마크 카드: 선택 모드의 체크 표시
     const chk = document.createElement("span"); chk.className = "chk"; chk.innerHTML = '<svg class="i"><use href="#i-check"/></svg>'; el.appendChild(chk);
@@ -502,6 +522,12 @@ async function loadCard(el) {
   };
   img.onerror = () => { if (it.alt && img.dataset.alt !== "1") { img.dataset.alt = "1"; img.referrerPolicy = "no-referrer"; img.src = it.alt; } else failCard(el); };
   try {
+    // 이미지 주소를 주지 않는 소스(네이버 블로그): 카드가 화면에 가까워졌을 때 글의 대표 이미지를 찾아 씁니다. 못 찾으면 그 글은 뺍니다.
+    if (it.og === "card" && !it._ogDone) {
+      const r = await ogResolve(it.page || it.thumb);
+      if (!r.img) { it._why = "대표 이미지 없음" + (r.err ? " (" + r.err + ")" : ""); return failCard(el); }
+      it._ogDone = true; it.thumb = r.img; it.full = r.img; it.alt = "";
+    }
     let altInfo = null;
     if (colorFromAlt) { try { altInfo = await blobInfo(await fetchBlob(`/api/img?u=${enc(it.alt)}`, false, it.src)); } catch (e) { if (e.message === "auth") throw e; } }
     if (it.blob) img.src = URL.createObjectURL(it.blob);
@@ -551,6 +577,7 @@ async function pump() {
   try {
     const m = await getModel();
     while (cq.length) {
+      for (let w = 0; SCROLL.on && w < 40; w++) await sleep(100); // 스크롤 중에는 잠시 쉼 (최대 4초)
       // 지금 화면 가운데에 가까운 카드부터 검사해서, 보고 있는 이미지의 블러가 먼저 풀리게 합니다.
       if (cq.length > 1) { const mid = innerHeight / 2, d = (x) => (x.el.isConnected ? Math.abs(x.el.getBoundingClientRect().top - mid) : 1e9); cq.sort((a, b) => d(a) - d(b)); }
       const { el, img, it } = cq.shift();
@@ -995,7 +1022,9 @@ const FY = { gen: 0, active: false, q: "", subs: [], items: [], seen: new Set(),
 const fyReobserve = () => { sio.unobserve($("#sentinel")); sio.observe($("#sentinel")); };
 function fyPumpSoon() { clearTimeout(FY.pt); FY.pt = setTimeout(fyPump, 120); }
 function fySub(kind, q, share, cl) {
-  const hold = new Hold(), sub = { kind, share, cl, hold, cands: cl ? Interests.queries(cl) : [q], ci: 0, ready: false, cw: 0, kick: 0, cvec: cl?.vec || null };
+  const cands = cl ? Interests.queries(cl) : [q];
+  // 관심사는 앞쪽 후보 3개 중 하나에서 무작위로 시작합니다 → 같은 묶음도 새로 고칠 때마다 다른 검색어로 보여 줌
+  const hold = new Hold(), sub = { kind, share, cl, hold, cands, ci: cl ? Math.floor(Math.random() * Math.min(3, cands.length)) : 0, ready: false, cw: 0, kick: 0, cvec: cl?.vec || null };
   hold.onAdd = () => fyHeld(sub);
   sub.feed = new Feed(hold, {
     filters: false, taste: !cl, chunk: 24, srcAllow: FY_SRC,
@@ -1068,7 +1097,8 @@ async function fyStart(reshuffle) {
   Object.assign(FY, { active: true, q: "fy", at: Date.now(), limit: 60, items: [], seen: new Set(), ints: [] });
   feedM.clear(); feedM.pred = null; $("#msg").hidden = true; $("#msg").textContent = ""; skel(true); renderMore($("#more"), FY); renderFyHint();
   let cl = [];
-  if (tasteOn()) { try { cl = Interests.pick(await buildInterests(), 3); } catch { cl = []; } }
+  // 20차: 3개 → 4개로 늘리고, 작은 관심사도 자주 뽑히도록 가중치를 완만하게 합니다. (새로 고칠 때마다 다른 관심사가 보이게)
+  if (tasteOn()) { try { cl = Interests.pick(await buildInterests(), 4); } catch { cl = []; } }
   if (gen !== FY.gen) return;
   FY.ints = cl;
   const subs = cl.map((c) => fySub("int", null, 4, c));
@@ -1400,13 +1430,19 @@ function showItem(keepSim) {
   img.classList.toggle("blur", hide); $("#vveil").hidden = !hide;
   $("#vsafe").hidden = !(it.adult && (S.blur || it.avoidBlur)); // 블러가 걸린 이미지에서만 "블러 해제" 버튼
   $("#vhide").hidden = !!it.fromBm; // 북마크는 내가 직접 담은 것이라 "추천 안 함" 대상이 아님
-  $("#vtitle").textContent = it.title || it.site || srcName(it.src);
-  $("#vsrc").textContent = srcName(it.src) + (it.w ? ` · ${it.w}×${it.h}` : "");
+  // 제목은 소스마다 다릅니다: Pixabay·카카오 이미지는 제목 없이 태그나 출처 사이트 이름만 주기 때문에, 제목 → 태그 → 출처 사이트 → 소스 이름 순으로 보여 줍니다.
+  const tagTitle = (it.tags || []).slice(0, 3).join(" · "), main = it.title || tagTitle;
+  $("#vtitle").textContent = main || it.site || srcName(it.src);
+  $("#vsrc").textContent = [srcName(it.src), main ? it.site : "", it.w ? `${it.w}×${it.h}` : ""].filter(Boolean).join(" · ");
   refreshStars(); setLbl($("#vboard"), boardLabel(it));
   $("#vnote").textContent = it.note || ""; $("#vnote").hidden = !it.note;
   img.referrerPolicy = "no-referrer";
   img.src = it.blob ? URL.createObjectURL(it.blob) : it.thumb;
-  fetchBlob(`/api/img?u=${enc(it.full)}`, true).then((b) => {
+  // 블로그 검색이 주는 썸네일은 흐릿하므로, 뷰어에서는 글의 대표 이미지(og:image)를 찾아 원본으로 씁니다. (4초 안에 못 찾으면 기존 이미지)
+  const og = it.og === "view" && !it._ogDone
+    ? Promise.race([ogResolve(it.page).then((r) => { it._ogDone = true; if (r.img) it.full = r.img; }), sleep(4000)]).catch(() => {})
+    : Promise.resolve();
+  og.then(() => (token === vTok ? fetchBlob(`/api/img?u=${enc(it.full)}`, true) : Promise.reject(new Error("stale")))).then((b) => {
     if (token !== vTok) return;
     it.fullBlob = b; if (vUrl) URL.revokeObjectURL(vUrl); vUrl = URL.createObjectURL(b); img.src = vUrl;
     // 큰 이미지에서 색 분포를 다시 뽑아, 비슷한 이미지를 색이 가까운 순으로 정리하는 기준으로 씁니다.

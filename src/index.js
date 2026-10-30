@@ -143,11 +143,34 @@ const SOURCES = [
       return (d.documents || []).filter((it) => it.thumbnail && it.url).map((it) => {
         const th = blogThumb(it.thumbnail);
         // 대표 사진은 아주 작게(130px 안팎) 오는 경우가 많아서 큰 크기 주소를 먼저 시도하고, 안 열리면 받은 원래 주소(alt)로 대신합니다.
+        // og:"view" = 이미지를 크게 열 때 글 페이지의 대표 사진(og:image)을 찾아 더 선명한 사진으로 바꿉니다. (20차, /api/og)
         return {
           title: clean(it.title || ""), desc: clean(it.contents || "").slice(0, 160), site: clean(it.blogname || ""),
-          thumb: th, alt: it.thumbnail, full: th, page: it.url, w: 0, h: 0, tags: [],
+          thumb: th, alt: it.thumbnail, full: th, page: it.url, w: 0, h: 0, tags: [], og: "view",
         };
       });
+    },
+  },
+  {
+    // 네이버 블로그 검색 (20차): 이미 등록한 NAVER_ID/NAVER_SECRET 을 그대로 씁니다. 응답에는 사진이 없어서(제목·링크·요약·블로거 이름·날짜뿐)
+    // 카드가 화면에 나올 때 글 페이지의 대표 사진(og:image)을 /api/og 로 찾아 채웁니다. (og:"card") 사진을 못 찾은 글은 목록에서 빠집니다.
+    // 실제 응답과 네이버가 글 페이지를 열어 주는지는 배포 후 확인 필요. 소스 이름 옆 ⚠ 에 이유가 표시됩니다.
+    id: "naverblog", name: "네이버 블로그", w: 0.9, en: false, desc: "블로그 글 대표 사진 (네이버 블로그, 한글 검색에 강함·사진은 글에서 가져와 조금 느려요)", need: ["NAVER_ID", "NAVER_SECRET"],
+    ok: (e) => e.NAVER_ID && e.NAVER_SECRET && e.BLOG !== "off",
+    async run(q, page, safe, e, o = {}) {
+      const b0 = e.NAVER_BASE || "https://naverapihub.apigw.ntruss.com/search/v1/image";
+      const legacy = b0.includes("openapi.naver.com");
+      const base = /\/image(\.json)?$/.test(b0) ? b0.replace(/\/image(\.json)?$/, "/blog$1") : legacy ? "https://openapi.naver.com/v1/search/blog.json" : "https://naverapihub.apigw.ntruss.com/search/v1/blog";
+      const headers = legacy
+        ? { "X-Naver-Client-Id": e.NAVER_ID, "X-Naver-Client-Secret": e.NAVER_SECRET }
+        : { "X-NCP-APIGW-API-KEY-ID": e.NAVER_ID, "X-NCP-APIGW-API-KEY": e.NAVER_SECRET };
+      const n = Math.min(30, o.n || 20), start = (page - 1) * n + 1;
+      if (start > 1000) return [];
+      const d = await getJson(`${base}?query=${enc(q)}&display=${n}&start=${start}&sort=sim`, headers);
+      return (d.items || []).filter((it) => /^https?:\/\//i.test(it.link || "")).map((it) => ({
+        title: clean(it.title || ""), desc: clean(it.description || "").slice(0, 160), site: clean(it.bloggername || ""),
+        thumb: it.link, full: it.link, page: it.link, w: 0, h: 0, tags: [], og: "card", // 사진은 아직 없음: 주소를 자리표시로 두고 화면이 대표 사진으로 바꿈
+      }));
     },
   },
   {
@@ -177,6 +200,26 @@ const SOURCES = [
         page: it.links?.html, w: num(it.width), h: num(it.height),
         tags: (it.tags || []).map((t) => t.title).filter(Boolean),
       }));
+    },
+  },
+  {
+    // 텀블러 (20차): 태그로 모인 공개 사진 게시물. 무료 키(OAuth consumer key)가 필요하고 하루 5,000회 안팎입니다. (TUMBLR_KEY)
+    // 태그 검색은 쪽 번호가 없고 시각(before)으로만 이어 받아서, 쪽마다 6시간씩 거슬러 올라가며 받습니다. 인기 태그에는 충분하고 드문 태그는 금방 끝납니다.
+    id: "tumblr", name: "텀블러", w: 0.7, en: true, desc: "감성 사진 (Tumblr 태그, 영어에 강함)", need: ["TUMBLR_KEY"],
+    ok: (e) => e.TUMBLR_KEY,
+    async run(q, page, safe, e) {
+      if (page > 20) return [];
+      const before = Math.floor(Date.now() / 1000) - (page - 1) * 6 * 3600;
+      const d = await getJson(`https://api.tumblr.com/v2/tagged?tag=${enc(q.slice(0, 60))}&api_key=${enc(e.TUMBLR_KEY)}&limit=20&before=${before}&filter=text`, {}, 600);
+      return (Array.isArray(d.response) ? d.response : []).filter((p) => p?.type === "photo" && p.photos?.length).map((p) => {
+        const ph = p.photos[0], orig = ph.original_size, alts = (ph.alt_sizes || []).slice().sort((a, b) => num(a.width) - num(b.width));
+        const mid = alts.find((s) => num(s.width) >= 500) || alts[alts.length - 1] || orig;
+        if (!orig?.url) return null;
+        return {
+          title: clean(p.summary || "").slice(0, 100), site: clean(p.blog_name || ""), thumb: mid?.url || orig.url, alt: alts[alts.length - 1]?.url || "", full: orig.url,
+          page: p.post_url || orig.url, w: num(orig.width), h: num(orig.height), tags: (p.tags || []).map(String).filter(Boolean).slice(0, 12),
+        };
+      }).filter(Boolean);
     },
   },
   {
@@ -219,6 +262,33 @@ const SOURCES = [
       const good = rs.filter((r) => r.status === "fulfilled").map((r) => r.value);
       if (!good.length) throw rs[0].reason;
       return rr(...good);
+    },
+  },
+  {
+    // 워드프레스닷컴 (20차): 키 없이 읽을 수 있는 공개 API 의 "태그별 글" 목록입니다. 글의 대표 사진(featured image)을 씁니다.
+    // 검색어를 태그 형태(소문자·띄어쓰기는 -)로 바꿔 찾고, 두 단어 이상에서 결과가 없으면 첫 단어만으로 한 번 더 찾습니다.
+    // 쪽 번호가 없어서 쪽마다 하루 반(36시간)씩 거슬러 올라가며 받습니다 (before). 응답 필드 이름은 공식 문서 기준이며 실제 호출은 배포 후 확인 필요.
+    id: "wpcom", name: "워드프레스", w: 0.6, en: true, desc: "블로그 사진 (WordPress.com 태그, 영어에 강함, 키 없이)",
+    ok: (e) => e.BLOG !== "off",
+    async run(q, page) {
+      if (page > 20) return [];
+      const words = String(q).toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, " ").trim().split(/\s+/).filter(Boolean);
+      if (!words.length) return [];
+      const before = new Date(Math.floor((Date.now() - (page - 1) * 36 * 3600000) / 3600000) * 3600000).toISOString(); // 시 단위로 맞춰 캐시가 잘 맞게 함
+      const get = async (tag) => (await getJson(`https://public-api.wordpress.com/rest/v1.1/read/tags/${enc(tag)}/posts?number=20&before=${enc(before)}`, {}, 900)).posts || [];
+      let posts = await get(words.slice(0, 2).join("-"));
+      if (!posts.length && words.length > 1) posts = await get(words[0]);
+      const sized = (u, w) => { try { const x = new URL(u); if (/(^|\.)(wordpress\.com|wp\.com)$/i.test(x.hostname)) { x.searchParams.set("w", String(w)); return x.href; } } catch { /* 그대로 씀 */ } return u; };
+      return posts.map((p) => {
+        const img = p.featured_media?.uri || p.post_thumbnail?.URL || p.featured_image || "";
+        if (!/^https?:\/\//i.test(img) || !p.URL) return null;
+        const tw = num(p.featured_media?.width || p.post_thumbnail?.width), th = num(p.featured_media?.height || p.post_thumbnail?.height);
+        return {
+          title: clean(p.title || ""), desc: clean(p.excerpt || "").slice(0, 160), site: clean(p.site_name || ""),
+          thumb: sized(img, 640), alt: img, full: sized(img, 1600), page: p.URL, w: tw, h: th,
+          tags: Object.keys(p.tags || {}).filter((t) => t && !/^uncategorized$/i.test(t)).slice(0, 12),
+        };
+      }).filter(Boolean);
     },
   },
 
@@ -783,6 +853,66 @@ async function proxyImage(u) {
   return new Response(r.body, { headers: h });
 }
 
+// ---------- 글 페이지의 대표 사진 (og:image) ----------
+// 블로그 글은 검색 응답의 사진이 아주 작거나(카카오 130px) 아예 없어서(네이버), 글 페이지의 <meta property="og:image"> 를 찾아 씁니다.
+// 서버가 남의 페이지를 열어 보는 기능이라 주소를 엄격히 검사합니다: https 만, 내부 주소(localhost·IP 등) 거부, 리다이렉트는 직접 따라가며 매번 다시 검사, 앞부분 160KB 까지만 읽음.
+const OG_MAX = 160 * 1024;
+const MOBILE_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
+// 네이버 블로그 PC 주소(blog.naver.com/아이디/글번호)는 틀(frame) 페이지라 대표 사진 정보가 있는 모바일 주소로 바꿔 요청합니다.
+function ogTarget(t) {
+  if (/^blog\.naver\.com$/i.test(t.hostname)) { const x = new URL(t.href); x.hostname = "m.blog.naver.com"; return x; }
+  return t;
+}
+function findOg(html, base) {
+  const metas = String(html).match(/<meta\b[^>]*>/gi) || [];
+  for (const want of ["og:image:secure_url", "og:image", "twitter:image", "twitter:image:src"]) {
+    for (const m of metas) {
+      const key = (/(?:property|name)\s*=\s*["']([^"']+)["']/i.exec(m) || [])[1];
+      if (!key || key.toLowerCase() !== want) continue;
+      const c = (/content\s*=\s*["']([^"']+)["']/i.exec(m) || [])[1];
+      if (!c) continue;
+      try { const u = new URL(c.replace(/&amp;/g, "&"), base); if (/^https?:$/.test(u.protocol)) { u.protocol = "https:"; return u.href; } } catch { /* 다음 후보 */ }
+    }
+  }
+  return "";
+}
+async function ogImage(u) {
+  let t;
+  try { t = new URL(u.searchParams.get("u") || ""); } catch { return json({ error: "bad url" }, 400); }
+  if (!/^https?:$/.test(t.protocol)) return json({ error: "blocked" }, 400);
+  t.protocol = "https:";
+  let cur = ogTarget(t), r;
+  try {
+    for (let i = 0; i < 4; i++) {
+      if (blockedHost(cur.hostname)) return json({ error: "blocked" }, 400);
+      r = await fetch(cur.href, {
+        headers: { "user-agent": /naver\.com$/i.test(cur.hostname) ? MOBILE_UA : UA, accept: "text/html,application/xhtml+xml" },
+        redirect: "manual", signal: AbortSignal.timeout(6000),
+        cf: { cacheEverything: true, cacheTtlByStatus: { "200-299": 86400, "300-599": 0 } },
+      });
+      const loc = r.status >= 300 && r.status < 400 ? r.headers.get("location") : "";
+      if (!loc) break;
+      cur = new URL(loc, cur); cur.protocol = "https:";
+      r = null;
+    }
+  } catch { return json({ img: "", err: "fetch failed" }); }
+  if (!r) return json({ img: "", err: "too many redirects" });
+  if (!r.ok) return json({ img: "", err: "page " + r.status });
+  if (!/html/i.test(r.headers.get("content-type") || "")) return json({ img: "", err: "not html" });
+  let html = "", n = 0;
+  try {
+    const rd = r.body.getReader(), dec = new TextDecoder();
+    while (n < OG_MAX) {
+      const { done, value } = await rd.read(); if (done) break;
+      n += value.length; html += dec.decode(value, { stream: true });
+      if (/<\/head>/i.test(html)) break;
+    }
+    try { await rd.cancel(); } catch { /* 이미 닫힘 */ }
+  } catch { /* 읽은 만큼만 씁니다 */ }
+  const img = findOg(html, cur.href);
+  return json(img && !blockedHost(new URL(img).hostname) ? { img } : { img: "", err: "no og:image" });
+}
+
 // ---------- 라우터 ----------
 export default {
   // 선택: wrangler.toml 의 [triggers] 크론을 켜면 앱을 안 열어도 하루 한 번 인기 검색어를 쌓아 둡니다. (TREND_KV 가 있을 때 가장 확실)
@@ -812,6 +942,7 @@ export default {
     }
 
     if (u.pathname === "/api/img") return proxyImage(u);
+    if (u.pathname === "/api/og") return ogImage(u);
 
     if (u.pathname === "/api/trends") return trends(env, u);
 

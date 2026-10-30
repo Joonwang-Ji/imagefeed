@@ -27,3 +27,4 @@ enabled = false
 # [triggers]
 # crons = ["0 21 * * *"]
 # 19차: 카카오 블로그 검색 소스는 KAKAO_KEY 가 있으면 자동으로 켜집니다. 끄려면 변수 BLOG=off.
+# 20차: 네이버 블로그(NAVER_ID/NAVER_SECRET 재사용)와 WordPress.com 블로그(키 없음)가 자동으로 켜집니다. Tumblr 는 비밀 변수 TUMBLR_KEY(OAuth Consumer Key) 가 있을 때 켜집니다. 블로그류 전체를 끄려면 BLOG=off.

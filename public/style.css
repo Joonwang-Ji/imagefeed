@@ -5,12 +5,12 @@
 :root{
   --bg:#0c0d12;--fg:#eceef4;--mut:#8b91a3;--card:#16181f;--card2:#1f222b;--line:#2a2e39;
   --acc:#8c7cff;--acc2:#ff7ab8;--accbg:rgba(140,124,255,.16);--grad:linear-gradient(135deg,#8c7cff,#ff7ab8);
-  --warn:#ffb454;--danger:#ff6b81;--glass:rgba(12,13,18,.82);--shadow:0 8px 28px rgba(0,0,0,.45);
+  --warn:#ffb454;--danger:#ff6b81;--glass:rgba(12,13,18,.96);--shadow:0 8px 28px rgba(0,0,0,.45);
   --tab-h:60px;color-scheme:dark light}
 @media(prefers-color-scheme:light){:root{
   --bg:#f7f6fb;--fg:#17181f;--mut:#6c7284;--card:#ffffff;--card2:#efeef6;--line:#e3e2ec;
   --acc:#6a58f0;--acc2:#e8478f;--accbg:rgba(106,88,240,.10);--grad:linear-gradient(135deg,#6a58f0,#e8478f);
-  --warn:#b86e00;--danger:#d63a56;--glass:rgba(247,246,251,.86);--shadow:0 8px 28px rgba(40,30,90,.14)}}
+  --warn:#b86e00;--danger:#d63a56;--glass:rgba(247,246,251,.97);--shadow:0 8px 28px rgba(40,30,90,.14)}}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Pretendard","Noto Sans KR",sans-serif}
 /* 화면 전체는 확대·축소되지 않게 하고 (이미지 확대는 뷰어 안에서만), 입력칸은 16px 이상이어야 아이폰이 저절로 확대하지 않음 */
@@ -46,7 +46,7 @@ input[type=search]:focus,input[type=password]:focus{border-color:var(--acc)}
 .badge.warnb:not(:empty){background:var(--warn);color:#000}
 
 /* ---------- 상단: 검색 한 줄 + 도구 한 줄 ---------- */
-header{position:sticky;top:0;z-index:20;background:var(--glass);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);padding:max(10px,env(safe-area-inset-top)) 12px 8px;border-bottom:1px solid var(--line)}
+header{position:sticky;top:0;z-index:20;background:var(--glass);padding:max(10px,env(safe-area-inset-top)) 12px 8px;border-bottom:1px solid var(--line)}
 .hrow{display:flex;gap:8px;align-items:center}
 .hrow+.hrow{margin-top:8px}
 #homeBtn{background:transparent;border-color:transparent;color:var(--fg)}
@@ -142,8 +142,8 @@ body.selmode .card:not(.sel) img{opacity:.55}
 .card.sel .chk{background:var(--grad);border-color:transparent}
 .card.sel .chk .i{opacity:1}
 
-.card .star{position:absolute;top:7px;right:7px;padding:0;width:32px;height:32px;border-radius:50%;background:rgba(0,0,0,.42);border:none;color:#fff;font-size:16px;line-height:1;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
-.card .tag{position:absolute;left:7px;bottom:7px;max-width:calc(100% - 14px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10.5px;padding:2px 8px;border-radius:999px;background:rgba(0,0,0,.45);color:#fff;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+.card .star{position:absolute;top:7px;right:7px;padding:0;width:32px;height:32px;border-radius:50%;background:rgba(0,0,0,.5);border:none;color:#fff;font-size:16px;line-height:1}
+.card .tag{position:absolute;left:6px;bottom:6px;max-width:58%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:9px;line-height:1.3;padding:1px 6px;border-radius:999px;background:rgba(0,0,0,.38);color:rgba(255,255,255,.88);pointer-events:none}
 .veil{display:none;position:absolute;inset:0;align-items:center;justify-content:center;text-align:center;flex-direction:column;color:#fff;font-size:13px;background:rgba(0,0,0,.25);pointer-events:none}
 /* 선정성 블러(설정에서 끌 수 있음)와 별도로, "추천 안 함" 블러(.avoid)는 설정과 상관없이 항상 가립니다 */
 body:not(.noblur) .card[data-st=pending] img,
@@ -163,7 +163,7 @@ body:not(.noblur) .card[data-st=pending]::after{content:"";position:absolute;lef
 body.offline header .hrow.top,body.offline #tabFeed,body.offline #tabTr,body.offline #vsimbox,body.offline #vsim,body.offline .vsimgo{display:none}
 
 /* ---------- 아래 탭바 ---------- */
-#tabbar{position:fixed;left:0;right:0;bottom:0;z-index:30;display:flex;justify-content:space-around;padding:6px 10px calc(6px + env(safe-area-inset-bottom));background:var(--glass);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);border-top:1px solid var(--line)}
+#tabbar{position:fixed;left:0;right:0;bottom:0;z-index:30;display:flex;justify-content:space-around;padding:6px 10px calc(6px + env(safe-area-inset-bottom));background:var(--glass);border-top:1px solid var(--line)}
 #tabbar button{position:relative;flex:1;flex-direction:column;gap:2px;max-width:150px;padding:6px 8px;border:none;border-radius:16px;background:transparent;color:var(--mut);font-size:11px;font-weight:600}
 #tabbar button .i{width:24px;height:24px}
 #tabbar button.on{background:transparent;color:var(--acc)}
@@ -238,7 +238,7 @@ body.offline header .hrow.top,body.offline #tabFeed,body.offline #tabTr,body.off
 
 /* ---------- 뷰어: 위아래로 스크롤, 이미지 아래에 비슷한 이미지 피드 ---------- */
 #viewer{display:block;background:#000;color:#fff;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
-.vtop{position:sticky;top:0;z-index:5;display:flex;gap:10px;align-items:center;padding:max(10px,env(safe-area-inset-top)) 12px 8px 16px;background:rgba(0,0,0,.82);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
+.vtop{position:sticky;top:0;z-index:5;display:flex;gap:10px;align-items:center;padding:max(10px,env(safe-area-inset-top)) 12px 8px 16px;background:rgba(0,0,0,.94)}
 .vmeta{min-width:0;flex:1}.vmeta div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vmeta small{color:#aaa}
 .vx{flex:none;width:44px;height:44px;padding:0;border-radius:50%;background:#23262d;border-color:#3a3d45;color:#fff}
 .fab{position:fixed;right:14px;bottom:max(18px,env(safe-area-inset-bottom));z-index:8;padding:11px 18px;font-size:15px;font-weight:600;background:rgba(30,33,40,.92);border-color:#444;color:#fff;box-shadow:0 4px 14px rgba(0,0,0,.5)}
@@ -335,7 +335,7 @@ body.priv #tabBm,body.priv #exBm,body.priv .star,body.priv #vstar,body.priv #vbo
 #boardStrip .bt.on .nm{color:var(--acc);font-weight:600}
 #selBar{margin-bottom:8px}
 #selBar b{font-size:15px}
-#selAct{position:fixed;left:0;right:0;bottom:0;z-index:35;display:flex;justify-content:space-around;padding:6px 10px calc(6px + env(safe-area-inset-bottom));background:var(--glass);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);border-top:1px solid var(--line)}
+#selAct{position:fixed;left:0;right:0;bottom:0;z-index:35;display:flex;justify-content:space-around;padding:6px 10px calc(6px + env(safe-area-inset-bottom));background:var(--glass);border-top:1px solid var(--line)}
 #selAct button{flex:1;flex-direction:column;gap:2px;max-width:150px;padding:6px 8px;border:none;border-radius:16px;background:transparent;color:var(--fg);font-size:11px;font-weight:600}
 #selAct button .i{width:24px;height:24px}
 #selAct button.danger{color:var(--danger)}
