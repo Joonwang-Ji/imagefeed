@@ -11,10 +11,12 @@ globalThis.fetch = async (url, init = {}) => {
     { title: "시체 사진 모음", description: "끔찍한 사고 현장", link: "https://blog.naver.com/abc/2", bloggername: "z" } ] });
   if (u.startsWith("https://public-api.wordpress.com/rest/v1.1/read/tags/")) return jres({ posts: [
     { title: "Old house", excerpt: "<p>A quiet yard</p>", site_name: "Home Blog", URL: "https://home.wordpress.com/a", featured_image: "https://home.files.wordpress.com/a.jpg", tags: { Yard: {}, Uncategorized: {} } },
-    { title: "No picture", excerpt: "x", site_name: "n", URL: "https://n.wordpress.com/b" } ] });
+    { title: "No picture", excerpt: "x", site_name: "n", URL: "https://n.wordpress.com/b" },
+    { title: "Inline", excerpt: "y", site_name: "i", URL: "https://i.wordpress.com/c", content: "<p>x</p><img src=\"https://secure.gravatar.com/avatar/1\"><img src=\"https://i.files.wordpress.com/in.jpg\">", tags: {} } ] });
   if (u.startsWith("https://api.tumblr.com/v2/tagged")) return jres({ response: [
     { type: "photo", summary: "A cat on a roof", blog_name: "catblog", post_url: "https://catblog.tumblr.com/1", tags: ["cat"], photos: [{ original_size: { url: "https://64.media.tumblr.com/o.jpg", width: 1200, height: 900 }, alt_sizes: [{ url: "https://64.media.tumblr.com/s500.jpg", width: 500, height: 375 }, { url: "https://64.media.tumblr.com/s250.jpg", width: 250, height: 188 }] }] },
     { type: "blocks", summary: "npf photo", blog_name: "npfblog", post_url: "https://npfblog.tumblr.com/3", tags: [], content: [{ type: "image", media: [{ url: "https://64.media.tumblr.com/n250.jpg", width: 250, height: 188 }, { url: "https://64.media.tumblr.com/n1280.jpg", width: 1280, height: 960 }, { url: "https://64.media.tumblr.com/n640.jpg", width: 640, height: 480 }] }] },
+    { type: "text", summary: "html img", blog_name: "hb", post_url: "https://hb.tumblr.com/4", tags: [], body: "<p>hi</p><img src=\"https://64.media.tumblr.com/h.jpg\" data-orig-width=\"1000\" data-orig-height=\"700\"><img src=\"https://assets.tumblr.com/emoji.png\">" },
     { type: "text", summary: "just text", blog_name: "t", post_url: "https://t.tumblr.com/2" } ] });
   if (u === "https://m.blog.naver.com/abc/1") return html('<html><head><meta property="og:image" content="https://blogthumb.pstatic.net/x/1.jpg"></head><body></body></html>');
   if (u === "https://page.test/og") return html('<html><head><meta content="https://page.test/img.png" property="og:image"></head>');
@@ -38,11 +40,11 @@ j = await search("naverblog", "한옥", env, 50);
 ok(calls.some((c) => /start=981/.test(c.u)), "naverblog page 50 -> start=981 (within Naver's 1000 limit)");
 
 j = await search("wpcom", "old house", env);
-ok(j.items.length === 1 && /\?w=640$/.test(j.items[0].thumb) && /\?w=1600$/.test(j.items[0].full) && !j.items[0].tags.includes("uncategorized"), "wpcom: only posts with image, sized urls: " + JSON.stringify(j.items[0]));
+ok(j.items.length === 2 && j.items[1].alt.endsWith("in.jpg") && /\?w=640$/.test(j.items[0].thumb) && /\?w=1600$/.test(j.items[0].full) && !j.items[0].tags.includes("uncategorized"), "wpcom: only posts with image, sized urls: " + JSON.stringify(j.items[0]));
 ok(calls.some((c) => /read\/tags\/old-house\/posts/.test(c.u)), "wpcom tag from the first two words");
 
 j = await search("tumblr", "cat", env);
-ok(j.items.length === 2 && j.items[1].full.endsWith("n1280.jpg") && j.items[1].thumb.endsWith("n640.jpg") && j.items[0].thumb.endsWith("s500.jpg") && j.items[0].full.endsWith("o.jpg") && j.items[0].site === "catblog", "tumblr: photo posts only, 500px thumb, original full");
+ok(j.items.length === 3 && j.items[2].full.endsWith("h.jpg") && j.items[2].w === 1000 && j.items[1].full.endsWith("n1280.jpg") && j.items[1].thumb.endsWith("n640.jpg") && j.items[0].thumb.endsWith("s500.jpg") && j.items[0].full.endsWith("o.jpg") && j.items[0].site === "catblog", "tumblr: photo posts only, 500px thumb, original full");
 ok(calls.some((c) => /api_key=t/.test(c.u)), "tumblr key is sent");
 j = await search("tumblr", "cat", env, 30);
 ok(j.items.length === 0, "tumblr page > 20 is empty");

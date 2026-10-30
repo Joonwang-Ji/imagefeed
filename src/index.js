@@ -166,7 +166,9 @@ const SOURCES = [
         : { "X-NCP-APIGW-API-KEY-ID": e.NAVER_ID, "X-NCP-APIGW-API-KEY": e.NAVER_SECRET };
       const n = Math.min(30, o.n || 20), start = (page - 1) * n + 1;
       if (start > 1000) return [];
-      const d = await getJson(`${base}?query=${enc(q)}&display=${n}&start=${start}&sort=sim`, headers);
+      let d;
+      try { d = await getJson(`${base}?query=${enc(q)}&display=${n}&start=${start}&sort=sim`, headers); }
+      catch (err) { if (/40[13]/.test(String(err.message))) throw new Error("블로그 검색 이용 신청이 안 된 키일 수 있어요 (NAVER API HUB 앱에 ‘검색-블로그’ 추가 필요) " + err.message); throw err; }
       return (d.items || []).filter((it) => /^https?:\/\//i.test(it.link || "")).map((it) => ({
         title: clean(it.title || ""), desc: clean(it.description || "").slice(0, 160), site: clean(it.bloggername || ""),
         thumb: it.link, full: it.link, page: it.link, w: 0, h: 0, tags: [], og: "card", // 사진은 아직 없음: 주소를 자리표시로 두고 화면이 대표 사진으로 바꿈
@@ -210,12 +212,21 @@ const SOURCES = [
     async run(q, page, safe, e) {
       if (page > 20) return [];
       const before = Math.floor(Date.now() / 1000) - (page - 1) * 6 * 3600;
-      const d = await getJson(`https://api.tumblr.com/v2/tagged?tag=${enc(q.slice(0, 60))}&api_key=${enc(e.TUMBLR_KEY)}&limit=20&before=${before}&filter=text`, {}, 600);
+      const d = await getJson(`https://api.tumblr.com/v2/tagged?tag=${enc(q.slice(0, 60))}&api_key=${enc(e.TUMBLR_KEY)}&limit=20&before=${before}`, {}, 600);
       // 예전 형식은 photos, 요즘 글(NPF)은 type "blocks" 에 content/trail 안의 image 블록으로 사진이 옵니다. 둘 다 읽습니다.
+      // 사진이 오는 모양이 여러 가지입니다: photos(예전 사진 글), content 의 image 블록(요즘 글), 그리고 글 본문 HTML 안의 <img>(type "text" 로 오는 글).
+      const htmlImgs = (h) => [...String(h || "").matchAll(/<img\b[^>]*>/gi)].map((m) => {
+        const t = m[0], src = (t.match(/\bsrc=["']([^"']+)["']/i) || [])[1] || "";
+        if (!/^https?:\/\/[^/]*media\.tumblr\.com\//i.test(src)) return null; // 아바타·이모티콘 등은 제외
+        const w = num((t.match(/data-orig-width=["'](\d+)/i) || [])[1] || (t.match(/\bwidth=["'](\d+)/i) || [])[1]), h2 = num((t.match(/data-orig-height=["'](\d+)/i) || [])[1] || (t.match(/\bheight=["'](\d+)/i) || [])[1]);
+        return { orig: { url: src, width: w, height: h2 }, alts: [] };
+      }).filter(Boolean);
       const imgs = (p) => {
         if (p.photos?.length) return p.photos.map((ph) => ({ orig: ph.original_size, alts: ph.alt_sizes || [] }));
         const blocks = [...(p.content || []), ...(p.trail || []).flatMap((t) => t.content || [])];
-        return blocks.filter((b) => b?.type === "image" && b.media?.length).map((b) => { const m = b.media.slice().sort((x, y) => num(y.width) - num(x.width)); return { orig: m[0], alts: m.slice(1) }; });
+        const nb = blocks.filter((b) => b?.type === "image" && b.media?.length).map((b) => { const m = b.media.slice().sort((x, y) => num(y.width) - num(x.width)); return { orig: m[0], alts: m.slice(1) }; });
+        if (nb.length) return nb;
+        return htmlImgs([p.body, p.caption, ...(p.trail || []).map((t) => t.content_raw || t.content)].filter((x) => typeof x === "string").join(" "));
       };
       const raw = Array.isArray(d.response) ? d.response : [];
       const out = raw.map((p) => {
@@ -293,11 +304,19 @@ const SOURCES = [
       if (!posts.length && words.length > 1) posts = await get(words[0]);
       const sized = (u, w) => { try { const x = new URL(u); if (/(^|\.)(wordpress\.com|wp\.com)$/i.test(x.hostname)) { x.searchParams.set("w", String(w)); return x.href; } } catch { /* 그대로 씀 */ } return u; };
       // 사진 없는 글이 많아서(20개 중 10개 안팎) 한 번에 100개를 받아 사진 있는 글만 추려 20개씩 쪽으로 나눕니다. (쪽 번호 없이도 같은 결과가 안정적으로 나뉘고, 같은 주소라 캐시도 잘 맞음)
-      const withImg = posts.filter((p) => p.URL && /^https?:\/\//i.test(p.featured_media?.uri || p.post_thumbnail?.URL || p.featured_image || ""));
+      // 대표 사진이 지정되지 않은 글도 많아서, 첨부 파일이나 본문 안의 첫 사진도 찾아 씁니다. (추적용 픽셀·이모티콘·프로필 사진은 제외)
+      const BADIMG = /gravatar\.com|s\.w\.org|pixel\.wp\.com|stats\.wp\.com|\/emoji\/|\.svg(\?|$)|\/avatar/i;
+      const imgOf = (p) => {
+        const c = [p.featured_media?.uri, p.post_thumbnail?.URL, p.featured_image,
+          ...Object.values(p.attachments || {}).filter((a) => /^image\//.test(a?.mime_type || "")).map((a) => a.URL),
+          ...[...String(p.content || "").matchAll(/<img\b[^>]*?\bsrc=["']([^"']+)["']/gi)].map((m) => m[1])];
+        return c.find((u) => typeof u === "string" && /^https?:\/\//i.test(u) && !BADIMG.test(u)) || "";
+      };
+      const withImg = posts.filter((p) => p.URL && imgOf(p));
       if (page === 1 && posts.length && !withImg.length) throw new Error(`응답 ${posts.length}개 중 대표 사진이 있는 글 0개`);
       return withImg.slice((page - 1) * 20, page * 20).map((p) => {
-        const img = p.featured_media?.uri || p.post_thumbnail?.URL || p.featured_image || "";
-        if (!/^https?:\/\//i.test(img) || !p.URL) return null;
+        const img = imgOf(p);
+        if (!img || !p.URL) return null;
         const tw = num(p.featured_media?.width || p.post_thumbnail?.width), th = num(p.featured_media?.height || p.post_thumbnail?.height);
         return {
           title: clean(p.title || ""), desc: clean(p.excerpt || "").slice(0, 160), site: clean(p.site_name || ""),
