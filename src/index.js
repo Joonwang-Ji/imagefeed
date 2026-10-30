@@ -211,12 +211,19 @@ const SOURCES = [
       if (page > 20) return [];
       const before = Math.floor(Date.now() / 1000) - (page - 1) * 6 * 3600;
       const d = await getJson(`https://api.tumblr.com/v2/tagged?tag=${enc(q.slice(0, 60))}&api_key=${enc(e.TUMBLR_KEY)}&limit=20&before=${before}&filter=text`, {}, 600);
-      return (Array.isArray(d.response) ? d.response : []).filter((p) => p?.type === "photo" && p.photos?.length).map((p) => {
-        const ph = p.photos[0], orig = ph.original_size, alts = (ph.alt_sizes || []).slice().sort((a, b) => num(a.width) - num(b.width));
+      // 예전 형식은 photos, 요즘 글(NPF)은 type "blocks" 에 content/trail 안의 image 블록으로 사진이 옵니다. 둘 다 읽습니다.
+      const imgs = (p) => {
+        if (p.photos?.length) return p.photos.map((ph) => ({ orig: ph.original_size, alts: ph.alt_sizes || [] }));
+        const blocks = [...(p.content || []), ...(p.trail || []).flatMap((t) => t.content || [])];
+        return blocks.filter((b) => b?.type === "image" && b.media?.length).map((b) => { const m = b.media.slice().sort((x, y) => num(y.width) - num(x.width)); return { orig: m[0], alts: m.slice(1) }; });
+      };
+      return (Array.isArray(d.response) ? d.response : []).map((p) => {
+        const ph = p && imgs(p)[0]; if (!ph?.orig?.url) return null;
+        const orig = ph.orig, alts = ph.alts.slice().sort((a, b) => num(a.width) - num(b.width));
         const mid = alts.find((s) => num(s.width) >= 500) || alts[alts.length - 1] || orig;
-        if (!orig?.url) return null;
+        const text = (p.content || []).find((b) => b?.type === "text")?.text;
         return {
-          title: clean(p.summary || "").slice(0, 100), site: clean(p.blog_name || ""), thumb: mid?.url || orig.url, alt: alts[alts.length - 1]?.url || "", full: orig.url,
+          title: clean(p.summary || text || "").slice(0, 100), site: clean(p.blog_name || ""), thumb: mid?.url || orig.url, alt: alts[alts.length - 1]?.url || "", full: orig.url,
           page: p.post_url || orig.url, w: num(orig.width), h: num(orig.height), tags: (p.tags || []).map(String).filter(Boolean).slice(0, 12),
         };
       }).filter(Boolean);
@@ -275,7 +282,7 @@ const SOURCES = [
       const words = String(q).toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, " ").trim().split(/\s+/).filter(Boolean);
       if (!words.length) return [];
       const before = new Date(Math.floor((Date.now() - (page - 1) * 36 * 3600000) / 3600000) * 3600000).toISOString(); // 시 단위로 맞춰 캐시가 잘 맞게 함
-      const get = async (tag) => (await getJson(`https://public-api.wordpress.com/rest/v1.1/read/tags/${enc(tag)}/posts?number=20&before=${enc(before)}`, {}, 900)).posts || [];
+      const get = async (tag) => (await getJson(`https://public-api.wordpress.com/rest/v1.1/read/tags/${enc(tag)}/posts?number=20&before=${enc(before)}&order=DESC`, {}, 900)).posts || [];
       let posts = await get(words.slice(0, 2).join("-"));
       if (!posts.length && words.length > 1) posts = await get(words[0]);
       const sized = (u, w) => { try { const x = new URL(u); if (/(^|\.)(wordpress\.com|wp\.com)$/i.test(x.hostname)) { x.searchParams.set("w", String(w)); return x.href; } } catch { /* 그대로 씀 */ } return u; };

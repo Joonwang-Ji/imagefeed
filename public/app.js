@@ -722,6 +722,7 @@ class Feed {
     for (const { src, items, base = 0 } of arr) {
       const part = [];
       items.forEach((it, i) => { const k = keyOf(it); if (!this.keys.has(k) && !Avoid.isHidden(k)) part.push({ it, k, i, j: Relevance.judge(it, T, src.id) }); });
+      { const st = this.stat[src.id]; if (st) st.u = (st.u || 0) + part.filter((x) => !this.pend.has(x.k)).length; } // 새로 본 이미지 수 (같은 이미지가 반복해서 오면 받은 수와 달라짐)
       // 이 소스의 이미지가 검색어와 대체로 안 맞으면(평균 관련도가 낮으면) 이 소스의 비중을 줄입니다.
       const known = part.filter((p) => p.j.known);
       const avg = known.length >= 8 ? known.reduce((t, p) => t + p.j.rel, 0) / known.length : 0.6;
@@ -887,7 +888,7 @@ function renderStat() {
     const idle = !!M.q && !used.has(s.id) && !dead;
     const w = document.createElement("span"); w.className = "sc" + (S.only.has(s.id) ? " on" : "") + (bad ? " bad" : "") + (idle ? " idle" : "");
     const b = document.createElement("button"); b.className = "sel";
-    b.textContent = !M.q || idle ? s.name : !st ? `${s.name} …` : bad ? s.name : `${s.name} ${st.n}`;
+    b.textContent = !M.q || idle ? s.name : !st ? `${s.name} …` : bad ? s.name : `${s.name} ${st.u ?? st.n}`;
     b.onclick = () => { delete DEAD[s.id]; delete IMGH[s.id]; S.only.has(s.id) ? S.only.delete(s.id) : S.only.add(s.id); renderStat(); queueRerun(); }; // 눌러서 다시 시도할 수 있게 쉬는 상태도 풂
     w.appendChild(b);
     if (bad) {
