@@ -734,7 +734,7 @@ class Feed {
           if (!ex.counted && !(fold && ex.tier === "weak")) { ex.counted = true; this.supply++; }
         } else {
           const counted = !(fold && j.tier === "weak");
-          this.pend.set(k, { it: { ...it, id: hashId(k), key: k }, score: sc, rel: j.rel, tier: j.tier, counted });
+          this.pend.set(k, { it: { ...it, id: hashId(k), key: k }, score: sc, rel: j.rel, tier: j.tier, counted, bias });
           if (counted) this.supply++;
         }
       }
@@ -747,23 +747,38 @@ class Feed {
     strong.sort((a, b) => b.score - a.score);
     return { strong, weak };
   }
-  // 점수 높은 순서로 n 장을 화면에 올립니다.
-  // 점수 높은 순으로 고르되, 한 소스가 화면의 일정 비율(최소 12장)을 넘게 차지하지 못하게 합니다.
-  // (한 소스의 순위·가중치가 높다는 이유로 다른 소스의 관련 이미지가 [더 보기] 뒤로 밀려 "한 소스만 나오는" 일을 막기 위함. 다른 소스가 모자라면 그대로 채움)
+  // 이번에 화면에 올릴 n 장을 고릅니다. 점수만으로 고르면 소스 가중치가 높은 몇 곳이 첫 화면을 다 차지하고(가중치 차이가 순위 차이보다 훨씬 큼)
+  // 가중치가 낮은 소스(텀블러 등)는 [더 보기]를 여러 번 눌러야 나왔습니다. 그래서 세 단계로 고릅니다.
+  //  1) 최소 노출: 이 검색어에 맞는(가중치 배수 0.4 이상, 일치 등급 strong·medium) 소스마다 점수 높은 이미지를 몇 장씩 먼저 확보
+  //  2) 나머지는 점수순으로 채우되 한 소스의 상한(소스가 많을수록 낮게)을 넘지 않게
+  //  3) 다른 소스가 모자라면 상한 없이 채움
+  // 미술관·NASA 처럼 검색어와 안 맞아 가중치 배수가 낮은 소스는 최소 노출 대상이 아니라서(점수로만 경쟁) 엉뚱한 결과가 억지로 끼지 않습니다.
   pick(n) {
     const strong = this.view().strong;
-    if (strong.length <= n) return strong;
-    // 보여 줄 만한 이미지를 가진 소스가 많을수록 한 소스의 상한을 낮춥니다. (4개 이상 35%, 3개 45%, 2개 이하 55%)
-    const k = new Set(strong.map((e) => e.it.src)).size, share = k >= 4 ? 0.35 : k === 3 ? 0.45 : 0.55;
-    const cap = Math.max(12, Math.ceil((this.items.length + n) * share)), cnt = {}, out = [], rest = [];
+    if (strong.length <= n) return this.spread(strong);
+    const by = new Map();
+    for (const e of strong) { const k = e.it.src; if (!by.has(k)) by.set(k, []); by.get(k).push(e); }
+    const good = (e) => (e.tier === "strong" || e.tier === "medium") && (e.bias ?? 1) >= FLOOR_BIAS;
+    const elig = [...by.values()].filter((l) => l.some(good));
+    const total = this.items.length + n, k = by.size, share = k >= 6 ? 0.22 : k >= 4 ? 0.3 : k === 3 ? 0.45 : 0.55;
+    const floor = Math.max(1, Math.min(6, Math.round(n / (2 * Math.max(1, elig.length)))));
+    const cap = Math.max(floor + 1, Math.ceil(total * share)), cnt = {}, got = new Set(), out = [];
     for (const it of this.items) cnt[it.src] = (cnt[it.src] || 0) + 1;
-    for (const e of strong) {
-      if (out.length >= n) break;
-      const k = e.it.src;
-      if ((cnt[k] || 0) < cap) { out.push(e); cnt[k] = (cnt[k] || 0) + 1; } else rest.push(e);
-    }
-    for (const e of rest) { if (out.length >= n) break; out.push(e); }
-    return out;
+    const take = (e) => { out.push(e); got.add(e); cnt[e.it.src] = (cnt[e.it.src] || 0) + 1; };
+    for (const l of elig) { let m = 0; for (const e of l) { if (out.length >= n || m >= floor) break; if (good(e)) { take(e); m++; } } }
+    const rest = [];
+    for (const e of strong) { if (got.has(e)) continue; if (out.length >= n) break; if ((cnt[e.it.src] || 0) < cap) take(e); else rest.push(e); }
+    for (const e of rest) { if (out.length >= n) break; take(e); }
+    return this.spread(out);
+  }
+  // 고른 이미지의 화면 순서: 일치 등급(strong → medium → 판단 불가 → trust → weak)을 먼저 지키고, 같은 등급 안에서는 소스끼리 각자의 비율대로 번갈아 나오게 합니다.
+  // (소스 안에서는 점수 순서 그대로. 관련도가 높은 이미지가 소스 균형 때문에 아래로 밀리지 않게 등급이 먼저입니다.)
+  spread(list) {
+    const RANK = { strong: 0, medium: 1, unknown: 2, trust: 3, weak: 4 }, by = new Map();
+    for (const e of list) { const g = (RANK[e.tier] ?? 2) + "|" + e.it.src; if (!by.has(g)) by.set(g, []); by.get(g).push(e); }
+    const keyed = [];
+    for (const [g, l] of by) { const r = +g.split("|")[0]; l.forEach((e, j) => keyed.push([r, (j + 0.5) / l.length, e])); }
+    return keyed.sort((x, y) => x[0] - y[0] || x[1] - y[1] || y[2].score - x[2].score).map((x) => x[2]);
   }
   release(n) {
     if (n <= 0 || !this.pend.size) return 0;
@@ -1006,6 +1021,7 @@ class Hold { // Feed 가 Masonry 인 줄 알고 쓰는 가짜 칸. 카드가 화
   drop(c) { this.cards = this.cards.filter((x) => x !== c); }
   balLater() {} recheck() {}
 }
+const FLOOR_BIAS = 0.4; // 이 값 이상이면 이 검색어에 맞는 소스로 보고 첫 화면에 최소 몇 장을 보장 (Feed.pick)
 const FY_SRC = ["naver", "kakao", "pixabay", "openverse", "wikimedia", "tumblr"];
 const FY = { gen: 0, active: false, q: "", subs: [], items: [], seen: new Set(), limit: 60, ints: [], at: 0, pumping: false, pt: null,
   next() { fyPump(); },
@@ -1950,7 +1966,8 @@ async function trLoad() {
 }
 // 한 쪽 안에서의 순서: 취향 학습을 켰으면 내 취향에 맞는 사진을 위로, "추천 안 함"으로 배운 태그와 겹치는 사진은 뒤로(또는 블러)
 function trOrder(list) {
-  if (tasteOn() && !Taste.isEmpty()) list = list.map((it, i) => ({ it, i, a: Taste.affinity(TasteStore.keysOf(it)) })).sort((x, y) => (y.a - x.a) || (x.i - y.i)).map((x) => x.it);
+  // 취향 점수로 줄을 완전히 다시 세우면 태그가 안 맞는 사진(텀블러 등)이 매번 쪽 맨 아래로 가라앉아 안 보입니다. 서버가 섞어 준 위치를 기본으로 두고 취향은 ±50% 까지만 반영합니다.
+  if (tasteOn() && !Taste.isEmpty()) { const n = list.length; list = list.map((it, i) => ({ it, i, s: ((n - i) / n) * (1 + 0.5 * Taste.affinity(TasteStore.keysOf(it))) })).sort((x, y) => (y.s - x.s) || (x.i - y.i)).map((x) => x.it); }
   const avd = new Map(list.map((it) => [it, applyAvoid(it)]));
   return [...list.filter((it) => !avd.get(it)), ...list.filter((it) => avd.get(it))];
 }
