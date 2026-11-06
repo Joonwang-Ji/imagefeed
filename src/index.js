@@ -1,3 +1,4 @@
+import { acctOf, syncRoute } from "./sync.js";
 import { hardBlocked, isAdult, isExplicit, isNude, hasArtContext } from "./filters.js";
 import { seasonTopics } from "./season.js";
 import { TOPIC_POOL, ANCHOR, offTopic } from "./topics.js";
@@ -32,15 +33,7 @@ const JSON_HEADERS = {
 };
 const json = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: JSON_HEADERS });
 
-// 암호 확인 (PASS 가 설정되지 않았으면 모두 거부)
-function authed(req, env) {
-  const s = env.PASS || "";
-  const p = req.headers.get("x-pass") || "";
-  if (!s || p.length !== s.length) return false;
-  let d = 0;
-  for (let i = 0; i < s.length; i++) d |= p.charCodeAt(i) ^ s.charCodeAt(i);
-  return d === 0;
-}
+// 암호 확인은 src/sync.js 의 acctOf 가 합니다 (PASS 가 설정되지 않았으면 모두 거부, PASS_MORE 로 지인용 암호를 더 만들 수 있음)
 
 // 실패 이유를 화면에 알려주기 위해 오류에 code/status 를 붙입니다.
 const fail = (code, msg, status) => Object.assign(new Error(msg || code), { code, status });
@@ -988,7 +981,9 @@ export default {
   async fetch(req, env) {
     const u = new URL(req.url);
     if (!u.pathname.startsWith("/api/")) return env.ASSETS.fetch(req);
-    if (!authed(req, env)) return json({ error: "auth" }, 401);
+    const acct = await acctOf(req, env);
+    if (!acct) return json({ error: "auth" }, 401);
+    if (u.pathname.startsWith("/api/sync")) return syncRoute(req, env, u, acct);
 
     if (u.pathname === "/api/config") {
       return json({
@@ -998,6 +993,8 @@ export default {
         ai: !!env.AI,
         caption: !!env.AI && env.AI_CAPTION !== "off",
         embed: !!env.AI && env.EMBED !== "off",
+        // 23차: 기기 간 동기화. sync=D1 연결됨, syncThumbs=R2 연결됨, acct=계정 구분용 짧은 값(기기에 남은 데이터가 다른 계정 것인지 확인)
+        sync: !!env.SYNC_DB, syncThumbs: !!env.SYNC_DB && !!env.SYNC_THUMBS, acct: acct.slice(0, 10),
       });
     }
 

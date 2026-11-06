@@ -2,9 +2,10 @@
 // ---------- 기본 도구 ----------
 const $ = (s, r = document) => r.querySelector(s);
 const enc = encodeURIComponent;
+const SYN = { sy: null }; // 23차: 기기 간 동기화 (public/sync.js). 값이 바뀌면 올릴 목록에 표시합니다.
 const LS = {
   get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } },
-  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} SYN.sy?.markKv(k); },
 };
 const hasHangul = (s) => /[ㄱ-ㆎ가-힣]/.test(s);
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -166,8 +167,10 @@ const DB = {
   async open() { this.db = await new Promise((res) => { try { const r = indexedDB.open("imgfeed", 2); r.onupgradeneeded = () => { const d = r.result; if (!d.objectStoreNames.contains("bm")) d.createObjectStore("bm", { keyPath: "id" }); if (!d.objectStoreNames.contains("act")) d.createObjectStore("act", { keyPath: "id" }); }; r.onsuccess = () => res(r.result); r.onerror = () => res(null); r.onblocked = () => {}; } catch { res(null); } }); },
   store(m) { return this.db.transaction("bm", m).objectStore("bm"); },
   all() { return new Promise((res) => { if (!this.db) return res([]); const r = this.store("readonly").getAll(); r.onsuccess = () => res(r.result || []); r.onerror = () => res([]); }); },
-  put(o) { return new Promise((res) => { if (!this.db) return res(false); const r = this.store("readwrite").put(o); r.onsuccess = () => res(true); r.onerror = () => res(false); }); },
-  del(id) { return new Promise((res) => { if (!this.db) return res(false); const r = this.store("readwrite").delete(id); r.onsuccess = () => res(true); r.onerror = () => res(false); }); },
+  // raw=true 는 동기화로 받은 것을 그대로 넣을 때(고친 시각·올릴 목록을 건드리지 않음)
+  put(o, raw) { if (!raw) o._v = Date.now(); return new Promise((res) => { if (!this.db) return res(false); const r = this.store("readwrite").put(o); r.onsuccess = () => { if (!raw) SYN.sy?.mark("bm", o.id, o._v); res(true); }; r.onerror = () => res(false); }); },
+  del(id, raw) { return new Promise((res) => { if (!this.db) return res(false); const r = this.store("readwrite").delete(id); r.onsuccess = () => { if (!raw) SYN.sy?.mark("bm", id, Date.now(), true); res(true); }; r.onerror = () => res(false); }); },
+  get(id) { return new Promise((res) => { if (!this.db) return res(null); try { const r = this.store("readonly").get(id); r.onsuccess = () => res(r.result || null); r.onerror = () => res(null); } catch { res(null); } }); },
 };
 const updateCount = () => { $("#bmc").textContent = S.bmIds.size ? `(${S.bmIds.size})` : ""; };
 
@@ -178,9 +181,10 @@ const updateCount = () => { $("#bmc").textContent = S.bmIds.size ? `(${S.bmIds.s
 const ADB = { // DB(북마크)와 같은 연결을 쓰는 "act" 저장소
   st(m) { return DB.db.transaction("act", m).objectStore("act"); },
   all() { return new Promise((res) => { if (!DB.db) return res([]); try { const r = this.st("readonly").getAll(); r.onsuccess = () => res(r.result || []); r.onerror = () => res([]); } catch { res([]); } }); },
-  put(o) { return new Promise((res) => { if (!DB.db) return res(false); try { const r = this.st("readwrite").put(o); r.onsuccess = () => res(true); r.onerror = () => res(false); } catch { res(false); } }); },
-  del(id) { return new Promise((res) => { if (!DB.db) return res(false); try { const r = this.st("readwrite").delete(id); r.onsuccess = () => res(true); r.onerror = () => res(false); } catch { res(false); } }); },
-  clear() { return new Promise((res) => { if (!DB.db) return res(false); try { const r = this.st("readwrite").clear(); r.onsuccess = () => res(true); r.onerror = () => res(false); } catch { res(false); } }); },
+  put(o, raw) { if (!raw) o._v = Date.now(); return new Promise((res) => { if (!DB.db) return res(false); try { const r = this.st("readwrite").put(o); r.onsuccess = () => { if (!raw) SYN.sy?.mark("act", o.id, o._v); res(true); }; r.onerror = () => res(false); } catch { res(false); } }); },
+  del(id, raw) { return new Promise((res) => { if (!DB.db) return res(false); try { const r = this.st("readwrite").delete(id); r.onsuccess = () => { if (!raw) SYN.sy?.mark("act", id, Date.now(), true); res(true); }; r.onerror = () => res(false); } catch { res(false); } }); },
+  get(id) { return new Promise((res) => { if (!DB.db) return res(null); try { const r = this.st("readonly").get(id); r.onsuccess = () => res(r.result || null); r.onerror = () => res(null); } catch { res(null); } }); },
+  async clear() { const ids = SYN.sy ? (await this.all()).map((r) => r.id) : []; return new Promise((res) => { if (!DB.db) return res(false); try { const r = this.st("readwrite").clear(); r.onsuccess = () => { const t = Date.now(); ids.forEach((id) => SYN.sy?.mark("act", id, t, true)); res(true); }; r.onerror = () => res(false); } catch { res(false); } }); },
 };
 const ACT_LAMBDA = 0.01, ACT_MAX = 450, ACT_KEEP = 360, DESC_DAY = 15;
 const ACT = {
@@ -2236,7 +2240,7 @@ $("#upFile").onchange = async (e) => {
 function renderSettings() {
   $("#sBlur").checked = S.blur; $("#sMl").checked = S.ml;
   $("#capRow").hidden = !cfg?.caption; $("#sCap").checked = LS.get("cap", true);
-  $("#sTaste").checked = S.taste; renderTasteView(); renderAvoidView();
+  $("#sTaste").checked = S.taste; renderTasteView(); renderAvoidView(); renderSync();
   ACT.load().then(() => { if (!$("#settings").hidden) renderTasteView(); });
   const box = $("#srcList"); box.textContent = "";
   (cfg?.sources || []).forEach((s) => {
@@ -2344,6 +2348,88 @@ $("#privBtn").onclick = () => {
   toast(S.priv ? "🕶 비공개 모드: 북마크와 취향이 보이지 않고, 학습도 멈췄어요" : "비공개 모드를 껐어요");
 };
 
+
+// ---------- 기기 간 동기화 (23차) ----------
+// 북마크·활동 기록·취향/설정을 같은 암호(계정)의 다른 기기와 맞춥니다. 서버 저장소(D1)가 연결되어 있을 때만 동작하고, 없으면 예전처럼 이 기기에만 저장합니다.
+const LSraw = {
+  has(k) { try { return localStorage.getItem(k) != null; } catch { return false; } },
+  getRaw: (k) => LS.get(k, null),
+  setRaw(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* 저장 공간 부족 */ } }, // 동기화로 받은 값은 다시 올릴 목록에 넣지 않음
+};
+const syncOn = () => !!cfg?.sync && !S.offline;
+async function syncApplied(info) {
+  if (info.kv.length) {
+    S.blur = LS.get("blur", true); S.ml = LS.get("ml", true); S.off = new Set(LS.get("off", [])); S.taste = LS.get("tasteOn", true);
+    S.colorWide = LS.get("cw", false); S.bmsort = LS.get("bmsort", "new");
+    document.body.classList.toggle("noblur", !S.blur); $("#bmsort").value = S.bmsort;
+    Taste.reload(); Avoid.reload(); FYI.sig = ""; markFilters();
+    if (!$("#settings").hidden) renderSettings();
+  }
+  if (info.bm) { S.bmIds = new Set((await DB.all()).map((x) => x.id)); updateCount(); refreshStars(); if (S.view === "bm" && $("#viewer").hidden) renderBm(); }
+  if (info.act) { ACT.m = null; ACT.rev++; FYI.sig = ""; }
+  updateSyncNote();
+}
+// 동기화를 써 본 적이 있으면(또는 서버가 지원하면) 오프라인에서도 변경을 "올릴 목록"에 모아 둡니다
+function ensureSync() {
+  if (SYN.sy || !window.SyncStore) return;
+  if (!cfg?.sync && !LS.get("sync", null)?.init) return;
+  {
+    SYN.sy = SyncStore.create({
+      call: (path, init) => api(path, init),
+      bm: { get: (id) => DB.get(id), all: () => DB.all(), putRaw: (r) => DB.put(r, true), delRaw: (id) => DB.del(id, true) },
+      act: { get: (id) => ADB.get(id), all: () => ADB.all(), putRaw: (r) => ADB.put(r, true), delRaw: (id) => ADB.del(id, true) },
+      ls: LSraw,
+      meta: { get: () => LS.get("sync", null), set: (v) => { try { localStorage.setItem("sync", JSON.stringify(v)); } catch { /* 다음 기회에 */ } } },
+      enabled: syncOn,
+      thumbs: () => !!cfg?.syncThumbs,
+      putThumb: async (id, blob) => { await api(`/api/sync/thumb?id=${enc(id)}`, { method: "PUT", body: blob, headers: { "content-type": blob.type || "image/jpeg" } }); },
+      getThumb: async (id) => { try { return await (await api(`/api/sync/thumb?id=${enc(id)}`)).blob(); } catch (e) { if (e.message === "auth") throw e; return null; } },
+      onApply: syncApplied,
+    });
+  }
+}
+function setupSync() {
+  ensureSync();
+  if (!SYN.sy || !cfg?.sync) return;
+  // 이 기기에 남은 데이터가 다른 계정(다른 암호) 것이면 먼저 물어봅니다
+  if (SYN.sy.adopt(cfg.acct) === "mismatch") {
+    if (confirm("이 기기에는 다른 계정(다른 암호)으로 쓰던 북마크·취향이 남아 있어요.\n\n[확인] 지금 계정에 합쳐서 동기화\n[취소] 이 기기에서는 동기화하지 않기")) SYN.sy.merge(cfg.acct);
+    else SYN.sy.setOn(false);
+  }
+  clearTimeout(setupSync.t); setupSync.t = setTimeout(() => SYN.sy?.run().then(updateSyncNote), 2500); // 첫 화면이 자리 잡은 뒤에
+}
+function updateSyncNote() {
+  const el = $("#syncNote"); if (!el) return;
+  if (!SYN.sy) { el.textContent = ""; return; }
+  const s = SYN.sy.status(), t = s.last ? new Date(s.last).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }) : "";
+  el.textContent = !s.on ? "동기화가 꺼져 있어요." : s.running ? "동기화하는 중…" : s.err ? `동기화하지 못했어요 (${s.err}). 잠시 뒤 다시 시도해요.${s.pending ? ` 올릴 변경 ${s.pending}개 대기 중.` : ""}` : t ? `마지막 동기화 ${t}${s.pending ? ` · 올릴 변경 ${s.pending}개 대기 중` : ""}` : "아직 동기화하기 전이에요.";
+}
+function renderSync() {
+  const on = !!cfg?.sync;
+  $("#syncOff").hidden = on; $("#syncCtl").hidden = !on; if (!on) return;
+  $("#sSync").checked = SYN.sy ? SYN.sy.isOn() : true; updateSyncNote();
+}
+$("#sSync").onchange = (e) => {
+  if (!SYN.sy) { e.target.checked = false; return toast("오프라인이에요. 연결된 뒤에 다시 시도해 주세요"); }
+  if (e.target.checked) { if (SYN.sy.adopt(cfg.acct) === "mismatch") SYN.sy.merge(cfg.acct); else SYN.sy.setOn(true); toast("동기화를 켰어요. 이 기기의 내용을 서버와 맞춰요"); SYN.sy.run().then(updateSyncNote); }
+  else { SYN.sy.setOn(false); toast("동기화를 껐어요. 서버에 있던 내용은 그대로 남아 있어요"); }
+  updateSyncNote();
+};
+$("#syncNow").onclick = async () => {
+  if (!SYN.sy || S.offline) return toast("오프라인이에요. 연결된 뒤에 다시 시도해 주세요");
+  if (!SYN.sy.isOn()) return toast("동기화가 꺼져 있어요. 위의 체크를 먼저 켜 주세요");
+  toast("동기화하는 중…", 2500); await SYN.sy.run(); updateSyncNote();
+  const s = SYN.sy.status(); toast(s.err ? `동기화하지 못했어요 (${s.err})` : "동기화했어요");
+};
+$("#syncWipe").onclick = async () => {
+  if (!SYN.sy || S.offline) return toast("오프라인이에요. 연결된 뒤에 다시 시도해 주세요");
+  if (!confirm("서버에 저장된 이 계정의 북마크·취향·활동·썸네일을 모두 지우고 동기화를 꺼요.\n이 기기에 있는 내용은 그대로예요. 계속할까요?")) return;
+  try { await SYN.sy.wipeRemote(); toast("서버의 내 데이터를 지웠어요. 동기화는 꺼졌어요", 4500); } catch { toast("서버 데이터를 지우지 못했어요. 잠시 뒤 다시 시도해 주세요"); }
+  renderSync();
+};
+document.addEventListener("visibilitychange", () => { if (!SYN.sy) return; if (document.visibilityState === "hidden") SYN.sy.flush(); else SYN.sy.refresh().then(updateSyncNote); });
+addEventListener("online", () => SYN.sy?.kick(1500));
+
 // ---------- 시작 ----------
 // 오프라인(또는 서버에 닿지 않을 때)에는 저장해 둔 북마크만 볼 수 있게 시작합니다.
 function setOffline(on) {
@@ -2360,8 +2446,10 @@ async function boot() {
   }
   $("#login").hidden = true;
   if (!DB.db) await DB.open();
+  ensureSync();
   S.bmIds = new Set((await DB.all()).map((x) => x.id)); updateCount();
   setOffline(off); $("#upBtn").hidden = !cfg.caption;
+  if (!off) setupSync();
   applyPriv(); markFilters();
   if (off) { if (S.priv) setView("feed"); else await showBm(); return; }
   setView("feed"); renderHome(); renderStat();

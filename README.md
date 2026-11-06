@@ -172,3 +172,12 @@ node tests/safety.test.mjs      # 선정성 판정·트렌드 노골적 이미�
 - **20차 블로그 소스 확장 → 정리**: Tumblr(`tumblr`, 비밀 변수 `TUMBLR_KEY`)만 남기고 네이버 블로그·WordPress.com 소스는 제거했습니다. `/api/og`(글 페이지의 대표 이미지 찾기)는 카카오 블로그 뷰어용으로 유지: https 만, 내부 주소·리다이렉트 차단, 글 머리말 160KB 만 읽습니다. 끄려면 `BLOG=off`.
 - **20차 성능·화면**: 카드 위 출처 이름 축약(`SHORT`), `backdrop-filter` 제거, 스크롤 중에는 AI 검사·칸 높이 맞춤을 미룸. 맞춤 피드: 관심사 4개, 작은 관심사도 더 자주 선택(가중치 지수 0.6), 같은 관심사도 앞쪽 검색어 3개 중 무작위 시작.
 - **22차 소스 2개 추가**: Bluesky(`bluesky`, `BSKY_ID`+`BSKY_PASSWORD`=앱 비밀번호), Wallhaven(`wallhaven`, 키 없음, 일반 SFW만). 영어 검색어(번역본)를 씁니다. Bluesky 는 성인·잔혹 라벨이 붙은 글·계정을 제외합니다. Flickr(API 키가 Pro 구독자 전용)와 Are.na(무료 계정은 검색 403)는 시험 후 제외했습니다. 자세한 내용은 `docs/handoff-round22.md`.
+
+## 기기 간 동기화 (23차)
+- 같은 암호로 접속한 기기끼리 **북마크·보드·메모·활동 기록·취향·추천 안 함·최근 검색·일부 설정**을 맞춥니다. (비공개 모드·접속 암호·기기별 한도는 맞추지 않아요)
+- **계정 = 암호**: `PASS`(본인), `PASS_MORE`(지인용, 쉼표로 여러 개). 서버에는 암호 대신 해시(계정 ID)로 저장되고 암호마다 데이터가 완전히 따로예요. 암호를 바꾸면 새 계정이 됩니다.
+- 저장소: 레코드는 D1(`SYNC_DB`), 썸네일은 R2(`SYNC_THUMBS`, 선택). 설정 순서는 `docs/sync-setup.md`. 연결하지 않으면 예전처럼 이 기기에만 저장합니다.
+- 방식: 레코드마다 "고친 시각"이 나중인 쪽이 이김, 삭제도 전달(tombstone 180일). 변경은 6초 모아서 올리고, 앱을 다시 열거나 화면으로 돌아오면 받아 옵니다. 설정 화면에서 켜기/끄기·[지금 동기화]·[서버 데이터 지우기].
+- 코드: 서버 `src/sync.js`(`/api/sync`, `/api/sync/thumb`, `/api/sync/wipe`), 앱 `public/sync.js`. 점검: `tests/sync.server.test.mjs`, `tests/sync.client.test.mjs`, `tests/sync.ui.test.mjs`(`npm install --no-save jsdom fake-indexeddb` 필요).
+- 설정 값(KV_KEYS)은 값 전체를 한 덩어리로 맞춥니다(나중에 바꾼 쪽이 이김). 두 기기에서 동시에 취향을 학습하면 한쪽의 학습이 덮일 수 있어요.
+

@@ -287,11 +287,11 @@
         <div id="avoidView" class="chips" hidden></div>
         <p class="note" id="avoidNote">이미지 화면의 [추천 안 함]으로 숨긴 것이 여기에 쌓여요. 태그를 누르면 그 태그만 되돌려요.</p>
       </div>
-      <p class="note">공포·잔혹 주제는 해제할 수 없어요. 취향·활동·최근 검색 기록은 이 기기에만 저장돼요(서버에 쌓지 않아요). 상단의 눈 모양 비공개 모드를 켜면 북마크와 취향이 화면에서 사라지고 기록도 멈춰요.</p>
+      <p class="note">공포·잔혹 주제는 해제할 수 없어요. 취향·활동·최근 검색 기록은 이 기기에 저장되고, 아래 [기기 간 동기화]를 켜면 내 계정(암호) 안에서만 서버에 보관돼 다른 기기와 맞춰져요. 상단의 눈 모양 비공개 모드를 켜면 북마크와 취향이 화면에서 사라지고 기록도 멈춰요.</p>
       <h3>AI</h3>
       <label class="row" id="capRow" hidden><input type="checkbox" id="sCap"> AI 이미지 설명으로 비슷한 이미지 찾기 <small>(작게 줄인 이미지를 Cloudflare Workers AI에 보내요. 무료 사용량을 쓰고, 같은 이미지는 저장해 두었다가 다시 써요)</small></label>
       <div id="tasteBox">
-        <label class="row"><input type="checkbox" id="sTaste"> 내 취향 학습 · 맞춤 피드 <small>(기본으로 켜져 있어요. 북마크·좋아요·오래 본 이미지와 최근 검색을 이 기기에만 기억해서, 홈의 ‘당신을 위한 피드’와 결과 순서를 맞춰 줘요. 서버에 기록을 쌓지 않아요. 북마크·좋아요처럼 강하게 반응한 이미지는 AI가 짧은 문장으로 설명해(하루 15장까지, ‘AI 설명’이 켜져 있을 때) 이 기기에만 저장하고, 키워드보다 폭넓게 취향을 파악해요. 상단 눈 모양 비공개 모드를 켜면 기록도 멈춰요.)</small></label>
+        <label class="row"><input type="checkbox" id="sTaste"> 내 취향 학습 · 맞춤 피드 <small>(기본으로 켜져 있어요. 북마크·좋아요·오래 본 이미지와 최근 검색을 이 기기에만 기억해서, 홈의 ‘당신을 위한 피드’와 결과 순서를 맞춰 줘요. 동기화를 켜지 않으면 서버에는 남기지 않아요. 북마크·좋아요처럼 강하게 반응한 이미지는 AI가 짧은 문장으로 설명해(하루 15장까지, ‘AI 설명’이 켜져 있을 때) 이 기기에만 저장하고, 키워드보다 폭넓게 취향을 파악해요. 상단 눈 모양 비공개 모드를 켜면 기록도 멈춰요.)</small></label>
         <p class="note" id="actNote" hidden></p>
         <div id="tasteView" class="chips" hidden></div>
         <p class="note" id="tasteNote" hidden>태그를 누르면 그 항목이 지워지고, 그 말은 추천에서도 빠져요.</p>
@@ -305,6 +305,15 @@
         <h3>키를 등록하면 더 쓸 수 있어요</h3>
         <div id="lockList"></div>
         <p class="note">Cloudflare → 프로젝트 → Settings → <b>Runtime variables and secrets</b>(맨 위)에 Secret으로 등록하세요. Builds 쪽 Variables는 앱에 전달되지 않아요.</p>
+      </div>
+      <h3>기기 간 동기화</h3>
+      <div id="syncBox">
+        <p class="note" id="syncOff" hidden>서버 저장소(D1)가 아직 연결되지 않아서 쓸 수 없어요. 연결 방법은 저장소의 docs/sync-setup.md 를 보세요.</p>
+        <div id="syncCtl" hidden>
+          <label class="row"><input type="checkbox" id="sSync"> 북마크·보드·취향·설정을 내 모든 기기에 맞추기 <small>(같은 암호로 접속한 기기끼리 맞춰요. 북마크 썸네일·활동 기록·최근 검색도 서버(Cloudflare, 내 계정 전용)에 저장돼요. 이 계정의 데이터는 다른 암호의 사용자와 섞이지 않아요)</small></label>
+          <p class="note" id="syncNote"></p>
+          <div class="btns"><button id="syncNow">지금 동기화</button><button id="syncWipe">서버 데이터 지우기</button></div>
+        </div>
       </div>
       <h3>북마크 옮기기</h3>
       <div class="btns">
@@ -324,6 +333,7 @@
 <script src="/taste.js"></script>
 <script src="/interests.js"></script>
 <script src="/avoid.js"></script>
+<script src="/sync.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>
