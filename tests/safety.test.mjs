@@ -97,6 +97,14 @@ $("#vsafe").click(); await tick(50);
 ok($("#vsafe").hidden && $("#vveil").hidden && !$("#vimg").classList.contains("blur"), "viewer: pressing it removes the blur");
 ok(flagged.dataset.st === "ok" && flagged._it.safe === true && flagged._it.adult === false, "the card in the feed is also unblurred and remembered as safe");
 $("#vclose").click(); await tick(50);
+// 24차: 블러 설정을 끄면 "추천 안 함" 블러가 걸려 있던 이미지도 뷰어에서 흐리지 않음
+run("S.blur = false");
+run(`openViewer([{ id: "zq", key: "zq", title: "zq", thumb: "https://x.test/zq.jpg", full: "https://x.test/zq_f.jpg", page: "p", src: "pixabay", w: 400, h: 300, tags: [], adult: true, ai: true, avoidBlur: true }], 0)`); await tick(100);
+ok(!$("#vimg").classList.contains("blur") && $("#vveil").hidden && $("#vsafe").hidden, "viewer: blur setting OFF → even an 'avoid'-flagged image is not blurred, no [블러 해제] button");
+$("#vclose").click(); await tick(50);
+const avc = run(`makeCard({ id: "zr", key: "zr", title: "zr", thumb: "https://x.test/zr.jpg", full: "https://x.test/zr_f.jpg", page: "p", src: "pixabay", w: 400, h: 300, tags: [], adult: true, avoidBlur: true }, () => { globalThis.__opened = 1; })`);
+avc.dataset.st = "flag"; avc.click(); ok(run("globalThis.__opened") === 1, "card: blur setting OFF → one tap opens the image (no extra tap to reveal)");
+run("S.blur = true");
 
 // -- 북마크: AI가 걸었던 것은 지금 기준으로 다시 검사, 키워드로 걸린 것은 유지, 직접 해제한 것은 유지 --
 const blob = new w.Blob(["x"], { type: "image/jpeg" });

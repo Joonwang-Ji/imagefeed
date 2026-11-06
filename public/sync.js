@@ -12,6 +12,34 @@
   const KV_KEYS = ["taste", "avoid", "boardOrder", "lastBoard", "recent", "blur", "ml", "cap", "tasteOn", "off", "cw", "bmsort"];
   const BATCH = 25, DELAY = 6000, MIN_PULL = 60000, THUMB_MAX = 1_400_000;
 
+  // "새로 시작" 표지. 이 값이 서버·기기와 다르면 한 번만 학습·단어(취향·추천 안 함·최근 검색·활동 기록)를 비우고 새로 쌓기 시작합니다.
+  // (북마크·보드·설정은 그대로.) 다음에 또 한 번 비워야 할 일이 생기면 이 값을 더 큰(나중 날짜) 문자열로 바꿉니다.
+  const EPOCH = "2026-11-06";
+  const RESET_KV = ["taste", "avoid", "recent"];
+
+  // 두 기기에서 동시에 바뀐 값은 덮어쓰지 않고 합칩니다(단어가 양쪽 모두 살아남게). 합치는 규칙은 순서와 상관없이 같은 결과가 나오고, 여러 번 합쳐도 변하지 않습니다.
+  const sortKeys = (o) => { const r = {}; for (const k of Object.keys(o).sort()) r[k] = o[k]; return r; }; // 같은 내용이면 항상 같은 글자열이 되게
+  const newer = (a, b) => (a && b ? (b[1] > a[1] ? b : a) : a || b);
+  const mergeScored = (x, y) => { const o = Object.assign({}, x || {}); for (const k of Object.keys(y || {})) o[k] = newer(o[k], y[k]); return sortKeys(o); };
+  const mergeCount = (x, y) => { const o = Object.assign({}, x || {}); for (const k of Object.keys(y || {})) o[k] = Math.max(o[k] || 0, y[k] || 0); return sortKeys(o); };
+  function mergeTaste(x, y) {
+    x = x && x.v === 1 ? x : {}; y = y && y.v === 1 ? y : {};
+    const mute = mergeCount(x.mute, y.mute), tags = mergeScored(x.tags, y.tags);
+    for (const k of Object.keys(mute)) delete tags[k];
+    return { v: 1, tags, colors: mergeScored(x.colors, y.colors), tones: mergeScored(x.tones, y.tones), mute };
+  }
+  function mergeAvoid(x, y) {
+    x = x && x.v === 1 ? x : {}; y = y && y.v === 1 ? y : {};
+    const by = {}; for (const e of [].concat(x.keys || [], y.keys || [])) if (Array.isArray(e) && e[0] != null) by[e[0]] = Math.max(by[e[0]] || 0, e[1] || 0);
+    const keys = Object.keys(by).map((k) => [k, by[k]]).sort((a, b) => a[1] - b[1] || (a[0] < b[0] ? -1 : 1)).slice(-600);
+    return { v: 1, keys, pref: mergeCount(x.pref, y.pref), bad: mergeCount(x.bad, y.bad) };
+  }
+  function mergeRecent(x, y) {
+    const by = {}; for (const e of [].concat(Array.isArray(x) ? x : [], Array.isArray(y) ? y : [])) if (e && e.q) by[e.q] = Math.max(by[e.q] || 0, e.ts || 0);
+    return Object.keys(by).map((q) => ({ q, ts: by[q] })).sort((a, b) => b.ts - a.ts || (a.q < b.q ? -1 : 1)).slice(0, 30);
+  }
+  const MERGE = { taste: mergeTaste, avoid: mergeAvoid, recent: mergeRecent };
+
   const toB64 = (vec) => {
     const u = vec instanceof Uint8Array ? vec : new Uint8Array(vec.buffer ? vec.buffer : Int8Array.from(vec).buffer, vec.byteOffset || 0, vec.length);
     let s = ""; for (let i = 0; i < u.length; i += 0x2000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x2000));
@@ -25,7 +53,7 @@
     const now = o.now || (() => Date.now());
     const st = (o.timers && o.timers.set) || ((f, ms) => setTimeout(f, ms)), ct = (o.timers && o.timers.clear) || ((t) => clearTimeout(t));
     let m = Object.assign({ since: 0, init: 0, acct: "", on: true, q: {}, kv: {} }, o.meta.get() || {});
-    m.q = m.q || {}; m.kv = m.kv || {};
+    m.q = m.q || {}; m.kv = m.kv || {}; m.rv = m.rv || {}; // rv: 서버에서 마지막으로 확인한 값의 버전 (그 뒤에 다른 기기가 고쳤는지 알아보는 기준)
     const save = () => { try { o.meta.set(m); } catch { /* 저장 실패는 다음 기회에 */ } };
     let saveT = null; const saveSoon = () => { if (saveT) return; saveT = st(() => { saveT = null; save(); }, 300); }; // 한꺼번에 많이 바뀔 때(모두 지우기 등) 저장을 모아서
     let timer = null, running = null, again = false, lastRun = 0, lastErr = "", scanned = false;
@@ -85,13 +113,32 @@
     }
 
     // 서버에서 받은 레코드를 이 기기에 반영합니다 (이 기기 것이 더 새것이면 건너뜀)
-    async function apply(list, info) {
+    async function apply(list, info, pushed) {
       for (const r of list) {
         const k = r.s + ":" + r.id, pend = m.q[k];
         if (r.s === "kv") {
-          if (!KV_KEYS.includes(r.id) || r.d || (m.kv[r.id] || 0) >= r.v || (pend && pend.v >= r.v)) continue;
+          if (!KV_KEYS.includes(r.id) || r.d) continue;
+          const mine = pushed && pushed.get(k);
+          if (mine && r.v === mine.v && r.j === mine.j) { m.rv[r.id] = r.v; continue; } // 방금 올린 내 값이 받아들여짐
+          // 두 기기에서 따로 바뀐 경우: ① 방금 올린 값을 서버가 받지 않았고(서버가 더 새것이거나 같은 시각) 내용이 다름
+          // ② 올리려고 기다리는 내 변경이 있는데, 내가 마지막으로 확인한 뒤에 다른 기기가 서버 값을 바꿈
+          const cur = pend || mine ? JSON.stringify(o.ls.getRaw(r.id)) : "";
+          const conflict = (!!mine && r.v >= mine.v && r.j !== mine.j) || (!!pend && !!MERGE[r.id] && r.v > (m.rv[r.id] || 0) && r.j !== cur);
+          if (!conflict) {
+            if (pend && pend.v >= r.v) continue; // 그 사이에 이 기기에서 또 고쳤으면 이 기기 값을 유지
+            if ((m.kv[r.id] || 0) >= r.v) { if (m.kv[r.id] === r.v && r.j === cur) m.rv[r.id] = r.v; continue; }
+          }
           let val; try { val = JSON.parse(r.j); } catch { continue; }
-          o.ls.setRaw(r.id, val); m.kv[r.id] = r.v; delete m.q[k]; info.kv.push(r.id); continue;
+          m.rv[r.id] = r.v;
+          if (conflict && MERGE[r.id]) {
+            let mine0; try { mine0 = JSON.parse(pend || !mine ? cur : mine.j); } catch { mine0 = null; }
+            const merged = MERGE[r.id](mine0, val);
+            o.ls.setRaw(r.id, merged); info.kv.push(r.id);
+            if (JSON.stringify(merged) === JSON.stringify(val)) { m.kv[r.id] = r.v; delete m.q[k]; } // 서버 값이 이미 전부 포함: 다시 올릴 필요 없음
+            else { const mv = Math.max(now(), r.v + 1); m.kv[r.id] = mv; m.q[k] = { s: "kv", id: r.id, v: mv, d: 0 }; again = true; } // 합친 값을 올림
+            continue;
+          }
+          o.ls.setRaw(r.id, val); m.kv[r.id] = r.v; delete m.q[k]; info.kv.push(r.id); continue; // 합치지 않는 값(설정)은 서버 값이 이김
         }
         const store = r.s === "bm" ? o.bm : r.s === "act" ? o.act : null; if (!store) continue;
         const local = await store.get(r.id), lv = local ? (local._v || local.ts || 0) : 0;
@@ -136,13 +183,29 @@
 
     async function cycle() {
       const info = { bm: 0, act: 0, kv: [], bmNew: [], bmGone: [], thumbs: 0, pushed: 0 };
+      // 새로 시작: 이 표지를 아직 모르는 기기는 한 번만 학습·단어를 비웁니다 (동기화를 켜기 전부터 쌓인 것도 포함 — 예전 단어가 섞여 들어가지 않게)
+      if (m.epoch !== EPOCH) {
+        await o.resetLocal();
+        for (const key of Object.keys(m.q)) { const e = m.q[key]; if (e.s === "act" || (e.s === "kv" && RESET_KV.includes(e.id))) delete m.q[key]; }
+        for (const key of RESET_KV) { delete m.kv[key]; delete m.rv[key]; }
+        info.kv.push(...RESET_KV); info.act++;
+      }
+      m.epoch = EPOCH; save();
       if (!m.init) await initial();
+      // 올릴 취향·단어가 있으면 먼저 서버 값을 받아서, 다른 기기가 그 사이에 바꾼 것과 합친 뒤에 올립니다 (덮어써서 잃지 않게)
+      if (Object.values(m.q).some((e) => e.s === "kv" && MERGE[e.id])) {
+        const r0 = await post({ since: m.since, push: [], epoch: EPOCH });
+        await apply(r0.pull || [], info, null);
+        if (typeof r0.next === "number") m.since = r0.next;
+        save();
+      }
       for (let i = 0; i < 40; i++) {
         const { rows, sent } = await takeRows();
-        const r = await post({ since: m.since, push: rows });
+        const r = await post({ since: m.since, push: rows, epoch: EPOCH });
         for (const e of sent) { const cur = m.q[e.s + ":" + e.id]; if (cur && cur.v === e.v) delete m.q[e.s + ":" + e.id]; }
         info.pushed += rows.length;
-        await apply(r.pull || [], info);
+        const pushed = new Map(rows.filter((x) => x.s === "kv" && !x.d).map((x) => [x.s + ":" + x.id, x]));
+        await apply(r.pull || [], info, pushed);
         if (typeof r.next === "number") m.since = r.next;
         save();
         if (!r.more && !Object.keys(m.q).length) break;
@@ -192,7 +255,7 @@
     };
   }
 
-  const api = { create, KV_KEYS, toB64, fromB64 };
+  const api = { create, KV_KEYS, toB64, fromB64, EPOCH, MERGE };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.SyncStore = api;
 })(typeof self !== "undefined" ? self : this);

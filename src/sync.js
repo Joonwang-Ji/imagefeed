@@ -13,6 +13,10 @@ const MAX_BODY = 1_500_000;
 const PULL_ROWS = 100, PULL_BYTES = 350000;
 const THUMB_MAX = 1_500_000;
 const TOMB_DAYS = 180;
+// 24차 "새로 시작": 클라이언트(public/sync.js EPOCH)가 서버에 저장된 값보다 새로운 표지를 보내면, 이 계정의 학습·단어(취향·추천 안 함·최근 검색)와 활동 기록만 한 번 지웁니다.
+// 북마크·보드·설정은 그대로. 표지를 모르는 예전 기기가 올리는 학습·단어는 받지 않아서 지운 것이 되살아나지 않습니다.
+const RESET_KV = ["taste", "avoid", "recent"];
+const scoped = (r) => r.s === "act" || (r.s === "kv" && RESET_KV.includes(r.id));
 
 const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS sync_items (a TEXT NOT NULL, s TEXT NOT NULL, id TEXT NOT NULL, v INTEGER NOT NULL, sv INTEGER NOT NULL, d INTEGER NOT NULL DEFAULT 0, th INTEGER NOT NULL DEFAULT 0, j TEXT, PRIMARY KEY (a, s, id))`,
@@ -75,7 +79,19 @@ async function doSync(req, env, a) {
   const db = env.SYNC_DB;
   await ensure(db);
   const since = Math.max(0, Math.floor(Number(body?.since) || 0));
-  const rows = (Array.isArray(body?.push) ? body.push : []).slice(0, MAX_PUSH).map(cleanRow).filter(Boolean);
+  let rows = (Array.isArray(body?.push) ? body.push : []).slice(0, MAX_PUSH).map(cleanRow).filter(Boolean);
+  const epoch = typeof body?.epoch === "string" ? body.epoch.slice(0, 32) : "";
+  const meta = await db.prepare(`SELECT j FROM sync_items WHERE a = ? AND s = 'meta' AND id = 'epoch'`).bind(a).first();
+  let have = meta?.j || "";
+  if (epoch > have) {
+    await db.batch([
+      db.prepare(`DELETE FROM sync_items WHERE a = ? AND s = 'act'`).bind(a),
+      db.prepare(`DELETE FROM sync_items WHERE a = ? AND s = 'kv' AND id IN (${RESET_KV.map(() => "?").join(",")})`).bind(a, ...RESET_KV),
+      db.prepare(`INSERT INTO sync_items (a, s, id, v, sv, d, th, j) VALUES (?, 'meta', 'epoch', 1, 0, 0, 0, ?) ON CONFLICT (a, s, id) DO UPDATE SET j = excluded.j`).bind(a, epoch),
+    ]);
+    have = epoch;
+  }
+  if (epoch < have) rows = rows.filter((r) => !scoped(r)); // 아직 새로 시작하지 않은 기기의 옛 학습 기록은 받지 않음
 
   const rejected = [];
   if (rows.length) {
@@ -91,7 +107,7 @@ async function doSync(req, env, a) {
   }
 
   // 받아 갈 것: sv >= since (경계의 한 줄은 다시 보내 줘서 같은 sv 에 걸친 레코드를 놓치지 않음)
-  const q = await db.prepare(`SELECT s, id, v, sv, d, th, j FROM sync_items WHERE a = ? AND sv >= ? ORDER BY sv LIMIT ?`).bind(a, since, PULL_ROWS + 1).all();
+  const q = await db.prepare(`SELECT s, id, v, sv, d, th, j FROM sync_items WHERE a = ? AND s != 'meta' AND sv >= ? ORDER BY sv LIMIT ?`).bind(a, since, PULL_ROWS + 1).all();
   let list = q.results || [], more = false, bytes = 0;
   if (list.length > PULL_ROWS) { list = list.slice(0, PULL_ROWS); more = true; }
   const cut = [];

@@ -15,6 +15,7 @@ function fakeD1() {
   const stmt = (sql) => { const mk = (args) => ({ bind: (...a) => mk(a),
     run: async () => { const r = db.prepare(sql).run(...args); return { meta: { changes: Number(r.changes) } }; },
     all: async () => ({ results: db.prepare(sql).all(...args).map((x) => ({ ...x })) }),
+    first: async () => db.prepare(sql).get(...args) || null,
     _exec: () => { if (/^\s*select/i.test(sql)) return { results: db.prepare(sql).all(...args).map((x) => ({ ...x })), meta: { changes: 0 } }; const r = db.prepare(sql).run(...args); return { results: [], meta: { changes: Number(r.changes) } }; } }); return mk([]); };
   return { prepare: stmt, batch: async (l) => l.map((s) => s._exec()) };
 }

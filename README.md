@@ -180,4 +180,5 @@ node tests/safety.test.mjs      # 선정성 판정·트렌드 노골적 이미�
 - 방식: 레코드마다 "고친 시각"이 나중인 쪽이 이김, 삭제도 전달(tombstone 180일). 변경은 6초 모아서 올리고, 앱을 다시 열거나 화면으로 돌아오면 받아 옵니다. 설정 화면에서 켜기/끄기·[지금 동기화]·[서버 데이터 지우기].
 - 코드: 서버 `src/sync.js`(`/api/sync`, `/api/sync/thumb`, `/api/sync/wipe`), 앱 `public/sync.js`. 점검: `tests/sync.server.test.mjs`, `tests/sync.client.test.mjs`, `tests/sync.ui.test.mjs`(`npm install --no-save jsdom fake-indexeddb` 필요).
 - 설정 값(KV_KEYS)은 값 전체를 한 덩어리로 맞춥니다(나중에 바꾼 쪽이 이김). 두 기기에서 동시에 취향을 학습하면 한쪽의 학습이 덮일 수 있어요.
-
+- 24차: 두 기기에서 따로 바뀐 취향·추천 안 함·최근 검색은 **합쳐집니다**(충돌일 때만; 지운 단어는 지운 채로 전파). 다른 설정은 서버 값이 이깁니다. `public/sync.js` 의 `EPOCH` 가 바뀌면 각 기기·서버에서 학습·단어·활동 기록만 한 번 비웁니다(북마크·보드·설정은 유지).
+- 24차: 설정 화면을 기능별 묶음(이미지 보호 / 검색 소스 / 맞춤 추천·AI / 쌓인 단어·기록 / 기기 간 동기화 / 북마크·계정)으로 정리. 블러를 끄면 "추천 안 함" 블러도 걸리지 않습니다.

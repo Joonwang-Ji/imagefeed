@@ -145,12 +145,10 @@ body.selmode .card:not(.sel) img{opacity:.55}
 .card .star{position:absolute;top:7px;right:7px;padding:0;width:32px;height:32px;border-radius:50%;background:rgba(0,0,0,.5);border:none;color:#fff;font-size:16px;line-height:1}
 .card .tag{position:absolute;left:6px;bottom:6px;max-width:58%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:9px;line-height:1.3;padding:1px 6px;border-radius:999px;background:rgba(0,0,0,.38);color:rgba(255,255,255,.88);pointer-events:none}
 .veil{display:none;position:absolute;inset:0;align-items:center;justify-content:center;text-align:center;flex-direction:column;color:#fff;font-size:13px;background:rgba(0,0,0,.25);pointer-events:none}
-/* 선정성 블러(설정에서 끌 수 있음)와 별도로, "추천 안 함" 블러(.avoid)는 설정과 상관없이 항상 가립니다 */
+/* 모든 블러(선정성·"추천 안 함")는 설정의 [블러]를 끄면(body.noblur) 어디서도 걸리지 않습니다 */
 body:not(.noblur) .card[data-st=pending] img,
-body:not(.noblur) .card[data-st=flag]:not(.reveal) img,
-.card.avoid[data-st=flag]:not(.reveal) img{filter:blur(26px) saturate(.6);transform:scale(1.15)}
-body:not(.noblur) .card[data-st=flag]:not(.reveal) .veil,
-.card.avoid[data-st=flag]:not(.reveal) .veil{display:flex}
+body:not(.noblur) .card[data-st=flag]:not(.reveal) img{filter:blur(26px) saturate(.6);transform:scale(1.15)}
+body:not(.noblur) .card[data-st=flag]:not(.reveal) .veil{display:flex}
 body:not(.noblur) .card[data-st=pending]::after{content:"";position:absolute;left:50%;top:50%;width:22px;height:22px;margin:-11px;border:3px solid rgba(255,255,255,.35);border-top-color:#fff;border-radius:50%;animation:sp .8s linear infinite}
 @keyframes sp{to{transform:rotate(360deg)}}
 #msg,.simmsg{padding:40px 12px;text-align:center;color:var(--mut)}
@@ -368,3 +366,30 @@ img{-webkit-user-drag:none}
 .bmg .ico{width:36px;height:36px;padding:0;flex:none}
 .bmg input{flex:1;min-width:0;font-size:16px}
 .bmg .del.armed{background:var(--danger);border-color:var(--danger);color:#fff}
+
+/* ---------- 24차: 설정 화면을 기능별 묶음으로 ---------- */
+.sg{margin:12px 0;background:var(--card);border:1px solid var(--line);border-radius:18px;overflow:hidden}
+.sg>summary{display:flex;align-items:center;gap:10px;padding:14px 16px;cursor:pointer;list-style:none;font-size:15px;-webkit-user-select:none;user-select:none}
+.sg>summary::-webkit-details-marker{display:none}
+.sg>summary b{font-weight:600}
+.sg>summary small{margin-left:auto;color:var(--mut);font-size:12.5px;text-align:right}
+.sg>summary::after{content:"";flex:none;width:8px;height:8px;border-right:2px solid var(--mut);border-bottom:2px solid var(--mut);transform:rotate(45deg);margin:-3px 2px 0 4px;transition:transform .15s}
+.sg[open]>summary::after{transform:rotate(-135deg);margin-top:3px}
+.sg[open]>summary{border-bottom:1px solid var(--line)}
+.sg .gb{padding:6px 16px 14px}
+.sg .gb h4{margin:16px 0 6px;font-size:13px;color:var(--mut);font-weight:600;letter-spacing:.02em}
+.sg .gb h4:first-child{margin-top:10px}
+.sg .gb h4 small{font-weight:400}
+.sg .row{padding:9px 0}
+.sg .row+.row{border-top:1px solid var(--line)}
+.spills{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 4px}
+.spill{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:999px;border:1px solid var(--line);background:var(--card2);font-size:13.5px;color:var(--mut);cursor:pointer;-webkit-user-select:none;user-select:none}
+.spill input{position:absolute;opacity:0;width:1px;height:1px;pointer-events:none}
+.spill.on{background:var(--accbg);border-color:var(--acc);color:var(--acc);font-weight:600}
+.spill.on::before{content:"✓";font-size:12px}
+.sub{margin-top:10px;border-top:1px solid var(--line);padding-top:8px}
+.sub>summary{cursor:pointer;font-size:13px;color:var(--mut);padding:4px 0;list-style:none}
+.sub>summary::-webkit-details-marker{display:none}
+.sub>summary::before{content:"▸ ";}
+.sub[open]>summary::before{content:"▾ ";}
+#srcDesc div{padding:3px 0;font-size:13px}#srcDesc small{color:var(--mut)}

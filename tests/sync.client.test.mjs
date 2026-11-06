@@ -13,6 +13,7 @@ function fakeD1() {
   const stmt = (sql) => { const mk = (args) => ({ bind: (...a) => mk(a),
     run: async () => { const r = db.prepare(sql).run(...args); return { meta: { changes: Number(r.changes) } }; },
     all: async () => ({ results: db.prepare(sql).all(...args).map((x) => ({ ...x })) }),
+    first: async () => db.prepare(sql).get(...args) || null,
     _exec: () => { if (/^\s*select/i.test(sql)) return { results: db.prepare(sql).all(...args).map((x) => ({ ...x })), meta: { changes: 0 } }; const r = db.prepare(sql).run(...args); return { results: [], meta: { changes: Number(r.changes) } }; } }); return mk([]); };
   return { prepare: stmt, batch: async (l) => l.map((s) => s._exec()) };
 }
@@ -24,7 +25,8 @@ const now = () => ++clock;
 
 // 기기 한 대: 북마크(bm)·활동(act) 저장소, localStorage(ls), 메타 저장소를 메모리로
 function device(env, pass = "pw1", opt = {}) {
-  const d = { bm: new Map(), act: new Map(), ls: new Map(), meta: null, applied: [], calls: [], thumbUp: 0, thumbDown: 0, authFail: false, thumbsOn: opt.thumbs !== false, on: true };
+  const d = { bm: new Map(), act: new Map(), ls: new Map(), meta: null, applied: [], calls: [], thumbUp: 0, thumbDown: 0, authFail: false, thumbsOn: opt.thumbs !== false, on: true, resets: 0 };
+  if (!opt.legacy) d.metaVal = { epoch: SyncStore.EPOCH }; // 새로 시작을 이미 마친 기기 (legacy: true 면 라운드 23 이전처럼 표지가 없음)
   d.call = async (path, init = {}) => {
     d.calls.push(path);
     if (d.authFail) throw new Error("auth");
@@ -38,6 +40,7 @@ function device(env, pass = "pw1", opt = {}) {
   d.sy = SyncStore.create({
     call: d.call, bm: store(d.bm), act: store(d.act),
     ls: { has: (k) => d.ls.has(k), getRaw: (k) => d.ls.get(k), setRaw: (k, v) => { d.ls.set(k, v); } },
+    resetLocal: async () => { for (const k of ["taste", "avoid", "recent"]) d.ls.delete(k); d.act.clear(); d.resets++; },
     meta: { get: () => d.metaVal || null, set: (v) => { d.metaVal = JSON.parse(JSON.stringify(v)); } },
     now, enabled: () => d.on, thumbs: () => d.thumbsOn,
     putThumb: async (id, blob) => { await d.call(`/api/sync/thumb?id=${encodeURIComponent(id)}`, { method: "PUT", body: new Uint8Array(await blob.arrayBuffer()), headers: { "content-type": blob.type || "image/jpeg" } }); },
@@ -175,5 +178,75 @@ await Q.sy.run(); await R.sy.run();
 for (let i = 0; i < 40; i++) { const x = Q.bm.get("many" + i); x.memo = "고침"; await Q.putBm(x); }
 await Q.sy.run(); await R.sy.run();
 ok([...Array(40).keys()].every((i) => Q.bm.get("many" + i).memo === "고침" && R.bm.get("many" + i).memo === "고침"), "40 edits at once (more than one batch): none is reverted by older server values, all reach the other device");
+
+// ---- 13. 두 기기에서 따로 바뀐 취향·단어는 합쳐지고(양쪽 단어가 모두 살아남음), 다른 설정은 서버 값이 이김 ----
+{
+  const T = (tags, mute = {}) => ({ v: 1, tags: Object.fromEntries(tags.map(([k, sc, ts]) => [k, [sc, ts]])), colors: {}, tones: {}, mute });
+  const env2 = mkEnv(); const X = device(env2), Y = device(env2);
+  // 동기화를 켜기 전부터 기기에 쌓여 있던 값(올릴 때 버전이 모두 1로 같음)
+  X.ls.set("taste", T([["cat", 3, 100], ["sea", 2, 100]])); Y.ls.set("taste", T([["dog", 4, 200], ["sea", 5, 300]], { rain: 50 }));
+  X.ls.set("avoid", { v: 1, keys: [["k1", 10]], pref: { a: 1 }, bad: {} }); Y.ls.set("avoid", { v: 1, keys: [["k2", 20], ["k1", 30]], pref: { a: 3 }, bad: { b: 1 } });
+  X.ls.set("recent", [{ q: "고양이", ts: 10 }]); Y.ls.set("recent", [{ q: "바다", ts: 20 }, { q: "고양이", ts: 30 }]);
+  X.ls.set("ml", true); Y.ls.set("ml", false);
+  await X.sy.run(); await Y.sy.run(); await X.sy.run(); await Y.sy.run();
+  const tx = X.ls.get("taste"), ty = Y.ls.get("taste");
+  ok(JSON.stringify(tx) === JSON.stringify(ty), "tie at v=1: both devices end with the same taste");
+  ok(Object.keys(tx.tags).sort().join() === "cat,dog,sea" && tx.tags.sea[1] === 300 && tx.tags.sea[0] === 5, "taste: words from both devices kept (newest score per word wins): " + JSON.stringify(tx.tags));
+  ok(tx.v === 1 && tx.mute.rain === 50, "taste: muted word from Y arrives too");
+  ok(tx.tags.dog && tx.tags.dog[0] === 4, "taste: word only on Y arrives on X and stays");
+  const ax = X.ls.get("avoid"); ok(JSON.stringify(ax) === JSON.stringify(Y.ls.get("avoid")) && ax.keys.map((e) => e[0]).sort().join() === "k1,k2" && ax.keys.find((e) => e[0] === "k1")[1] === 30 && ax.pref.a === 3 && ax.bad.b === 1, "avoid: keys unioned (latest time per key), counts take the larger: " + JSON.stringify(ax));
+  const rx = X.ls.get("recent"); ok(JSON.stringify(rx) === JSON.stringify(Y.ls.get("recent")) && rx.map((e) => e.q).join() === "고양이,바다" && rx[0].ts === 30, "recent searches unioned, newest first: " + JSON.stringify(rx));
+  ok(X.ls.get("ml") === Y.ls.get("ml"), "other setting with equal versions: both devices agree (server value wins, no tug of war)");
+  const before = X.metaVal.since; await X.sy.run(); await Y.sy.run();
+  ok(X.sy.status().pending === 0 && Y.sy.status().pending === 0 && JSON.stringify(X.ls.get("taste")) === JSON.stringify(Y.ls.get("taste")), "converged: nothing left to upload, no ping-pong");
+  // 합친 뒤에는 한쪽에서 지운 단어가 다른 기기에서도 지워짐(합치기는 충돌일 때만)
+  const t2 = JSON.parse(JSON.stringify(X.ls.get("taste"))); delete t2.tags.cat; X.setLs("taste", t2); await X.sy.run(); await Y.sy.run();
+  ok(!("cat" in Y.ls.get("taste").tags) && "dog" in Y.ls.get("taste").tags, "after merging, a deletion on one device reaches the other (not resurrected)");
+  // 같은 순간 양쪽에서 고쳐도 합쳐짐
+  const tX = JSON.parse(JSON.stringify(X.ls.get("taste"))), tY = JSON.parse(JSON.stringify(Y.ls.get("taste")));
+  tX.tags.fox = [1, 900]; tY.tags.owl = [1, 901]; X.setLs("taste", tX); Y.setLs("taste", tY);
+  await X.sy.run(); await Y.sy.run(); await X.sy.run(); await Y.sy.run();
+  ok("fox" in Y.ls.get("taste").tags && "owl" in X.ls.get("taste").tags && JSON.stringify(X.ls.get("taste")) === JSON.stringify(Y.ls.get("taste")), "edits made at the same time on two devices: both words survive");
+  // 합치기 함수는 순서와 상관없이 같은 결과, 여러 번 합쳐도 그대로
+  const M = SyncStore.MERGE, a1 = T([["a", 1, 5], ["b", 2, 9]], { z: 3 }), b1 = T([["a", 4, 7], ["c", 1, 1]]);
+  ok(JSON.stringify(M.taste(a1, b1)) === JSON.stringify(M.taste(b1, a1)) && JSON.stringify(M.taste(M.taste(a1, b1), b1)) === JSON.stringify(M.taste(a1, b1)), "merge is order-independent and idempotent");
+  ok(M.taste(T([["z", 1, 1]]), T([], { z: 5 })).tags.z === undefined, "a muted word never comes back through a merge");
+  ok(M.recent([{ q: "x", ts: 1 }], null).length === 1 && M.avoid(null, null).keys.length === 0 && M.taste(undefined, "bad").v === 1, "merge tolerates empty or broken values");
+}
+
+// ---- 14. 새로 시작: 학습·단어·활동 기록만 한 번 비움 (북마크·보드·설정은 그대로) ----
+{
+  const env3 = mkEnv(); const raw = (body, pass = "pw1") => worker.fetch(new Request("https://x.test/api/sync", { method: "POST", headers: { "x-pass": pass, "content-type": "application/json" }, body: JSON.stringify(body) }), env3).then((r) => r.json());
+  const kvRow = (id, v, val) => ({ s: "kv", id, v, j: JSON.stringify(val) });
+  // 라운드 23 방식(표지 없음)으로 서버에 쌓인 옛 데이터
+  await raw({ since: 0, push: [kvRow("taste", 50, { v: 1, tags: { old: [9, 1] }, colors: {}, tones: {}, mute: {} }), kvRow("avoid", 50, { v: 1, keys: [["o", 1]], pref: {}, bad: {} }), kvRow("recent", 50, [{ q: "옛 검색", ts: 1 }]), kvRow("blur", 50, false), kvRow("boardOrder", 50, ["b1"]), { s: "act", id: "x1", v: 50, j: JSON.stringify({ id: "x1" }) }, { s: "bm", id: "keep1", v: 50, j: JSON.stringify({ id: "keep1", title: "남길 북마크", thumb: "https://x/k.jpg", tags: [], boards: [] }) }] });
+  await raw({ since: 0, push: [kvRow("taste", 50, { v: 1, tags: { old2: [9, 1] }, colors: {}, tones: {}, mute: {} })] }, "pw2"); // 다른 계정
+  const L1 = device(env3, "pw1", { legacy: true }), L2 = device(env3, "pw1", { legacy: true });
+  for (const D of [L1, L2]) { D.ls.set("taste", { v: 1, tags: { ["mine" + D.resets]: [1, 1], same: [1, 1] }, colors: {}, tones: {}, mute: {} }); D.ls.set("avoid", { v: 1, keys: [["z", 1]], pref: {}, bad: {} }); D.ls.set("recent", [{ q: "로컬 검색", ts: 1 }]); D.act.set("loc", { id: "loc" }); D.ls.set("blur", true); }
+  L1.ls.set("blur", true);
+  await L1.sy.run();
+  ok(L1.resets === 1 && !L1.ls.has("taste") && !L1.ls.has("avoid") && !L1.ls.has("recent") && L1.act.size === 0, "legacy device: taste, avoid, recent searches and activity cleared once");
+  ok(L1.ls.get("blur") === false && JSON.stringify(L1.ls.get("boardOrder")) === JSON.stringify(["b1"]) && L1.bm.has("keep1"), "settings, boards and bookmarks kept (server values arrive)");
+  const srv = await raw({ since: 0, push: [], epoch: SyncStore.EPOCH });
+  ok(!srv.pull.some((x) => x.s === "act" || (x.s === "kv" && ["taste", "avoid", "recent"].includes(x.id))) && srv.pull.some((x) => x.s === "bm" && x.id === "keep1") && srv.pull.some((x) => x.s === "kv" && x.id === "blur"), "server: old learning data wiped for this account, bookmarks and settings kept");
+  ok(!srv.pull.some((x) => x.s === "meta"), "the epoch marker is never sent to devices");
+  const other = await raw({ since: 0, push: [], epoch: "" }, "pw2"); ok(other.pull.some((x) => x.s === "kv" && x.id === "taste"), "another account's data is untouched (its own reset happens when one of its devices syncs)");
+  await L2.sy.run();
+  ok(L2.resets === 1 && !L2.ls.has("taste") && !L2.ls.has("recent") && L2.act.size === 0 && L2.bm.has("keep1"), "second legacy device: also starts clean, no old words mixed in from either device");
+  await L1.sy.run(); L1.sy.mark("kv", "x", 1); await L2.sy.run(); await L1.sy.run();
+  ok(!L1.ls.has("taste") && !L2.ls.has("taste") && L1.resets === 1 && L2.resets === 1, "no second reset, nothing comes back on later syncs");
+  // 이후부터는 정상 동기화
+  L1.setLs("taste", { v: 1, tags: { fresh: [2, 5000] }, colors: {}, tones: {}, mute: {} }); await L1.sy.run(); await L2.sy.run();
+  ok(L2.ls.get("taste")?.tags?.fresh?.[0] === 2, "after the fresh start, new learning syncs between devices as usual");
+  // 표지를 모르는 예전 기기(캐시된 앱)가 옛 단어를 올려도 받지 않음
+  await raw({ since: 0, push: [kvRow("taste", 9_999_999_999_999, { v: 1, tags: { zombie: [9, 1] }, colors: {}, tones: {}, mute: {} }), { s: "act", id: "zz", v: 9_999_999_999_999, j: JSON.stringify({ id: "zz" }) }, kvRow("cw", 9_999_999_999_999, true)] });
+  const after = await raw({ since: 0, push: [], epoch: SyncStore.EPOCH });
+  ok(!after.pull.some((x) => x.id === "zz") && JSON.parse(after.pull.find((x) => x.id === "taste").j).tags.zombie === undefined, "an old device without the marker cannot bring old learning data back");
+  ok(after.pull.some((x) => x.id === "cw"), "…but its ordinary settings still sync");
+  const ghost = await raw({ since: 0, push: [{ s: "meta", id: "epoch", v: 9e12, j: "\"9999\"" }], epoch: "" });
+  const again = await raw({ since: 0, push: [], epoch: SyncStore.EPOCH }); ok(!ghost.pull.some((x) => x.s === "meta") && !again.pull.some((x) => x.s === "meta"), "a client cannot write the epoch marker");
+  // 처음 쓰는 새 기기(데이터 없음)는 영향 없음
+  const F = device(env3, "pw1"); await F.sy.run(); ok(F.resets === 0 && F.bm.has("keep1"), "a brand-new device (already on the current marker) is not reset");
+}
 
 console.log(fail ? `\n${fail} FAILED` : "\nall passed"); process.exit(fail ? 1 : 0);

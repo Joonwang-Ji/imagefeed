@@ -98,10 +98,10 @@ const Taste = TasteStore.create(LS);
 // "추천 안 함" 저장소(이 기기 안에서만): 숨긴 이미지의 주소 키와 태그 횟수만 기억합니다. 비공개 모드·취향 학습 설정과 상관없이 늘 동작합니다(안전 기능).
 const Avoid = AvoidStore.create(LS);
 const avoidKeys = (it) => [...new Set([...(it.tags || []).map((t) => String(t).toLowerCase()), ...(it.grp === "news" || it.grp === "hot" ? [] : tokens(it.title || ""))])];
-// 이미지에 "추천 안 함" 판정을 적용합니다: 0 그대로, 1 순위 낮춤, 2 블러(탭하면 보기). 블러는 선정성 블러와 같은 방식으로 가립니다.
+// 이미지에 "추천 안 함" 판정을 적용합니다: 0 그대로, 1 순위 낮춤, 2 순위 낮춤 + 블러(탭하면 보기). 블러는 선정성 블러와 같은 설정(안전 > 블러)을 따라요: 끄면 어디서도 흐리게 보이지 않습니다.
 function applyAvoid(it) {
   const v = Avoid.isEmpty() ? 0 : Avoid.verdict(avoidKeys(it));
-  if (v === 2 && !it.safe) { it.adult = true; it.ai = true; it.avoidBlur = true; }
+  if (v === 2 && !it.safe && S.blur) { it.adult = true; it.ai = true; it.avoidBlur = true; }
   return v;
 }
 // 버튼 안의 글자(span)만 바꿉니다 (아이콘은 그대로)
@@ -184,7 +184,7 @@ const ADB = { // DB(북마크)와 같은 연결을 쓰는 "act" 저장소
   put(o, raw) { if (!raw) o._v = Date.now(); return new Promise((res) => { if (!DB.db) return res(false); try { const r = this.st("readwrite").put(o); r.onsuccess = () => { if (!raw) SYN.sy?.mark("act", o.id, o._v); res(true); }; r.onerror = () => res(false); } catch { res(false); } }); },
   del(id, raw) { return new Promise((res) => { if (!DB.db) return res(false); try { const r = this.st("readwrite").delete(id); r.onsuccess = () => { if (!raw) SYN.sy?.mark("act", id, Date.now(), true); res(true); }; r.onerror = () => res(false); } catch { res(false); } }); },
   get(id) { return new Promise((res) => { if (!DB.db) return res(null); try { const r = this.st("readonly").get(id); r.onsuccess = () => res(r.result || null); r.onerror = () => res(null); } catch { res(null); } }); },
-  async clear() { const ids = SYN.sy ? (await this.all()).map((r) => r.id) : []; return new Promise((res) => { if (!DB.db) return res(false); try { const r = this.st("readwrite").clear(); r.onsuccess = () => { const t = Date.now(); ids.forEach((id) => SYN.sy?.mark("act", id, t, true)); res(true); }; r.onerror = () => res(false); } catch { res(false); } }); },
+  async clear(raw) { const ids = SYN.sy && !raw ? (await this.all()).map((r) => r.id) : []; return new Promise((res) => { if (!DB.db) return res(false); try { const r = this.st("readwrite").clear(); r.onsuccess = () => { const t = Date.now(); ids.forEach((id) => SYN.sy?.mark("act", id, t, true)); res(true); }; r.onerror = () => res(false); } catch { res(false); } }); },
 };
 const ACT_LAMBDA = 0.01, ACT_MAX = 450, ACT_KEEP = 360, DESC_DAY = 15;
 const ACT = {
@@ -424,7 +424,7 @@ function makeCard(it, open) {
     if (el._lp) { el._lp = false; return; } // 길게 눌렀다 뗄 때 따라오는 클릭은 무시
     if (SEL.on) { if (it.fromBm) toggleSel(it); return; } // 선택 모드: 탭하면 고르기/해제
     if (e.target === star) { e.stopPropagation(); toggleBookmark(it); return; }
-    if (el.dataset.st === "flag" && !it.revealed && (S.blur || it.avoidBlur)) { it.revealed = true; el.classList.add("reveal"); return; }
+    if (el.dataset.st === "flag" && !it.revealed && S.blur) { it.revealed = true; el.classList.add("reveal"); return; }
     open();
   });
   bindLongPress(el, it, star);
@@ -1441,9 +1441,9 @@ function showItem(keepSim) {
   dwellT = setTimeout(() => { if (lv() && curItem() === it) learnFrom(it, 1); }, 7000); // 7초 넘게 보면 관심이 있는 것으로 보고 약하게 배움
   $("#vlike").hidden = !tasteOn(); $("#vcrop").hidden = !captionOn() || (it.adult && !it.safe);
   renderVInfo(it);
-  const hide = it.adult && (S.blur || it.avoidBlur) && !it.revealed;
+  const hide = it.adult && S.blur && !it.revealed;
   img.classList.toggle("blur", hide); $("#vveil").hidden = !hide;
-  $("#vsafe").hidden = !(it.adult && (S.blur || it.avoidBlur)); // 블러가 걸린 이미지에서만 "블러 해제" 버튼
+  $("#vsafe").hidden = !(it.adult && S.blur); // 블러가 걸린 이미지에서만 "블러 해제" 버튼
   $("#vhide").hidden = !!it.fromBm; // 북마크는 내가 직접 담은 것이라 "추천 안 함" 대상이 아님
   // 제목은 소스마다 다릅니다: Pixabay·카카오 이미지는 제목 없이 태그나 출처 사이트 이름만 주기 때문에, 제목 → 태그 → 출처 사이트 → 소스 이름 순으로 보여 줍니다.
   const tagTitle = (it.tags || []).slice(0, 3).join(" · "), main = it.title || tagTitle;
@@ -2242,19 +2242,31 @@ function renderSettings() {
   $("#capRow").hidden = !cfg?.caption; $("#sCap").checked = LS.get("cap", true);
   $("#sTaste").checked = S.taste; renderTasteView(); renderAvoidView(); renderSync();
   ACT.load().then(() => { if (!$("#settings").hidden) renderTasteView(); });
-  const box = $("#srcList"); box.textContent = "";
-  (cfg?.sources || []).forEach((s) => {
-    const l = document.createElement("label"); l.className = "row src";
+  const box = $("#srcList"), dbox = $("#srcDesc"); box.textContent = ""; dbox.textContent = "";
+  const srcs = cfg?.sources || [];
+  const sumSrc = () => { $("#sumSrc").textContent = `${srcs.filter((x) => !S.off.has(x.id)).length}/${srcs.length}개 사용`; };
+  srcs.forEach((s) => {
+    const l = document.createElement("label"); l.className = "spill src" + (S.off.has(s.id) ? "" : " on");
     const c = document.createElement("input"); c.type = "checkbox"; c.checked = !S.off.has(s.id);
-    c.onchange = () => { c.checked ? S.off.delete(s.id) : S.off.add(s.id); LS.set("off", [...S.off]); markFilters(); renderStat(); };
+    c.onchange = () => { c.checked ? S.off.delete(s.id) : S.off.add(s.id); l.classList.toggle("on", c.checked); LS.set("off", [...S.off]); markFilters(); renderStat(); sumSrc(); };
     const t = document.createElement("span"); t.textContent = s.name;
-    if (s.desc) { const d = document.createElement("small"); d.textContent = s.desc + (s.keyless ? " · 키 불필요" : ""); t.appendChild(d); }
     l.append(c, t); box.appendChild(l);
+    if (s.desc) { const d = document.createElement("div"); d.textContent = s.name + " "; const sm = document.createElement("small"); sm.textContent = s.desc + (s.keyless ? " · 키 불필요" : ""); d.appendChild(sm); dbox.appendChild(d); }
   });
+  $("#srcInfo").hidden = !dbox.children.length; sumSrc();
   const locked = cfg?.locked || [];
-  $("#lockBox").hidden = !locked.length;
+  $("#lockBox").hidden = !locked.length; $("#lockSum").textContent = `키를 등록하면 더 쓸 수 있어요 (${locked.length}개)`;
   const lb = $("#lockList"); lb.textContent = "";
   locked.forEach((s) => { const d = document.createElement("div"); d.className = "lockrow"; d.textContent = s.name + " "; const sm = document.createElement("small"); sm.textContent = `${s.desc ? s.desc + " · " : ""}변수 이름: ${s.need.join(", ")}`; d.appendChild(sm); lb.appendChild(d); });
+  renderGroupSums();
+}
+// 설정의 묶음 제목 옆에 지금 상태를 한 줄로 보여 줍니다 (접어 둬도 상태를 알 수 있게)
+function renderGroupSums() {
+  $("#sumSafe").textContent = S.blur ? "블러 켜짐" : "블러 꺼짐";
+  $("#sumRec").textContent = S.taste ? "맞춤 켜짐" : "맞춤 꺼짐";
+  const nt = Taste.view().tags.length, nh = Avoid.view().n;
+  $("#sumLearn").textContent = nt || nh ? `취향 ${nt}개 · 숨김 ${nh}장` : "비어 있음";
+  $("#sumSync").textContent = !cfg?.sync ? "연결 안 됨" : syncOn() && $("#sSync").checked ? "켜짐" : "꺼짐";
 }
 function renderTasteView() {
   const box = $("#tasteView"), v = Taste.view(), KO = window.ColorTools.TONE_KO; box.textContent = "";
@@ -2270,6 +2282,7 @@ function renderTasteView() {
   v.colors.forEach((x) => add(KO_COLOR[x.k] || x.k, "colors", x.k, "t"));
   v.less.slice(0, 4).forEach((x) => add(`덜 · ${x.k}`, "tags", x.k, "less", false));
   const empty = Taste.isEmpty(); box.hidden = !S.taste || empty; $("#tasteNote").hidden = box.hidden;
+  $("#tasteNone").hidden = !empty;
   // 뺀 단어: 누르면 다시 추천에 쓸 수 있게 되돌립니다
   const mv = $("#muteView"), mw = Taste.muted(); mv.textContent = "";
   mw.forEach((w) => {
@@ -2282,6 +2295,7 @@ function renderTasteView() {
   const acts = ACT.size(), rec = Recent.list().length;
   $("#actNote").hidden = !acts && !rec; $("#actNote").textContent = `이 기기에 기억 중: 반응한 이미지 ${acts}장 · 최근 검색 ${rec}개`;
   $("#tasteClear").hidden = empty && !acts && !rec;
+  renderGroupSums();
 }
 // 설정의 "추천 안 함": 숨긴 이미지 수와, 비슷한 이미지에 영향을 주는 태그. 태그를 누르면 그 태그만 되돌립니다.
 function renderAvoidView() {
@@ -2293,11 +2307,11 @@ function renderAvoidView() {
     b.onclick = () => { Avoid.forget(x.k); renderAvoidView(); toast(`‘${x.k}’은(는) 이제 영향을 주지 않아요`); };
     box.appendChild(b);
   });
-  box.hidden = !v.tags.length; $("#avoidClear").hidden = Avoid.isEmpty();
+  box.hidden = !v.tags.length; $("#avoidClear").hidden = Avoid.isEmpty(); renderGroupSums();
 }
 $("#avoidClear").onclick = () => { Avoid.clear(); renderAvoidView(); toast("추천 안 함 목록을 모두 지웠어요. 숨겼던 이미지가 다시 나올 수 있어요", 4500); };
 $("#sTaste").onchange = (e) => {
-  S.taste = e.target.checked; LS.set("tasteOn", S.taste); renderTasteView();
+  S.taste = e.target.checked; LS.set("tasteOn", S.taste); renderTasteView(); renderGroupSums();
   toast(S.taste ? "이 기기에서만 취향·활동을 기억해요 (홈 피드에 곧 반영)" : "취향 학습을 껐어요. 저장된 점수는 [취향 지우기]로 지울 수 있어요", 4500);
 };
 $("#tasteClear").onclick = async () => { Taste.clear(); Recent.clear(); await ACT.clear(); FYI.sig = ""; renderTasteView(); renderRecent?.(); toast("취향·활동 기록·최근 검색을 모두 지웠어요"); };
@@ -2306,7 +2320,7 @@ $("#closeSet").onclick = closeSettings;
 $("#sBlur").onchange = (e) => {
   if (!e.target.checked && !confirm("선정적일 수 있는 이미지가 그대로 보여요. 블러를 해제할까요?")) { e.target.checked = true; return; }
   S.blur = e.target.checked; LS.set("blur", S.blur); document.body.classList.toggle("noblur", !S.blur);
-  toast("다음 검색부터 모두 적용돼요");
+  renderGroupSums(); toast(S.blur ? "블러를 켰어요" : "블러를 껐어요. 이제 어떤 이미지도 흐리게 가리지 않아요");
 };
 $("#sMl").onchange = (e) => { S.ml = e.target.checked; LS.set("ml", S.ml); toast("다음 검색부터 적용돼요"); };
 $("#sCap").onchange = (e) => { LS.set("cap", e.target.checked); capOff = false; toast(e.target.checked ? "AI 설명을 켰어요" : "AI 설명을 껐어요"); };
@@ -2355,6 +2369,7 @@ const LSraw = {
   has(k) { try { return localStorage.getItem(k) != null; } catch { return false; } },
   getRaw: (k) => LS.get(k, null),
   setRaw(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* 저장 공간 부족 */ } }, // 동기화로 받은 값은 다시 올릴 목록에 넣지 않음
+  remove(k) { try { localStorage.removeItem(k); } catch { /* 무시 */ } },
 };
 const syncOn = () => !!cfg?.sync && !S.offline;
 async function syncApplied(info) {
@@ -2379,6 +2394,7 @@ function ensureSync() {
       bm: { get: (id) => DB.get(id), all: () => DB.all(), putRaw: (r) => DB.put(r, true), delRaw: (id) => DB.del(id, true) },
       act: { get: (id) => ADB.get(id), all: () => ADB.all(), putRaw: (r) => ADB.put(r, true), delRaw: (id) => ADB.del(id, true) },
       ls: LSraw,
+      resetLocal: async () => { for (const k of ["taste", "avoid", "recent"]) LSraw.remove(k); await ADB.clear(true); }, // 새로 시작(24차): 학습·단어·활동 기록만 비움 (북마크·보드·설정은 그대로)
       meta: { get: () => LS.get("sync", null), set: (v) => { try { localStorage.setItem("sync", JSON.stringify(v)); } catch { /* 다음 기회에 */ } } },
       enabled: syncOn,
       thumbs: () => !!cfg?.syncThumbs,
@@ -2407,13 +2423,13 @@ function updateSyncNote() {
 function renderSync() {
   const on = !!cfg?.sync;
   $("#syncOff").hidden = on; $("#syncCtl").hidden = !on; if (!on) return;
-  $("#sSync").checked = SYN.sy ? SYN.sy.isOn() : true; updateSyncNote();
+  $("#sSync").checked = SYN.sy ? SYN.sy.isOn() : true; updateSyncNote(); renderGroupSums();
 }
 $("#sSync").onchange = (e) => {
   if (!SYN.sy) { e.target.checked = false; return toast("오프라인이에요. 연결된 뒤에 다시 시도해 주세요"); }
   if (e.target.checked) { if (SYN.sy.adopt(cfg.acct) === "mismatch") SYN.sy.merge(cfg.acct); else SYN.sy.setOn(true); toast("동기화를 켰어요. 이 기기의 내용을 서버와 맞춰요"); SYN.sy.run().then(updateSyncNote); }
   else { SYN.sy.setOn(false); toast("동기화를 껐어요. 서버에 있던 내용은 그대로 남아 있어요"); }
-  updateSyncNote();
+  updateSyncNote(); renderGroupSums();
 };
 $("#syncNow").onclick = async () => {
   if (!SYN.sy || S.offline) return toast("오프라인이에요. 연결된 뒤에 다시 시도해 주세요");

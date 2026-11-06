@@ -284,6 +284,21 @@ ok($("#settings").hidden, "dragging the handle down closes settings");
 $("#bmSheet").hidden = false; $("#bmSheet").click(); ok($("#bmSheet").hidden, "tap outside closes 보드·메모 sheet");
 $("#bmSheet").hidden = false; $("#bmCancel").click(); ok($("#bmSheet").hidden, "취소 closes 보드·메모 sheet");
 $("#gear").click(); w.dispatchEvent(Object.assign(new w.Event("keydown", { bubbles: true }), { key: "Escape" })); ok($("#settings").hidden, "Esc closes settings");
+// 24차: 설정은 기능별 묶음으로
+$("#gear").click();
+const groups = $$("#settings details.sg").map((d) => d.querySelector("summary b").textContent);
+ok(groups.join("|") === "이미지 보호|검색 소스|맞춤 추천 · AI|쌓인 단어 · 기록|기기 간 동기화|북마크 · 계정", "settings grouped by function: " + groups.join("|"));
+ok($("#gSafe").open && $("#gSrc").open && !$("#gLearn").open, "frequent groups open, the long word lists start folded");
+ok($("#gSafe").contains($("#sBlur")) && $("#gSafe").contains($("#sMl")) && $("#gRec").contains($("#sTaste")) && $("#gLearn").contains($("#tasteView")) && $("#gLearn").contains($("#avoidView")) && $("#gLearn").contains($("#tasteClear")) && $("#gSrc").contains($("#srcList")) && $("#gData").contains($("#logout")), "each control sits in its own group");
+const pills = $$("#srcList label.spill"); ok(pills.length >= 2 && pills.every((l) => l.querySelector("input[type=checkbox]")), "sources are compact toggle pills: " + pills.length);
+const sum0 = $("#sumSrc").textContent; const p0 = pills[0].querySelector("input"); p0.click(); const sum1 = $("#sumSrc").textContent;
+ok(sum0 !== sum1 && !p0.checked && !pills[0].classList.contains("on") && run("S.off.size") === 1, "toggling a source updates its pill and the 'N/M개 사용' summary: " + sum0 + " → " + sum1);
+p0.click(); ok(p0.checked && pills[0].classList.contains("on") && run("S.off.size") === 0 && $("#sumSrc").textContent === sum0, "turning it back on restores both");
+ok(/블러 (켜짐|꺼짐)/.test($("#sumSafe").textContent) && $("#sumRec").textContent.includes("맞춤") && $("#sumLearn").textContent.length > 0, "folded groups still show their state");
+const bl0 = run("S.blur"); $("#sBlur").checked = !bl0; w.confirm = () => true; $("#sBlur").dispatchEvent(new w.Event("change", { bubbles: true }));
+ok(run("S.blur") === !bl0 && $("#sumSafe").textContent === (bl0 ? "블러 꺼짐" : "블러 켜짐"), "blur toggle updates its group summary"); 
+$("#sBlur").checked = bl0; $("#sBlur").dispatchEvent(new w.Event("change", { bubbles: true }));
+$("#closeSet").click();
 
 // ---- 북마크 검색 ✕ ----
 $("#tabBm").click(); await tick(60);
@@ -450,8 +465,14 @@ $("#vhide").click(); $("#hideBad").click(); await tick(80); $("#vhide").click();
 ok(run("Avoid.view().tags.length") >= 1 && run("Avoid.verdict(['sunset','beach','sea'])") === 2, "after two 'uncomfortable' answers, the same kind is judged for blur");
 const bl = run(`(() => { M.reset(); M.begin("zz"); M.merge([{ src: { id: "pixabay", w: 1 }, items: [{ title: "x", tags: ["sunset","beach","sea"], thumb: "https://x.test/zz1.jpg", full: "https://x.test/zz1_full.jpg", page: "p", src: "pixabay", w: 400, h: 300 }, { title: "y", tags: ["dog","park"], thumb: "https://x.test/zz2.jpg", full: "https://x.test/zz2_full.jpg", page: "p", src: "pixabay", w: 400, h: 300 }, { title: "h", tags: ["dog"], thumb: "${k0}", full: "https://${k0}", page: "p", src: "pixabay", w: 400, h: 300 }], base: 0 }]); return [...M.pend.values()].map((e) => [e.it.title, !!e.it.avoidBlur, !!e.it.adult]); })()`);
 ok(JSON.stringify(bl) === JSON.stringify([["x", true, true], ["y", false, false]]), "matching new results are blurred (flagged), others untouched, hidden image never returns: " + JSON.stringify(bl));
-ok(run(`makeCard({ ...${JSON.stringify(item("av1", ["a"]))}, avoidBlur: true, adult: true }, () => {}).classList.contains("avoid")`), "blurred card gets .avoid (blur works even if the sexual-content blur setting is off)");
-ok(/\.card\.avoid\[data-st=flag\]:not\(\.reveal\) img\{filter:blur/.test(css.replace(/\s+/g, "")) || /\.card\.avoid\[data-st=flag\]:not\(\.reveal\)\s+img\s*\{[^}]*blur/.test(css), "CSS blurs .avoid cards regardless of body.noblur");
+ok(run(`makeCard({ ...${JSON.stringify(item("av1", ["a"]))}, avoidBlur: true, adult: true }, () => {}).classList.contains("avoid")`), "blurred card gets .avoid");
+{ // 24차: 블러 설정을 끄면 "추천 안 함" 블러도 걸리지 않음 (어떤 CSS 규칙도 body.noblur 를 건너뛰지 못함)
+  const rules = css.replace(/\/\*[\s\S]*?\*\//g, "").split("}").filter((r) => /blur\(/.test(r) && !/#vimg/.test(r) && !/#vcr/.test(r));
+  ok(rules.length >= 1 && rules.every((r) => /body:not\(\.noblur\)/.test(r.split("{")[0].replace(/\s+/g, " ").split(",").pop())), "every card blur rule requires blur ON (body:not(.noblur)), incl. avoid cards: " + rules.length);
+  run("S.blur = false"); const off = run(`(() => { M.reset(); M.begin("zz2"); M.merge([{ src: { id: "pixabay", w: 1 }, items: [{ title: "x", tags: ["sunset","beach","sea"], thumb: "https://x.test/zz3.jpg", full: "https://x.test/zz3_full.jpg", page: "p", src: "pixabay", w: 400, h: 300 }], base: 0 }]); return [...M.pend.values()].map((e) => [!!e.it.avoidBlur, !!e.it.adult]); })()`);
+  ok(JSON.stringify(off) === JSON.stringify([[false, false]]), "blur OFF: an 'avoid' match is NOT flagged adult/blurred: " + JSON.stringify(off));
+  run("S.blur = true");
+}
 // 설정에서 확인·되돌리기
 $("#gear").click(); ok(/숨긴 이미지 \d+장/.test($("#avoidCount").textContent) && !$("#avoidClear").hidden, "settings shows how many images are hidden: " + $("#avoidCount").textContent);
 const av = $$("#avoidView .tchip"); ok(av.length >= 1, "settings lists tags that affect similar images");
