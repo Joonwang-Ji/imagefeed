@@ -34,11 +34,11 @@ enabled = false
 #  1) D1 데이터베이스(레코드)와 R2 버킷(북마크 썸네일 이미지)을 Cloudflare 대시보드에서 만들고, 아래 두 블록의 # 를 지운 뒤 D1 의 database_id 를 적습니다.
 #     (R2 는 선택입니다. 없으면 레코드만 맞춰지고 썸네일은 원본 주소로 보입니다. 이 경우 [[r2_buckets]] 블록은 그대로 두세요)
 #  2) 암호마다 데이터가 따로 저장됩니다. 본인은 PASS, 지인용 암호는 변수 PASS_MORE(쉼표로 여러 개)에 적습니다. 암호를 바꾸면 새 계정(빈 데이터)이 됩니다.
-# [[d1_databases]]
-# binding = "SYNC_DB"
-# database_name = "imagefeed-sync"
-# database_id = "여기에_D1_ID"
-#
-# [[r2_buckets]]
-# binding = "SYNC_THUMBS"
-# bucket_name = "imagefeed-thumbs"
+[[d1_databases]]
+binding = "SYNC_DB"
+database_name = "imagefeed-sync"
+database_id = "0a2befed-05a9-458e-82a1-443f01b9eb8f"
+
+[[r2_buckets]]
+binding = "SYNC_THUMBS"
+bucket_name = "imagefeed-thumbs"
