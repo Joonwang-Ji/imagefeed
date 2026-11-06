@@ -11,6 +11,7 @@
   const HALF = 45 * 86400000;           // 반감기
   const MAXTAGS = 160;                  // 저장하는 단어 수 상한
   const LO = -8, HI = 12;               // 점수 범위
+  const FLOOR_TAG = 1.0;                // 25차: 북마크 한 개당 단어 바닥 점수 (한 개=1, 상한 4). 북마크할 때 받는 +3 은 시간이 지나 줄어들어도 이 값까지는 남습니다.
   const STOP = new Set(["the", "and", "for", "with", "from", "photo", "photos", "image", "images", "picture", "stock", "free", "jpg", "png",
     "이미지", "사진", "무료", "블로그", "네이버", "다음", "티스토리"]);
   const norm = (s) => String(s == null ? "" : s).toLowerCase().normalize("NFC").trim();
@@ -47,6 +48,22 @@
       for (const t of [extra.tone, extra.temp]) if (t && t !== "neutral") bump(data.tones, t, w * 0.6);
       prune(); save();
     }
+    // 25차: 북마크로 남아 있는 이미지의 단어·색·톤은 시간이 지나도(또 "새로 시작"으로 비워도) 점수가 바닥값 밑으로 내려가지 않게 받쳐 줍니다.
+    // list: 북마크 하나당 한 줄 [{ keys[], colors[], tone, temp }]. 같은 단어가 여러 북마크에 있으면 바닥값이 조금씩 올라갑니다(상한 있음).
+    // 이미 바닥값보다 높은 점수는 건드리지 않고, 뺀 단어(mute)는 받치지 않습니다. 바뀐 게 있으면 true.
+    function floorFrom(list) {
+      const tags = new Map(), cols = new Map(), tones = new Map(), inc = (m, k) => m.set(k, (m.get(k) || 0) + 1);
+      for (const it of list || []) {
+        for (const k of new Set((it.keys || []).map(norm).filter((x) => okKey(x) && !data.mute[x]))) inc(tags, k);
+        for (const c of new Set((it.colors || []).slice(0, 2))) inc(cols, c);
+        for (const t of new Set([it.tone, it.temp].filter((x) => x && x !== "neutral"))) inc(tones, t);
+      }
+      const t = now(); let changed = false;
+      const lift = (m, store, per, max) => { for (const [k, n] of m) { const f = Math.min(max, per * n); if (eff(store[k], t) + 0.01 < f) { store[k] = [f, t]; changed = true; } } };
+      lift(tags, data.tags, FLOOR_TAG, FLOOR_TAG * 4); lift(cols, data.colors, FLOOR_TAG * 0.5, FLOOR_TAG * 2); lift(tones, data.tones, FLOOR_TAG * 0.6, FLOOR_TAG * 2.4);
+      if (changed) { prune(); save(); }
+      return changed;
+    }
     // 이미지(단어들)가 내 취향과 얼마나 맞는지 -1(덜 보고 싶음) ~ 1(많이 보고 싶음). 모르면 0.
     function affinity(keys) {
       const ks = (keys || []).map(norm).filter((x) => okKey(x) && !data.mute[x]); if (!ks.length) return 0;
@@ -56,7 +73,7 @@
     }
     const rank = (m, n, pos) => { const t = now(); return Object.keys(m).filter((k) => !(m === data.tags && data.mute[k])).map((k) => ({ k, v: eff(m[k], t) })).filter((x) => (pos ? x.v >= 0.5 : x.v <= -0.5)).sort((a, b) => (pos ? b.v - a.v : a.v - b.v)).slice(0, n); };
     return {
-      learn, affinity,
+      learn, affinity, floorFrom,
       top: (n = 8) => rank(data.tags, n, true).map((x) => x.k),
       view: () => ({ tags: rank(data.tags, 14, true), less: rank(data.tags, 6, false), colors: rank(data.colors, 4, true), tones: rank(data.tones, 3, true) }),
       isEmpty: () => { const v = [rank(data.tags, 1, true), rank(data.tags, 1, false), rank(data.colors, 1, true), rank(data.tones, 1, true)]; return v.every((a) => !a.length); },

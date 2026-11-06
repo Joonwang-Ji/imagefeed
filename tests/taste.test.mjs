@@ -96,4 +96,23 @@ ok(create(store, clock).isEmpty(), "unknown stored format ignored");
   ok(JSON.stringify(JSON.parse(m2.taste).mute).indexOf("http") < 0, "muted words are stored as plain words only");
 }
 
+// ---- 25차: 북마크 바닥값 (floorFrom) ----
+{
+  const m3 = {}; const st3 = { get: (k, d) => (k in m3 ? JSON.parse(m3[k]) : d), set: (k, v) => { m3[k] = JSON.stringify(v); } };
+  let tt = 1_700_000_000_000; const clk = () => tt; const F = create(st3, clk);
+  const bm = [{ keys: ["hanok", "roof"], colors: ["brown"], tone: "muted", temp: "warm" }, { keys: ["hanok", "yard"], colors: ["brown"], tone: "muted" }];
+  ok(F.isEmpty() && F.floorFrom(bm) === true && !F.isEmpty(), "floorFrom fills an empty store from bookmarks");
+  ok(F.top(5)[0] === "hanok" && F.top(5).includes("roof") && F.top(5).includes("yard"), "shared word ranks first: " + F.top(5));
+  ok(F.affinity(["hanok"]) > 0 && F.view().colors.some((x) => x.k === "brown") && F.view().tones.some((x) => x.k === "muted"), "colors and tones are floored too");
+  ok(F.floorFrom(bm) === false, "second call changes nothing (idempotent, no extra saves)");
+  tt += 400 * 86400000; // 400일 뒤: 일반 점수라면 0 으로 사라졌을 시간
+  const G = create(st3, clk); G.learn(["lone"], 3); tt += 400 * 86400000;
+  ok(G.top(8).indexOf("lone") < 0, "an ordinary learned word has faded away after 800 days");
+  ok(G.floorFrom(bm) === true && G.top(8).includes("hanok"), "…but the bookmarked words come back at the floor");
+  const before = F.affinity(["hanok"]); F.learn(["hanok"], 3); ok(F.affinity(["hanok"]) >= before, "a stronger score is never lowered by the floor");
+  F.mute("hanok"); F.clear(); ok(F.floorFrom(bm) === true && !F.top(8).includes("hanok") && F.top(8).includes("roof"), "muted words are not floored (others are)");
+  const big = []; for (let i = 0; i < 30; i++) big.push({ keys: ["same"], colors: [], tone: "" }); const H = create({ get: (k, d) => d, set() {} }, clk);
+  H.floorFrom(big); ok(H.affinity(["same"]) <= 1 && H.view().tags[0].v <= 4.01, "floor is capped (30 bookmarks do not give an unbounded score): " + H.view().tags[0].v.toFixed(2));
+}
+
 console.log(fail ? `\n${fail} failed` : "\nall passed"); process.exit(fail ? 1 : 0);

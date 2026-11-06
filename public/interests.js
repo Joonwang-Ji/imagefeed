@@ -14,6 +14,7 @@
   const MAXN = 200;              // 한 번에 묶는 활동 수 상한 (계산량 제한)
   const THRESH = 0.2;            // 이 유사도보다 낮은 묶음끼리는 합치지 않음
   const MIN_W = 1.5;             // 이 중요도보다 작은 묶음은 관심사로 보지 않음 (북마크 1개=3, 오래 본 것 1개=1)
+  const BM_FLOOR = 1.6;          // 25차: 북마크로 남아 있는 이미지는 시간이 지나도 이 중요도 밑으로 내려가지 않음 (MIN_W 보다 조금 높게 — 북마크 하나만 있어도 관심사로 남도록)
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
   const norm = (s) => String(s == null ? "" : s).toLowerCase().normalize("NFC").trim();
 
@@ -72,7 +73,8 @@
     for (const e of entries || []) {
       if (!e || !e.id || !(e.wt > 0)) continue;
       if (!(e.keys && e.keys.length) && !e.vec) continue;
-      const days = Math.max(0, (now - (e.ts || now)) / DAY), eff = e.wt * Math.exp(-LAMBDA * days);
+      // e.floor(25차): 북마크로 남아 있는 이미지에 주는 바닥값. 감쇠로 줄어들어도 이 값 밑으로는 내려가지 않습니다.
+      const days = Math.max(0, (now - (e.ts || now)) / DAY), eff = Math.max(e.wt * Math.exp(-LAMBDA * days), e.floor || 0);
       if (eff < 0.05) continue;
       out.push({ ...e, eff });
     }
@@ -159,7 +161,7 @@
     return 0.55 * (1 - index / Math.max(1, total)) + 0.45 * clamp((cos - 0.3) / 0.4, 0, 1);
   }
 
-  const api = { build, queries, pick, prepare, makeSim, cosine, centroid, blend, DAY, LAMBDA, MIN_W, THRESH, MAXN };
+  const api = { build, queries, pick, prepare, makeSim, cosine, centroid, blend, DAY, LAMBDA, MIN_W, BM_FLOOR, THRESH, MAXN };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.Interests = api;
 })(typeof self !== "undefined" ? self : this);

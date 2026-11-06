@@ -81,4 +81,19 @@ const hc = I.build(huge, { now: NOW });
 ok(hc.length > 0 && Date.now() - t0 < 1500, `400 activities cluster in ${Date.now() - t0}ms (capped at ${I.MAXN})`);
 ok(hc.reduce((t, c) => t + c.ids.length, 0) <= I.MAXN, "never uses more than the cap");
 
+// ---- 25차: 북마크 바닥값 — 오래된 북마크도 관심사로 남고, 북마크가 아니면 예전처럼 사라짐 ----
+{
+  const old = (keys, o = {}) => E(keys, { ts: NOW - 400 * DAY, ...o }); // 400일 전: 감쇠 후 3*e^-4 ≈ 0.05
+  const faded = [old(["한옥", "처마", "기와"]), old(["한옥", "마당", "기와"])];
+  ok(I.build(faded, { now: NOW }).length === 0, "without a bookmark floor, 400-day-old activity has faded out of the interests");
+  const pinned = faded.map((e) => ({ ...e, floor: I.BM_FLOOR }));
+  const c2 = I.build(pinned, { now: NOW });
+  ok(c2.length === 1 && c2[0].terms.includes("한옥") && c2[0].weight >= I.MIN_W, "bookmarked (floor) activity of the same age keeps its interest: weight " + (c2[0]?.weight || 0).toFixed(2));
+  ok(I.BM_FLOOR > I.MIN_W, "a single bookmark alone clears the minimum weight");
+  const one = I.build([{ ...old(["rocket", "launch"]), floor: I.BM_FLOOR }], { now: NOW });
+  ok(one.length === 1, "even one old bookmark is still an interest");
+  const fresh = I.build([E(["a1", "b1"], { wt: 9, ts: NOW, floor: I.BM_FLOOR })], { now: NOW });
+  ok(fresh[0].weight > I.BM_FLOOR + 2, "the floor does not cap a fresh high score: " + fresh[0].weight.toFixed(2));
+}
+
 console.log(fail ? `${fail} FAILED` : "all passed"); process.exit(fail ? 1 : 0);

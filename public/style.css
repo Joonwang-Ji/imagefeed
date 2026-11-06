@@ -166,6 +166,11 @@ body.offline header .hrow.top,body.offline #tabFeed,body.offline #tabTr,body.off
 #tabbar button .i{width:24px;height:24px}
 #tabbar button.on{background:transparent;color:var(--acc)}
 #tabbar button.on .i{stroke-width:2.3}
+/* 25차: 맨 위로 / 아래로 — 탭바 바로 위 오른쪽. 뷰어·설정 같은 전체 화면(z-index 50)이 열리면 그 아래로 가려짐 */
+#scrollNav{position:fixed;right:max(12px,env(safe-area-inset-right));bottom:calc(var(--tab-h) + 16px + env(safe-area-inset-bottom));z-index:29;display:flex;flex-direction:column;gap:8px}
+#scrollNav button.ico{width:46px;height:46px;min-width:46px;background:var(--glass);border-color:var(--line);color:var(--fg);box-shadow:var(--shadow);opacity:.92}
+#scrollNav button.ico .i{width:22px;height:22px}
+body.selmode #scrollNav{display:none}
 #tabbar em{position:absolute;top:1px;left:calc(50% + 6px);font-style:normal;min-width:16px;padding:0 4px;border-radius:999px;background:var(--grad);color:#fff;font-size:10px;line-height:16px;text-align:center}
 #tabbar em:empty{display:none}
 

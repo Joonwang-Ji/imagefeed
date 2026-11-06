@@ -816,5 +816,57 @@ run("DB._m = []; S.bmIds = new Set(); LS.set('lastBoard', '')");
   w.fetch = baseFetch;
 }
 
+// ---- 25차: 북마크로 취향 다시 채우기 ----
+{
+  run("globalThis.__dbAll0 = DB.all; globalThis.__dbDb0 = DB.db; globalThis.__adbPut0 = ADB.put; globalThis.__adbDel0 = ADB.del; globalThis.__adbClr0 = ADB.clear; globalThis.__bm0 = S.bmIds");
+  run("S.priv = false; S.taste = true; Taste.clear(); ACT.m = new Map(); DB.db = DB.db || {}; ADB.put = async () => true; ADB.del = async () => true; ADB.clear = async () => true");
+  run(`DB.all = async () => [
+    { id: 'bk1', title: '한옥 마당', thumb: 'https://x.test/1.jpg', tags: ['한옥', '마당', '기와'], ts: 1700000000000, boards: ['집'] },
+    { id: 'bk2', title: 'adult', thumb: 'https://x.test/2.jpg', tags: ['aa', 'bb'], ts: 1700000000000, adult: true, safe: false },
+    { id: 'bk3', title: '한옥 처마', thumb: 'https://x.test/3.jpg', tags: ['한옥', '처마'], ts: 1700000000000 }]`);
+  run("S.bmIds = new Set(['bk1', 'bk2', 'bk3'])");
+  await run("seedFromBookmarks()");
+  ok(run("ACT.m.size") === 2 && run("ACT.m.get('bk1').wt") === 3 && run("ACT.m.get('bk1').ts") === 1700000000000 && !run("ACT.m.has('bk2')"), "bookmarks missing from the activity log are refilled at 3 points (adult-flagged one is skipped)");
+  ok(run("Taste.top(5)").includes("한옥") && run("Taste.top(5)[0]") === "한옥", "taste scores get a floor from the bookmarks too: " + run("Taste.top(5)"));
+  run("ACT.m.delete('bk1')"); ok(await run("ACT.backfill()") === true && run("ACT.m.has('bk1')"), "a missing bookmark is added back again later (not a one-time migration)");
+  ok(await run("ACT.backfill()") === false, "nothing to add the second time");
+  run("ACT.m.get('bk1').wt = 0.02; ACT.m.get('bk1').ts = 1"); await run("ACT.note({ id: 'bk1' }, 0.001)");
+  ok(run("ACT.m.has('bk1')"), "note(): a bookmarked image is never dropped from the activity log when its score fades");
+  run("S.bmIds.delete('bk1'); ACT.m.get('bk1').wt = 0.02"); await run("ACT.note(ACT.m.get('bk1'), 0.001)");
+  ok(!run("ACT.m.has('bk1')"), "…but once the bookmark is removed it fades out as before");
+  run("S.bmIds.add('bk1'); ACT.m = new Map(); Taste.clear(); S.taste = false"); await run("seedFromBookmarks()");
+  ok(run("ACT.m.size") === 0 && run("Taste.isEmpty()"), "taste learning off: nothing is recorded from bookmarks");
+  run("S.taste = true; S.priv = true"); await run("seedFromBookmarks()"); ok(run("ACT.m.size") === 0, "private mode: nothing is recorded"); run("S.priv = false");
+  // 설정의 [취향 지우기]: 지운 뒤에도 북마크 분은 곧바로 다시 채워짐
+  run("S.taste = true; ACT.m = new Map(); Taste.learn(['zzz1', 'zzz2'], 3)"); w.confirm = () => true;
+  $("#tasteClear").click(); await tick(60);
+  ok(!run("Taste.top(9)").includes("zzz1") && run("Taste.top(9)").includes("한옥") && run("ACT.m.has('bk3')"), "취향 지우기 removes learned words but bookmarked ones stay (button)");
+  ok(/북마크한 이미지는 계속 취향으로 남아요/.test($("#toast").textContent), "toast says bookmarked images stay: " + $("#toast").textContent);
+  run("DB.all = globalThis.__dbAll0; DB.db = globalThis.__dbDb0; ADB.put = globalThis.__adbPut0; ADB.del = globalThis.__adbDel0; ADB.clear = globalThis.__adbClr0; S.bmIds = globalThis.__bm0; ACT.m = new Map(); Taste.clear()");
+}
+
+// ---- 25차: 맨 위로/아래로 버튼 + 탭 다시 누르기 ----
+{
+  let fy = 0; const scrolled = [];
+  Object.defineProperty(w, "scrollY", { get: () => fy, configurable: true });
+  Object.defineProperty(w.document.documentElement, "scrollHeight", { get: () => 6000, configurable: true });
+  w.scrollTo = (o) => scrolled.push(o);
+  const flush = async () => { w.dispatchEvent(new w.Event("scroll")); await tick(60); };
+  ok(/#scrollNav\{[^}]*position:fixed[^}]*z-index:29/.test(css) && /body\.selmode #scrollNav\{display:none\}/.test(css), "css: floating nav sits above the tab bar, hidden in selection mode");
+  ok($("#scrollNav") && $("#goTop") && $("#goDown"), "markup: scrollNav with ▲ and ▼ buttons");
+  fy = 0; await flush(); ok($("#scrollNav").hidden, "at the top: buttons are hidden");
+  fy = 1200; await flush(); ok(!$("#scrollNav").hidden && !$("#goDown").hidden, "scrolled down: buttons appear");
+  $("#goTop").click(); ok(scrolled.at(-1).top === 0 && scrolled.at(-1).behavior === "smooth", "▲ scrolls smoothly to the very top");
+  $("#goDown").click(); ok(scrolled.at(-1).top === 1200 + Math.round(w.innerHeight * 0.85), "▼ scrolls down about one screen");
+  fy = 6000 - w.innerHeight - 50; await flush(); ok($("#goDown").hidden && !$("#goTop").hidden, "near the end: ▼ hides, ▲ stays");
+  fy = w.innerHeight * 9; await flush(); $("#goTop").click(); ok(scrolled.at(-1).top === 0 && scrolled.at(-1).behavior === "auto", "very far down: jumps to the top at once instead of a long animation");
+  // 탭 다시 누르기
+  run("setView('feed')"); fy = 900; scrolled.length = 0; $("#tabFeed").click();
+  ok(scrolled.length === 1 && scrolled[0].top === 0 && run("S.view") === "feed", "tapping the current tab while scrolled down goes to the top (no reload)");
+  run("setView('tr')"); fy = 900; scrolled.length = 0; $("#tabFeed").click(); ok(run("S.view") === "feed" && scrolled.length === 0, "tapping another tab still switches views (no scroll)");
+  fy = 0; run("setView('feed')"); scrolled.length = 0; $("#tabFeed").click(); ok(scrolled.length === 0, "tapping the current tab at the top keeps the old behavior (no extra scroll)");
+  delete w.scrollY; fy = 0;
+}
+
 ok(errors.length === 0, "no script errors" + (errors.length ? ": " + errors.slice(0, 3).join(" ; ") : ""));
 console.log(fail ? `\n${fail} failed` : "\nall passed"); process.exit(fail ? 1 : 0);

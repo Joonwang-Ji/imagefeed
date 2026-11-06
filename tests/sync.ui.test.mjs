@@ -102,9 +102,17 @@ ok(env.SYNC_THUMBS._m.size === 1, "server: the deleted bookmark's thumbnail was 
 ok(await A.run("ACT.load().then((m) => m.size)") >= 1, "A: activity recorded for the bookmark");
 await B.run("SYN.sy.run()"); await tick(100);
 ok(await B.run("ACT.load().then((m) => m.has('it1'))") === true, "B: the activity record (bookmark = reaction) arrived too");
-await A.run("ACT.clear()"); await tick(50);
+// 25차: 북마크가 아닌 활동(그냥 오래 본 이미지)은 지우면 B 에서도 지워지고, 북마크로 남은 이미지는 북마크에서 다시 채워짐
+await A.run("ACT.note({ id: 'seen1', title: 'seen', thumb: 'https://x/s.jpg', tags: ['zebra', 'stripe'] }, 1)"); await tick(50);
 await A.run("SYN.sy.run()"); await B.run("SYN.sy.run()"); await tick(100);
-ok(await B.run("ACT.load().then((m) => m.size)") === 0, "clearing taste/activity on A clears it on B too (deletes sync)");
+ok(await B.run("ACT.load().then((m) => m.has('seen1'))") === true, "B: a non-bookmark activity arrived too");
+await A.run("ACT.clear()"); await tick(50);
+await A.run("SYN.sy.run()"); await B.run("SYN.sy.run()"); await tick(150);
+ok(await B.run("ACT.load().then((m) => m.has('seen1'))") === false, "clearing activity on A clears non-bookmark activity on B too (deletes sync)");
+ok(await B.run("ACT.load().then((m) => m.has('it1'))") === true && await B.run("ACT.load().then((m) => m.get('it1').wt)") === 3, "…but the bookmarked image (it1) is refilled from the bookmark at 3 points on B");
+await A.run("seedFromBookmarks()"); await tick(50);
+ok(await A.run("ACT.load().then((m) => m.has('it1'))") === true, "A: seedFromBookmarks refills the bookmark after a clear");
+await A.run("SYN.sy.run()"); await B.run("SYN.sy.run()"); await tick(100); // 다시 채운 기록도 서버에 올려 둠 (아래 단계는 대기 중인 변경이 없다고 가정)
 
 // ---- 5. 다른 암호 = 다른 계정 ----
 const C = await bootDevice("pw-b");

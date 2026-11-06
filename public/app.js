@@ -192,14 +192,21 @@ const ACT = {
   async load() {
     if (this.m) return this.m;
     this.m = new Map((await ADB.all()).map((r) => [r.id, r]));
-    if (!LS.get("actMig1", false)) { await this.migrate(); LS.set("actMig1", true); }
     return this.m;
   },
   size() { return this.m ? [...this.m.values()].filter((r) => r.wt > 0.05).length : 0; },
-  // 17차 이전에 담아 둔 북마크를 활동으로 옮겨 둡니다 (북마크 1개 = 3점, 담은 시각 그대로)
-  async migrate() {
-    for (const x of await DB.all()) { if (this.m.has(x.id)) continue; const r = this.rec(x, x.ts || Date.now(), 3); this.m.set(r.id, r); await ADB.put(r); }
-    this.rev++;
+  // 25차: 북마크로 남아 있는데 활동 기록에는 없는 이미지를 채워 둡니다 (북마크 1개 = 3점, 담은 시각 그대로).
+  // 예전에는 17차 업데이트 때 딱 한 번만 옮겼지만, 이제는 시작할 때·동기화 뒤·"새로 시작" 뒤에도 빠진 북마크를 다시 채웁니다.
+  // (활동 점수가 시간이 지나 지워지거나 비워져도, 북마크가 남아 있는 한 내 취향으로 계속 쓰이게 하려는 것)
+  async backfill() {
+    if (!tasteOn() || !DB.db) return false;
+    const m = await this.load(); let n = 0;
+    for (const x of await DB.all()) {
+      if (m.has(x.id) || (x.adult && !x.safe)) continue; // 선정적으로 판정된 이미지는 취향으로 배우지 않음 (learnFrom 과 같은 규칙)
+      const r = this.rec(x, x.ts || Date.now(), 3); m.set(r.id, r); await ADB.put(r); n++;
+    }
+    if (n) this.rev++;
+    return n > 0;
   },
   rec(it, ts, wt) {
     const a = it.an?.tone ? { tone: it.an.tone, temp: it.an.temp, cols: (it.an.cols || it.cols || []).slice(0, 3) } : null;
@@ -217,6 +224,7 @@ const ACT = {
       if (!r.an && it.an?.tone) r.an = { tone: it.an.tone, temp: it.an.temp, cols: (it.an.cols || []).slice(0, 3) };
       if (!r.cap && it.capText) { r.cap = String(it.capText).slice(0, 240); r.cq = String(it.capQ || "").slice(0, 60); delete r.vec; delete r.nv; } // 뷰어에서 이미 받은 설명 문장이 있으면 그대로 보관 (의미 벡터는 문장 포함으로 다시 만듦)
       if (!r.desc && it.desc) r.desc = String(it.desc).slice(0, 160);
+      if (r.wt <= 0.05 && S.bmIds.has(r.id)) r.wt = 0.1; // 25차: 북마크로 남아 있는 이미지는 기록에서 지우지 않음 (바닥값은 interests.js 가 받쳐 줌)
       if (r.wt <= 0.05) { m.delete(r.id); await ADB.del(r.id); } else await ADB.put(r);
       this.rev++;
       if (m.size > ACT_MAX) await this.prune();
@@ -225,7 +233,7 @@ const ACT = {
   },
   async bump(id, d) { const m = await this.load(), r = m.get(id); if (r) await this.note(r, d); }, // 이미 기록된 이미지의 점수만 바꿈 (북마크 삭제 등)
   async prune() { // 가장 약한 것부터 지워 ACT_KEEP 개로, 거의 사라진 것(0.15 미만)도 함께
-    const now = Date.now(), arr = [...this.m.values()].map((r) => ({ r, e: r.wt * Math.exp(-ACT_LAMBDA * Math.max(0, now - r.ts) / 86400000) })).sort((a, b) => a.e - b.e);
+    const now = Date.now(), arr = [...this.m.values()].map((r) => ({ r, e: Math.max(r.wt * Math.exp(-ACT_LAMBDA * Math.max(0, now - r.ts) / 86400000), S.bmIds.has(r.id) ? Interests.BM_FLOOR : 0) })).sort((a, b) => a.e - b.e);
     let drop = this.m.size - ACT_KEEP;
     for (const { r, e } of arr) { if (drop <= 0 && e >= 0.15) break; this.m.delete(r.id); await ADB.del(r.id); drop--; }
   },
@@ -292,9 +300,19 @@ async function buildInterests() {
   const boards = new Map();
   if (bmc) for (const x of await DB.all()) { const b = bOf(x); if (b.length) boards.set(x.id, b); } // 같은 보드에 담은 이미지는 서로 가까운 것으로 봄
   // 내가 "이 말은 그만"이라고 뺀 단어(설정의 ✕, 홈 ⭐ 칩의 ✕)가 든 활동은 관심사를 만들 때 쓰지 않습니다
-  const entries = [...m.values()].map((r) => ({ id: r.id, keys: TasteStore.keysOf(r), cq: r.cq || "", an: r.an, boards: boards.get(r.id) || [], wt: r.wt, ts: r.ts, vec: r.vec })).filter((e) => !e.keys.some((k) => Taste.isMuted(k)));
+  const entries = [...m.values()].map((r) => ({ id: r.id, keys: TasteStore.keysOf(r), cq: r.cq || "", an: r.an, boards: boards.get(r.id) || [], wt: r.wt, ts: r.ts, vec: r.vec, floor: S.bmIds.has(r.id) ? Interests.BM_FLOOR : 0 })).filter((e) => !e.keys.some((k) => Taste.isMuted(k)));
   FYI.cl = Interests.build(entries); FYI.sig = sig;
   return FYI.cl;
+}
+// 25차: 북마크로 남아 있는 이미지는 취향 점수·활동 기록이 비거나 줄어도 다시 채워서 계속 취향으로 씁니다.
+// 시작할 때, 동기화로 내용이 바뀐 뒤, 취향 학습을 다시 켰을 때, "모두 지우기" 뒤에 실행합니다. (취향 학습이 꺼져 있거나 비공개 모드면 아무것도 하지 않음)
+async function seedFromBookmarks() {
+  if (!tasteOn() || !DB.db) return;
+  try {
+    const list = (await DB.all()).filter((x) => !(x.adult && !x.safe)).map((x) => ({ keys: TasteStore.keysOf(x), colors: (x.an?.cols || []).slice(0, 2), tone: x.an?.tone, temp: x.an?.temp }));
+    const a = Taste.floorFrom(list), b = await ACT.backfill();
+    if (a || b) { FYI.sig = ""; if (!$("#settings").hidden) renderTasteView(); }
+  } catch { /* 취향 보충은 실패해도 앱 사용에는 영향 없음 */ }
 }
 
 // 최근 검색 (이 기기에만, 취향 학습이 켜져 있고 비공개 모드가 아닐 때만 기록)
@@ -1165,6 +1183,7 @@ function setView(v) {
   }
   else if (v === "tr") { $("#msg").hidden = true; renderChips(); trEnter(); scrollTo(0, 0); }
   if (v === "bm") $("#chipsWrap").hidden = true; // 북마크의 보드는 위쪽 묶음 줄에서 고릅니다
+  requestAnimationFrame(() => updScrollNav()); // 25차: 탭을 바꾸면 내용 길이가 달라지므로 위아래 버튼을 다시 판단
 }
 async function showBm() {
   if (S.priv) return toast("비공개 모드에서는 북마크를 볼 수 없어요");
@@ -1354,9 +1373,31 @@ async function renderBmg() {
 function openBoardMgr() { renderBmg(); $("#boardMgr").hidden = false; }
 function closeBoardMgr() { $("#boardMgr").hidden = true; }
 $("#bmgClose").onclick = closeBoardMgr;
-$("#tabFeed").onclick = () => setView("feed");
-$("#tabTr").onclick = () => setView("tr");
-$("#tabBm").onclick = showBm;
+// 25차: 지금 보고 있는 탭을 다시 누르면(그리고 아래로 내려와 있으면) 새로고침 없이 맨 위로만 올라갑니다. 이미 맨 위라면 예전처럼 동작.
+const NEAR_TOP = 120;
+const tapTab = (v, go) => () => { if (S.view === v && window.scrollY > NEAR_TOP) scrollPage("top"); else go(); };
+$("#tabFeed").onclick = tapTab("feed", () => setView("feed"));
+$("#tabTr").onclick = tapTab("tr", () => setView("tr"));
+$("#tabBm").onclick = tapTab("bm", showBm);
+
+// ---------- 맨 위로 / 아래로 버튼 (25차) ----------
+// 길게 내려온 피드·트렌드·북마크에서 한 번에 위로 올라갈 수 있게 오른쪽 아래에 두 버튼을 띄웁니다. 300px 이상 내려오면 나타나요.
+// ▲ 는 맨 위로, ▼ 는 한 화면 아래로(피드는 아래로 갈수록 자동으로 더 불러옴). 너무 멀리 내려온 경우엔 부드럽게 넘기지 않고 바로 이동합니다.
+function scrollPage(dir) {
+  const h = window.innerHeight, y = window.scrollY;
+  const top = dir === "top" ? 0 : y + Math.round(h * 0.85);
+  window.scrollTo({ top, behavior: y > h * 8 && dir === "top" ? "auto" : "smooth" });
+}
+let snRaf = 0;
+function updScrollNav() {
+  snRaf = 0;
+  const nav = $("#scrollNav"), y = window.scrollY, max = document.documentElement.scrollHeight - window.innerHeight;
+  nav.hidden = y < 300; // (북마크 선택 모드에서는 CSS 가 숨김 — 아래 도구줄과 겹치지 않게)
+  $("#goDown").hidden = max - y < 160; // 거의 끝이면 ▼ 는 숨김
+}
+addEventListener("scroll", () => { if (!snRaf) snRaf = requestAnimationFrame(updScrollNav); }, { passive: true });
+$("#goTop").onclick = () => scrollPage("top");
+$("#goDown").onclick = () => scrollPage("down");
 
 // ---------- 뷰어: 이미지 아래로 "비슷한 이미지" 피드가 이어집니다 ----------
 // V.stack 의 각 칸(level)이 "지금 보는 이미지 + 그 아래 비슷한 이미지 피드" 한 세트입니다.
@@ -2312,9 +2353,14 @@ function renderAvoidView() {
 $("#avoidClear").onclick = () => { Avoid.clear(); renderAvoidView(); toast("추천 안 함 목록을 모두 지웠어요. 숨겼던 이미지가 다시 나올 수 있어요", 4500); };
 $("#sTaste").onchange = (e) => {
   S.taste = e.target.checked; LS.set("tasteOn", S.taste); renderTasteView(); renderGroupSums();
+  if (S.taste) seedFromBookmarks(); // 25차: 꺼 둔 동안 담은 북마크도 취향에 반영
   toast(S.taste ? "이 기기에서만 취향·활동을 기억해요 (홈 피드에 곧 반영)" : "취향 학습을 껐어요. 저장된 점수는 [취향 지우기]로 지울 수 있어요", 4500);
 };
-$("#tasteClear").onclick = async () => { Taste.clear(); Recent.clear(); await ACT.clear(); FYI.sig = ""; renderTasteView(); renderRecent?.(); toast("취향·활동 기록·최근 검색을 모두 지웠어요"); };
+$("#tasteClear").onclick = async () => {
+  Taste.clear(); Recent.clear(); await ACT.clear(); FYI.sig = "";
+  await seedFromBookmarks(); // 25차: 북마크로 남아 있는 이미지는 계속 취향으로 씁니다 (북마크를 지우면 같이 사라져요)
+  renderTasteView(); renderRecent?.(); toast(S.bmIds.size ? "취향·활동 기록·최근 검색을 지웠어요. 북마크한 이미지는 계속 취향으로 남아요" : "취향·활동 기록·최근 검색을 모두 지웠어요", 4500);
+};
 $("#gear").onclick = () => { renderSettings(); $("#settings").hidden = false; };
 $("#closeSet").onclick = closeSettings;
 $("#sBlur").onchange = (e) => {
@@ -2381,7 +2427,8 @@ async function syncApplied(info) {
     if (!$("#settings").hidden) renderSettings();
   }
   if (info.bm) { S.bmIds = new Set((await DB.all()).map((x) => x.id)); updateCount(); refreshStars(); if (S.view === "bm" && $("#viewer").hidden) renderBm(); }
-  if (info.act) { ACT.m = null; ACT.rev++; FYI.sig = ""; }
+  if (info.act || info.bm) { ACT.m = null; ACT.rev++; FYI.sig = ""; }
+  await seedFromBookmarks(); // 25차: 다른 기기에서 받은 북마크·"새로 시작"으로 비워진 활동 기록을 북마크로 다시 채움
   updateSyncNote();
 }
 // 동기화를 써 본 적이 있으면(또는 서버가 지원하면) 오프라인에서도 변경을 "올릴 목록"에 모아 둡니다
@@ -2467,6 +2514,7 @@ async function boot() {
   setOffline(off); $("#upBtn").hidden = !cfg.caption;
   if (!off) setupSync();
   applyPriv(); markFilters();
+  seedFromBookmarks(); // 25차 (기다리지 않고 뒤에서 — 첫 화면을 늦추지 않음)
   if (off) { if (S.priv) setView("feed"); else await showBm(); return; }
   setView("feed"); renderHome(); renderStat();
   // AI 검사 모델: 접속 직후가 아니라 첫 화면이 자리 잡은 뒤(약 3.5초) 브라우저가 한가할 때 미리 준비합니다.
